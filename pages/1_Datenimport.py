@@ -8,8 +8,10 @@ from dotenv import load_dotenv
 from sqlalchemy import select
 
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
+from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
+from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.providers.eodhd import EODHDProvider
-from stock_valuation.data.snapshot_service import sync_eodhd_snapshot
+from stock_valuation.data.snapshot_service import sync_alphavantage_snapshot, sync_eodhd_snapshot
 from stock_valuation.database.models import AnalysisStatus, EstimateSnapshot, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
 
@@ -31,6 +33,14 @@ def _analysis_label(analysis) -> str:
         f"{analysis.company.name} · {analysis.as_of_date} · "
         f"R{analysis.revision_number} · {STATUS_LABELS.get(analysis.status, analysis.status.value)}"
     )
+
+
+def _default_alpha_symbol(analysis) -> str:
+    # ASML is the reference case. Productive provider-specific symbol resolution follows
+    # later through company search / identifiers instead of hard-coding all exchanges.
+    if analysis.company.ticker.upper() == "ASML":
+        return "ASML.AMS"
+    return analysis.company.ticker
 
 
 st.title("Datenimport")
@@ -59,54 +69,120 @@ with get_session() as session:
     cols = st.columns(5)
     cols[0].metric("Unternehmen", analysis.company.name)
     cols[1].metric("Ticker", analysis.company.ticker)
-    cols[2].metric("Provider-Symbol", analysis.company.provider_symbol or "—")
+    cols[2].metric("EODHD-Symbol", analysis.company.provider_symbol or "—")
     cols[3].metric("Revision", f"R{analysis.revision_number}")
     cols[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
 
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
 
 st.divider()
-st.subheader("EODHD Fundamentals v1.1")
+st.subheader("Automatischer Fundamentaldaten-Import")
 
-api_key_available = bool(os.getenv("EODHD_API_KEY"))
-if api_key_available:
-    st.success("EODHD_API_KEY ist in der lokalen Umgebung vorhanden.")
-else:
-    st.warning(
-        "EODHD_API_KEY fehlt. Lokal eine `.env` aus `.env.example` anlegen und den "
-        "persönlichen API-Key eintragen. API-Keys niemals committen."
-    )
-
-st.write(
-    "Importiert werden jährliche GuV-, Bilanz- und Cashflow-Rohdaten sowie verfügbare "
-    "Annual Analyst Estimates. Provider-Feldname, Originalwert und Abrufzeit bleiben gespeichert."
+provider_choice = st.radio(
+    "Datenprovider",
+    ["Alpha Vantage", "EODHD"],
+    horizontal=True,
+    help=(
+        "Alpha Vantage wird zuerst getestet, weil der Free-Tier laut Anbieter viele "
+        "Fundamental-Endpunkte umfasst. EODHD Fundamentals erfordern beim getesteten Free-Key "
+        "für ASML einen kostenpflichtigen Tarif."
+    ),
 )
 
-if not editable:
-    st.info(
-        "Diese Analyse ist abgeschlossen/archiviert und eingefroren. "
-        "Für neue Daten zuerst eine neue Revision erzeugen."
+if provider_choice == "Alpha Vantage":
+    st.write(
+        "Für einen vollständigen Import werden getrennte API-Requests für GuV, Bilanz, "
+        "Cashflow und Analystenschätzungen verwendet. Der kostenlose Account ist daher nur "
+        "für wenige Unternehmensaktualisierungen pro Tag gedacht, reicht aber gut zum Testen."
     )
-elif not analysis.company.provider_symbol:
-    st.error("Für dieses Unternehmen ist noch kein Provider-Symbol hinterlegt.")
-elif st.button("Finanzdaten und Schätzungen aktualisieren", type="primary", disabled=not api_key_available):
-    try:
-        provider = EODHDProvider()
-        with get_session() as session:
-            current = get_analysis(session, analysis_id)
-            if current is None:
-                raise ValueError("Analyse wurde nicht gefunden.")
-            with st.spinner(f"Lade {current.company.provider_symbol} von EODHD …"):
-                fact_count, estimate_count = sync_eodhd_snapshot(session, current, provider)
-        st.success(
-            f"Import abgeschlossen: {fact_count} Finanzdatenzeilen, "
-            f"{estimate_count} Schätzdatensätze gespeichert."
+    api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
+    if api_key_available:
+        st.success("ALPHA_VANTAGE_API_KEY ist in der lokalen Umgebung vorhanden.")
+    else:
+        st.warning(
+            "ALPHA_VANTAGE_API_KEY fehlt. Kostenlosen Alpha-Vantage-Key anlegen und in `.env` "
+            "als `ALPHA_VANTAGE_API_KEY=...` eintragen. API-Keys niemals committen."
         )
-        st.rerun()
-    except (ValueError, AnalysisFrozenError) as exc:
-        st.error(str(exc))
-    except Exception as exc:  # provider/network errors should be visible, not silently hidden
-        st.exception(exc)
+
+    alpha_symbol = st.text_input(
+        "Alpha-Vantage-Symbol",
+        value=_default_alpha_symbol(analysis),
+        help="Für die ASML-Aktie in Amsterdam verwenden wir beim Test `ASML.AMS`.",
+    )
+
+    if not editable:
+        st.info(
+            "Diese Analyse ist abgeschlossen/archiviert und eingefroren. "
+            "Für neue Daten zuerst eine neue Revision erzeugen."
+        )
+    elif st.button(
+        "Alpha-Vantage-Finanzdaten und Schätzungen aktualisieren",
+        type="primary",
+        disabled=not api_key_available,
+    ):
+        try:
+            provider = AlphaVantageProvider()
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse wurde nicht gefunden.")
+                with st.spinner(f"Lade {alpha_symbol} von Alpha Vantage …"):
+                    fact_count, estimate_count = sync_alphavantage_snapshot(
+                        session,
+                        current,
+                        provider,
+                        symbol=alpha_symbol,
+                    )
+            st.success(
+                f"Import abgeschlossen: {fact_count} Finanzdatenzeilen, "
+                f"{estimate_count} Schätzdatensätze gespeichert."
+            )
+            st.rerun()
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.exception(exc)
+
+else:
+    st.warning(
+        "Der getestete kostenlose EODHD-Key liefert für `ASML.AS` bei Fundamentals HTTP 403. "
+        "Das bedeutet: Der Key ist vorhanden, aber der Free-Tarif schaltet diese Daten nicht frei. "
+        "Wir kaufen vorerst keinen EODHD-Fundamentals-Tarif."
+    )
+    api_key_available = bool(os.getenv("EODHD_API_KEY"))
+    if api_key_available:
+        st.success("EODHD_API_KEY ist in der lokalen Umgebung vorhanden.")
+    else:
+        st.warning("EODHD_API_KEY fehlt in der lokalen `.env`.")
+
+    if not editable:
+        st.info(
+            "Diese Analyse ist abgeschlossen/archiviert und eingefroren. "
+            "Für neue Daten zuerst eine neue Revision erzeugen."
+        )
+    elif not analysis.company.provider_symbol:
+        st.error("Für dieses Unternehmen ist noch kein EODHD-Provider-Symbol hinterlegt.")
+    elif st.button(
+        "EODHD erneut testen",
+        disabled=not api_key_available,
+    ):
+        try:
+            provider = EODHDProvider()
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse wurde nicht gefunden.")
+                with st.spinner(f"Lade {current.company.provider_symbol} von EODHD …"):
+                    fact_count, estimate_count = sync_eodhd_snapshot(session, current, provider)
+            st.success(
+                f"Import abgeschlossen: {fact_count} Finanzdatenzeilen, "
+                f"{estimate_count} Schätzdatensätze gespeichert."
+            )
+            st.rerun()
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.exception(exc)
 
 st.divider()
 st.subheader("Gespeicherter Snapshot")
@@ -144,6 +220,7 @@ else:
     rows = [
         {
             "Periode": fact.period_end,
+            "Provider": fact.provider,
             "Statement": fact.statement,
             "Interner Schlüssel": fact.metric,
             "Wert": float(fact.value) if fact.value is not None else None,
@@ -177,6 +254,7 @@ else:
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 st.info(
-    "Die offizielle ASML-Berichterstattung wird im nächsten Integrationsschritt als "
-    "Primärquellen-Validierung gegen diesen Import gelegt."
+    "Nach dem ersten erfolgreichen ASML-Import vergleichen wir Umsatz, EBIT, Gewinn, Bilanz "
+    "und Cashflow stichprobenartig mit der offiziellen ASML-Berichterstattung. Erst danach "
+    "wird ein Provider als Primärquelle freigegeben."
 )
