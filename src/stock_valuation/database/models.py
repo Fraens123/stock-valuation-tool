@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp for persisted audit fields."""
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -49,11 +54,13 @@ class Analysis(Base):
     status: Mapped[AnalysisStatus] = mapped_column(
         Enum(AnalysisStatus), default=AnalysisStatus.DRAFT
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     market_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6), nullable=True)
     market_price_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -81,7 +88,9 @@ class FinancialFactSnapshot(Base):
     source_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     filing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retrieved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_restated: Mapped[bool] = mapped_column(Boolean, default=False)
     is_cross_check_only: Mapped[bool] = mapped_column(Boolean, default=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -99,7 +108,7 @@ class FinancialAdjustmentSnapshot(Base):
     reason: Mapped[str] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     included_in_normalized: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class EstimateSnapshot(Base):
@@ -116,7 +125,9 @@ class EstimateSnapshot(Base):
     provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retrieved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -148,7 +159,7 @@ class ManualInputSnapshot(Base):
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
     source_name: Mapped[str] = mapped_column(String(120), default="Aktienfinder")
-    entered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     overrides_metric: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
