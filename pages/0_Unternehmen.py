@@ -116,7 +116,7 @@ if candidates:
                         for item in selected_group.candidates
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             st.caption(
@@ -216,7 +216,7 @@ if companies:
                 for item in companies
             ]
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 else:
