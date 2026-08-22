@@ -6,6 +6,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Base
+# Import table modules so their models are registered on Base.metadata before create_all.
+from . import ai_review_models as _ai_review_models  # noqa: F401
 
 
 DEFAULT_DB_PATH = Path("data/stock_valuation.db")
