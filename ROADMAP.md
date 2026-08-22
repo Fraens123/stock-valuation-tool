@@ -1,149 +1,246 @@
 # Roadmap
 
-Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur klar abgegrenzte Blöcke daraus bearbeiten.
+Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. `AGENTS.md` enthält die dauerhaften Regeln, `CURRENT_TASK.md` den aktuell zu bearbeitenden Block.
 
-## Phase 0 — Application Foundation ✅
+## Statusübersicht
 
-### 0.1 Projektgrundlage
-- [x] Repository anlegen
-- [x] `AGENTS.md` anlegen
-- [x] Gesamt-Roadmap definieren
-- [x] Python-Projektstruktur anlegen
+- **Phase 0 – Application Foundation:** ✅ implementiert
+- **Phase 1 – Excel-/Buch-Spezifikation:** ✅ weitgehend abgeschlossen; einzelne Buchdefinitionen bleiben bewusst als offene Methodikfragen markiert
+- **Phase 2 – Datenversorgung:** 🟡 in Arbeit; Code steht, echter ASML/EODHD-Live-Test benötigt lokalen API-Key
+- **Phase 3 ff.:** noch nicht beginnen, bevor die Datenpipeline an ASML validiert ist
+
+---
+
+# Phase 0 — Application Foundation ✅
+
+## 0.1 Projektgrundlage
+- [x] Repository
+- [x] `AGENTS.md`
+- [x] `CURRENT_TASK.md`
+- [x] Python-Projektstruktur
 - [x] `.gitignore`, `.env.example`, `pyproject.toml`
-- [x] Basistests / Ruff-Konfiguration
+- [x] pytest / GitHub-Actions-Grundlage
 
-### 0.2 Unternehmen
+## 0.2 Unternehmen
 - [x] Company-Domainmodell
-- [x] Felder: Name, Ticker, ISIN, Börse, Land, Währung, Sektor, Provider-Symbol
-- [x] Unternehmenssuche als Provider-Interface vorbereiten
-- [x] lokale Phase-0-Suche implementieren
+- [x] Name, Ticker, ISIN, Börse, Land, Währung, Sektor, Provider-Symbol
+- [x] lokales Suchinterface
 - [x] ASML als Referenzunternehmen
-- [x] spätere Unterstützung mehrerer Listings in der Provider-Architektur berücksichtigen
-- [ ] produktive externe Unternehmenssuche anbinden → **Phase 2**
+- [ ] externe Symbols-/Listing-Suche mit Provider nach Live-Test
+- [ ] Mehrfachlistings später als eigene Entität, falls erforderlich
 
-### 0.3 Analyse-Lifecycle
+## 0.3 Analyse-Lifecycle
 - [x] Analyse erstellen
-- [x] Analyse öffnen
-- [x] Status: Draft / In Progress / Completed / Archived im Domainmodell
+- [x] Analyse öffnen/bearbeiten
+- [x] Draft / In Progress / Completed / Archived
 - [x] Revisionsnummer
 - [x] vorherige Revision verknüpfen
 - [x] abgeschlossene Revision einfrieren
-- [x] neue Revision aus älterer Analyse erzeugen
-- [x] qualitative Einschätzungen optional als Ausgangspunkt übernehmen
-- [x] Bewertungsannahmen optional als Ausgangspunkt übernehmen
-- [x] Markt-/Finanzdaten bewusst **nicht** in neue Revision kopieren
-- [ ] aktuelle Markt-/API-Daten neu laden → **Phase 2**
+- [x] neue Revision aus abgeschlossener Analyse
+- [x] qualitative Einschätzungen optional übernehmen
+- [x] übernommene qualitative Einschätzungen als `needs_review` markieren
+- [x] alte Finanz-/Marktdaten nicht in neue Revision kopieren
 
-### 0.4 Persistenz
+## 0.4 Persistenz
 - [x] SQLite V1
 - [x] SQLAlchemy Models
 - [x] Service Layer
-- [x] Datenbankdatei in `.gitignore`
-- [x] private Excel-Referenzdateien in `.gitignore`
-- [x] Schema so gestalten, dass PostgreSQL später möglich ist
+- [x] DB-Dateien in `.gitignore`
+- [x] Snapshot-Grundmodell
+- [ ] Migrationsstrategie vor erstem stabilen Release (Alembic oder kontrollierte lokale Migration)
 
-### 0.5 Vergleichssystem
-- [x] zwei Analysen eines Unternehmens auswählen
-- [x] Fundamentaldaten-Diff vorbereiten/implementieren
+## 0.5 Vergleich und PDF-Grundlage
+- [x] zwei Revisionen desselben Unternehmens vergleichen
+- [x] Fundamentaldaten-Diff
 - [x] Estimates-/Guidance-Diff
-- [x] Bewertungsannahmen-Diff
+- [x] Bewertungsannahmen-/Ergebnis-Diff
 - [x] qualitative Einschätzungen-Diff
-- [x] Fair-Value-/Bewertungsergebnis-Diff
-- [x] Änderungen nach Kategorien darstellen
+- [x] erster reproduzierbarer PDF-Snapshot
+- [x] alter Report verwendet keine Live-Daten
 
-### 0.6 PDF-Snapshot-Prototyp
-- [x] PDF aus gewähltem Snapshot erzeugen
-- [x] PDF-Download in Streamlit
-- [x] Dateiname mit Ticker, Stichtag und Revision
-- [x] keine Live-Daten beim erneuten Export alter Analysen
-- [ ] vollständiger Kurz-/Vollreport → **Phase 13**
-
-### 0.7 Phase-0-Qualität
-- [x] Lifecycle-/Freeze-Tests
-- [x] Revisionstest
-- [x] Vergleichstest
-- [x] Company-Suchtest
-- [x] PDF-Test
-- [x] manueller Acceptance-Test dokumentiert (`docs/PHASE_0_ACCEPTANCE.md`)
-
-**Definition of Done Phase 0:** ASML kann als Unternehmen angelegt werden; mehrere Analyse-Revisionen können lokal gespeichert, geöffnet, eingefroren, revisioniert, miteinander verglichen und als einfacher reproduzierbarer PDF-Snapshot exportiert werden.
+**Definition of Done Phase 0:** erfüllt.
 
 ---
 
-## Phase 1 — Fachliche Spezifikation / Excel- und Buch-Mapping
+# Phase 1 — Fachliche Spezifikation / Excel- und Buch-Mapping ✅/🟡
 
-- [ ] bestehendes Excel vollständig von oben nach unten inventarisieren
-- [ ] jede Kennzahl mit Excel-Formel und Rohdatenbedarf dokumentieren
-- [ ] entscheiden: behalten / ergänzen / Spezialfall / nicht sinnvoll
-- [ ] Kindle-Seitenmapping vervollständigen
-- [ ] eigene Erklärung je Kennzahl definieren
-- [ ] Glossarstruktur finalisieren
-- [ ] ASML als Referenzfall für jede Kennzahl festlegen
-- [ ] Jahresabschlussbereinigung/Sondereffekte als eigenes Konzept definieren
+## 1.1 Excel-Inventarisierung
+- [x] bestehendes Excel von oben nach unten analysiert
+- [x] Rohdatenzeilen dokumentiert
+- [x] Excel-Formeln der Kernkennzahlen dokumentiert
+- [x] DCF-Logik dokumentiert
+- [x] Fair-KGV-/Multiplikatorenlogik dokumentiert
+- [x] VBA-Szenarioidee dokumentiert
+- [x] Kennzahlen klassifiziert: keep / add / adjust / special / verify
+- [x] methodische Schwächen des Alt-Excel explizit markiert
 
-### Buchstruktur im Tool
-- [ ] Kapitel 2 Ertrag und Rentabilität
-- [ ] Kapitel 3 Finanzielle Stabilität
-- [ ] Kapitel 4 Working Capital
-- [ ] Kapitel 5 Geschäftsmodell
-- [ ] Kapitel 6 Ausschüttungspolitik
-- [ ] Kapitel 7 Bewertungskennzahlen
-- [ ] Kapitel 8 Unternehmensbewertung
-- [ ] Kapitel 9 Margin of Safety / Investmententscheidung
+Siehe `docs/PHASE_1_METRIC_INVENTORY.md`.
 
-**Definition of Done Phase 1:** Jede geplante Kennzahl/Bewertungsstufe hat Name, Rohdaten, Formel, Bedeutung, Fallstricke, Datenquelle und verifizierte Buchreferenz soweit verfügbar.
+## 1.2 Kennzahlen- und Wissenskatalog
+- [x] `metrics.yaml` als zentrales Kennzahlenwissen
+- [x] deutsche + englische Überschriften
+- [x] Definition
+- [x] Ziel- und Excel-Formel
+- [x] Bedeutung
+- [x] Interpretation
+- [x] Fallstricke
+- [x] verwandte Kennzahlen
+- [x] Excel-Zellbereiche
+- [x] Kindle-Seiten aus Nutzer-Screenshots
+- [x] `ⓘ`-Komponente an neues Schema angepasst
+- [x] Tests für Katalogschema
+
+## 1.3 Buchstruktur
+- [x] Kapitel 2 Ertrag/Rentabilität
+- [x] Kapitel 3 Finanzielle Stabilität
+- [x] Kapitel 4 Working Capital
+- [x] Kapitel 5 Geschäftsmodell
+- [x] Kapitel 6 Ausschüttung
+- [x] Kapitel 7 Bewertungskennzahlen
+- [x] Kapitel 8 Bewertung
+- [x] Kapitel 9 Margin of Safety / Investmententscheidung
+- [ ] Kapitel 1 ergänzen, sobald relevante Kindle-Seiten vorliegen
+- [ ] einzelne exakte Buchformeln auf den in `METHODOLOGY_OPEN_QUESTIONS.md` markierten Seiten verifizieren
+
+## 1.4 Qualitative Unternehmensanalyse
+- [x] Kapitel-5-Struktur in `qualitative.yaml`
+- [x] Kompetenzbereich
+- [x] Charakteristika
+- [x] Rahmenbedingungen
+- [x] Informationsbeschaffung
+- [x] Branchenstruktur
+- [x] SWOT
+- [x] BCG optional
+- [x] Wettbewerbsstrategie
+- [x] Management
+- [x] Porter Five Forces für Fair-KGV vorbereitet
+- [x] eigene Begründung + Quellen als Pflichtprinzip definiert
+- [x] ASML-spezifische Analysethemen definiert
+
+## 1.5 Normalisiertes Rohdatenschema
+- [x] GuV-Schlüssel
+- [x] Bilanz-Schlüssel
+- [x] Cashflow-Schlüssel
+- [x] Aktienzahl/Marktdaten
+- [x] unternehmensspezifische operative Daten
+- [x] Estimates-Schema
+- [x] Guidance-Schema
+- [x] manuelle Aktienfinder-Eingaben
+- [x] Provider-Provenienz
+
+Siehe `docs/RAW_DATA_SCHEMA.md`.
+
+## 1.6 Jahresabschlussbereinigung
+- [x] reported / adjustment / normalized als Architektur definiert
+- [x] Sondereffekt-Kategorien definiert
+- [x] Restatement-Policy definiert
+- [x] DCF/Fair-KGV müssen verwendete Basis sichtbar machen
+- [ ] exakte Buchdetails S. 422/427 bei Bedarf weiter verifizieren
+
+Siehe `docs/NORMALIZATION_POLICY.md`.
+
+## 1.7 Offene Methodikfragen
+Bewusst noch nicht festgelegt:
+- [ ] ROE-Endbestand vs. Durchschnittskapital nach Buch verifizieren
+- [ ] einzelne ROA-/ROCE-Definitionen final verifizieren
+- [ ] 360 vs. 365 Tage nach Buch/Projektpolicy festlegen
+- [ ] Owner-Earnings-Details final verifizieren
+- [ ] Risiko-KGV vs. vollständiges Fair-KGV
+- [ ] Risiko-Dropdown-Punkt-/Prozentwerte
+- [ ] exakte Fair-KGV-Scoring-Skalen
+- [ ] FCFF/EV-FCF-Definition
+
+Siehe `docs/METHODOLOGY_OPEN_QUESTIONS.md`. Codex darf diese Punkte nicht eigenmächtig entscheiden.
+
+**Phase-1-Entscheidung:** Die Spezifikation ist ausreichend stabil, um die Datenpipeline zu bauen. Offene Buchfragen bleiben blockierend für die jeweilige spätere Formel, nicht für den Raw-Data-Import.
 
 ---
 
-## Phase 2 — Datenmodell und Datenprovider
+# Phase 2 — Datenversorgung 🟡
 
-### 2.1 Normalisierte Rohdaten
-- [ ] GuV-Schema
-- [ ] Bilanz-Schema
-- [ ] Cashflow-Schema
-- [ ] Shares/Dividenden/Buybacks
-- [ ] Annual und Quarterly strikt trennen
-- [ ] Currency / Unit / Fiscal Period / Source / Retrieved At
+## 2.1 EODHD Fundamentals v1.1
+- [x] Provider-Adapter vorhanden
+- [x] v1.1 Fundamentals Endpoint
+- [x] maschinenlesbares `eodhd.yaml`-Feldmapping
+- [x] GuV-Normalisierung
+- [x] Bilanz-Normalisierung
+- [x] Cashflow-Normalisierung
+- [x] Originalwert + normalisierter Wert/Sign-Policy auditierbar
+- [x] Cross-Check-only-Felder markierbar
+- [x] Annual Estimates Parser Low/Avg/High/Analyst Count, soweit geliefert
+- [x] Tests ohne Live-Netzwerk/API-Key
+- [x] Snapshot-Service zum Import in Draft/In-Progress-Analyse
+- [x] Refresh einer completed Analyse blockiert
+- [x] Streamlit-Seite `Datenimport`
+- [ ] **lokal mit echtem `EODHD_API_KEY` ASML.AS testen**
+- [ ] tatsächlichen ASML-Payload gegen Mapping prüfen
+- [ ] 10-Jahres-Historie validieren
+- [ ] Provider-Missing-Fields protokollieren
 
-### 2.2 EODHD
-- [ ] Fundamentals Provider
-- [ ] ASML.AS laden
-- [ ] 10 Jahre Historie
-- [ ] Caching
-- [ ] Fehlerbehandlung / Rate Limits
-- [ ] Feldmapping dokumentieren
+## 2.2 ASML Primärquellenvalidierung
+- [x] offizielle Quellenhierarchie definiert
+- [x] konkretes ASML-Feldmapping dokumentiert
+- [x] 2025 Kontrollwerte für ersten Importtest dokumentiert
+- [x] offizielle US-GAAP-/IFRS-Financial-Statements-Excel als Validierungsquelle identifiziert
+- [ ] EODHD 2025 gegen offizielle ASML Financial Statements vergleichen
+- [ ] Stichproben älterer Jahre
+- [ ] semantische Providerabweichungen dokumentieren
 
-### 2.3 Primärquellen
-- [ ] ASML Annual Reports zur Stichprobenvalidierung
-- [ ] ASML Management Guidance separat speichern
-- [ ] Sondereffekte dokumentieren
+Siehe `docs/ASML_DATA_MAPPING.md`.
 
-### 2.4 Risikofreier Zins
-- [ ] ECB Data API
-- [ ] EUR AAA 10Y
-- [ ] Abrufdatum speichern
-- [ ] manuelles Override
+## 2.3 Analystenschätzungen
+- [x] Datenmodell Low/Average/High/Analyst Count
+- [x] Management Guidance getrennt
+- [x] EODHD Trend Parser vorbereitet
+- [ ] echten ASML Trend Payload prüfen
+- [ ] Revisionsfelder prüfen
+- [ ] zweite Estimates-Quelle nur bei echtem Bedarf evaluieren
 
-### 2.5 Aktienfinder manuell
-- [ ] zentrale Eingabeseite
-- [ ] Wert, Geschäftsjahr, Quelle, Eingabedatum, Kommentar
-- [ ] Forecast-Werte getrennt von historischen Zahlen
-- [ ] Overrides sichtbar markieren
+## 2.4 Management Guidance
+- [x] strukturiertes Guidance-Datenmodell
+- [x] zentrale manuelle Eingabeseite
+- [x] Low / Point / High
+- [x] Publication Date / URL / Kommentar
+- [x] ASML 2026/2030 als Referenzfälle dokumentiert
+- [ ] später optional automatisierter Import aus offiziellen IR-Dokumenten
 
-### 2.6 Analystenschätzungen
-- [ ] Revenue Low / Average / High
-- [ ] EPS Low / Average / High
-- [ ] Analyst Count
-- [ ] Revisionen, falls Provider verfügbar
-- [ ] Management Guidance davon getrennt
+## 2.5 Aktienfinder manuell
+- [x] zentrale manuelle Eingabe statt verteilter Excel-Zellen
+- [x] Wert / Periode / Quelle / Eingabedatum / Kommentar
+- [x] expliziter API-Override möglich und sichtbar speicherbar
+- [x] completed Snapshot geschützt
+- [ ] komfortablere vordefinierte Eingabeformulare, sobald endgültig klar ist, welche Felder fehlen
 
-**Definition of Done Phase 2:** ASML-Rohdaten, Estimates, Guidance und manuelle Inputs können reproduzierbar in einen Analyse-Snapshot übernommen werden.
+## 2.6 Risikofreier EUR-Zins
+- [x] ECB-Serie festgelegt: Euro Area AAA 10Y Spot Rate
+- [x] ECB Data API Provider implementiert
+- [x] CSV-Parser getestet
+- [x] interner Wert als Dezimalrate, Originalwert in % p.a. auditierbar
+- [x] Snapshot-Speicherung
+- [x] Streamlit-Abrufbutton
+- [ ] manueller Override später gemeinsam mit Risikomodell
+
+## 2.7 Datenmodell / Provenienz
+- [x] Provider field
+- [x] Provider original value
+- [x] filing date
+- [x] restated flag
+- [x] cross-check-only
+- [x] FinancialAdjustmentSnapshot
+- [x] MetricSnapshot
+- [x] OperatingFactSnapshot
+- [x] InvestmentThesis-Modell
+- [ ] Migrationspfad für bestehende lokale Entwicklungsdatenbank
+
+**Definition of Done Phase 2:** erst erfüllt, wenn echter ASML/EODHD-Liveimport und Primärquellenvalidierung durchgeführt wurden.
 
 ---
 
-## Phase 3 — Kennzahlenengine
+# Phase 3 — Kennzahlenengine
 
-### 3A Ertrag und Rentabilität
+**Erst nach Phase-2-ASML-Validierung beginnen.**
+
+## 3.1 Ertrag und Rentabilität
 - [ ] Eigenkapitalrendite (ROE)
 - [ ] Umsatzrendite
 - [ ] EBIT-/EBITDA-Marge
@@ -152,7 +249,7 @@ Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur
 - [ ] ROCE
 - [ ] Umsatzverdienstrate
 
-### 3B Finanzielle Stabilität
+## 3.2 Finanzielle Stabilität
 - [ ] Eigenkapitalquote
 - [ ] Gearing
 - [ ] Dynamischer Verschuldungsgrad
@@ -160,173 +257,161 @@ Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur
 - [ ] Sachinvestitionsquote
 - [ ] Anlagenabnutzungsgrad
 - [ ] Wachstumsquote
-- [ ] Cash-Burn-Rate
+- [ ] Cash-Burn-Rate nur bei Anwendbarkeit
 - [ ] Umlauf-/Anlagenintensität
 - [ ] Anlagendeckungsgrad I/II
 - [ ] Goodwill-Anteil
-- [ ] weitere Excel-Kennzahlen prüfen
+- [ ] Excel-Erweiterungen gemäß `metrics.yaml`
 
-### 3C Working Capital
-- [ ] Debitorenlaufzeit
-- [ ] Kreditorenlaufzeit
-- [ ] Liquidität 1./2./3. Grades
+## 3.3 Working Capital
+- [ ] DSO
+- [ ] DPO
+- [ ] Cash/Quick/Current Ratio
 - [ ] Vorratsintensität
-- [ ] Lagerumschlag / DIO
-- [ ] Geldumschlag / Cash Conversion
-- [ ] Auftragseingang/-bestand wo sinnvoll
+- [ ] Inventory Turnover
+- [ ] DIO
+- [ ] Cash Conversion Cycle
+- [ ] Auftragseingang/-bestand bei Anwendbarkeit
 
-### 3D Ausschüttung/Kapitalallokation
-- [ ] Dividenden
-- [ ] Ausschüttungsquote
+## 3.4 Ausschüttung/Kapitalallokation
+- [ ] Dividendenquoten
 - [ ] Buybacks
-- [ ] Share Count Entwicklung
-- [ ] Reinvestment vs Ausschüttung
+- [ ] Netto-Aktienzahlentwicklung
+- [ ] Kapitalallokationsanalyse
 
-**Definition of Done Phase 3:** Kennzahlen werden aus Rohdaten reproduzierbar berechnet und gegen ASML-Kontrollwerte validiert.
+**DoD:** Jede Kennzahl ist aus nachvollziehbaren Raw Facts reproduzierbar, getestet und gegen ASML plausibilisiert.
 
 ---
 
-## Phase 4 — Geführte Geschäftsmodellanalyse
+# Phase 4 — Geführte Geschäftsmodellanalyse
 
-- [ ] Kompetenzbereich
-- [ ] Charakteristika
-- [ ] Rahmenbedingungen
-- [ ] Informationsbeschaffung
-- [ ] Branchenstrukturanalyse
+- [ ] UI aus `qualitative.yaml`
+- [ ] Antworten / Ratings / Quellen
+- [ ] `nicht anwendbar`
+- [ ] übernommene Revisionen mit `needs_review`
 - [ ] Porter Five Forces
 - [ ] SWOT
-- [ ] BCG optional
-- [ ] Wettbewerbsstrategie
 - [ ] Management
-- [ ] Kommentar und Quelle pro Bewertung
-- [ ] Historisierung der Einschätzung
-
-**Definition of Done Phase 4:** qualitative Einschätzungen sind begründet, quellenbezogen und zwischen Revisionen vergleichbar.
+- [ ] Veränderungsvergleich
 
 ---
 
-## Phase 5 — Bewertungskennzahlen
+# Phase 5 — Bewertungskennzahlen
 
-### Equitymultiplikatoren
+## Equitymultiples
 - [ ] KGV
 - [ ] KBV
 - [ ] KCV
 - [ ] KUV
 
-### Enterprise Value
-- [ ] Enterprise Value
+## Enterprise Value
+- [ ] saubere EV-Brücke
 - [ ] EV/EBITDA
 - [ ] EV/EBIT
-- [ ] EV/FCF
+- [ ] EV/FCF/FCFF nach finaler Policy
 - [ ] EV/Sales
 
-### Darstellung
+## Darstellung
 - [ ] aktuell
 - [ ] 5-Jahres-Median
 - [ ] 10-Jahres-Median
-- [ ] historische Bandbreite/Perzentile
-- [ ] Chart
-- [ ] Quellen/Definitionen
+- [ ] historische Bandbreite / Perzentile
+- [ ] Charts
 
 ---
 
-## Phase 6 — Multiplikatorenmethode / Faires KGV
+# Phase 6 — Multiplikatorenmethode / Faires KGV
 
 - [ ] Sockel-KGV
 - [ ] Finanzielle Stabilität
-- [ ] Marktposition
-- [ ] Rentabilität
+- [ ] Marktposition / Porter
+- [ ] Rentabilitätsmultiplikator
 - [ ] Wachstum
 - [ ] Individualität
-- [ ] Bewertung
+- [ ] Fair-KGV-Formel exakt validieren
+- [ ] normalisierte Gewinnbasis
 - [ ] fairer Preis je Aktie
-- [ ] exakte Logik gegen Excel/Buch validieren
-- [ ] Sondereffekte / normalisierter Gewinn
-- [ ] Risiko-KGV getrennt vom vollständigen Fair-KGV definieren
-
-**Definition of Done Phase 6:** bestehende Schmidlin-/Excel-Fair-KGV-Logik ist nachvollziehbar reproduziert und separat testbar.
+- [ ] separates Risiko-KGV für DCF fachlich entscheiden
 
 ---
 
-## Phase 7 — Equity-DCF V1: bestehendes Excel reproduzieren
+# Phase 7 — Equity-DCF V1: Excel reproduzieren
 
 1. Owner Earnings
 2. Diskontierungsfaktor
 3. Ewige Rente
 4. Fairer Aktienkurs
 
-- [ ] Owner-Earnings-Definition exakt festlegen
-- [ ] nicht zahlungswirksame Aufwendungen
+- [ ] Excel-Owner-Earnings exakt reproduzieren
+- [ ] D&A
 - [ ] CAPEX
 - [ ] Delta Working Capital
-- [ ] Eigenkapitalkosten nach bestehender Logik
-- [ ] ewige Rente
+- [ ] Eigenkapitalkosten nach validierter Schmidlin-Logik
+- [ ] Terminal Value
 - [ ] Fair Value je Aktie
-- [ ] Margin of Safety getrennt
+- [ ] Margin of Safety separat
 - [ ] ASML Kontrollrechnung
 - [ ] Unit Tests
 
 ---
 
-## Phase 8 — Equity-DCF V2: realistische Prognoseengine
+# Phase 8 — Equity-DCF V2: realistische Prognoseengine
 
-### Prognosephasen
-- [ ] Jahr 1: Management Guidance + Konsens
+## Prognosephasen
+- [ ] Jahr 1: Guidance + Konsens
 - [ ] Jahre 2–3: Analyst Low/Base/High
 - [ ] Jahre 4–5: eigene fundamentale Annahmen
 - [ ] Jahre 6–10: Fade / Mean Reversion
-- [ ] ab Jahr 11: Terminalphase
+- [ ] Jahr 11+: Terminalphase
 
-### Treiber
+## Treiber
 - [ ] Umsatz
 - [ ] operative Marge
-- [ ] Steuersatz
+- [ ] Steuerquote
 - [ ] CAPEX/Umsatz
-- [ ] Abschreibungen
+- [ ] D&A
 - [ ] Working Capital/Umsatz
-- [ ] Share Count / Buybacks
+- [ ] Aktienzahl/Buybacks
 - [ ] Terminal Growth
 
-### Regeln
-- [ ] CAPEX und Wachstum ökonomisch koppeln
+## Konsistenz
+- [ ] Wachstum ↔ Reinvestition
 - [ ] Margen-Fade
-- [ ] CAPEX/Depreciation langfristig konsistent
+- [ ] CAPEX/D&A langfristig plausibel
 - [ ] Terminal-Value-Anteil sichtbar
-- [ ] Warnungen bei extremen Annahmen
+- [ ] Plausibilitätswarnungen
 
 ---
 
-## Phase 9 — Risiko- und Diskontierungsmodell
+# Phase 9 — Risiko- und Diskontierungsmodell
 
-- [ ] ECB 10Y AAA risikofreier Zins
+- [x] ECB-10Y-AAA-Datenquelle vorbereitet
 - [ ] Dropdown: Sehr gering / Gering / Mittel / Hoch / Sehr hoch / Benutzerdefiniert
-- [ ] daneben Risiko-KGV
+- [ ] Risiko-KGV
 - [ ] impliziter Risikoaufschlag
 - [ ] resultierende Eigenkapitalkosten
-- [ ] Stufenwerte erst nach Buchvalidierung fixieren
-- [ ] Auto-Vorschlag aus qualitativer Analyse optional
+- [ ] Stufenwerte nach Buchvalidierung
+- [ ] optionaler Auto-Vorschlag aus qualitativer Analyse
 - [ ] manuelles Override
-- [ ] Mindest-Eigenkapitalkosten optional
-- [ ] CAPM/WACC nur als Cross-Check
+- [ ] CAPM/WACC als Cross-Check
 - [ ] Doppelzählung von Wachstum verhindern
 
 ---
 
-## Phase 10 — Szenarioengine
+# Phase 10 — Szenarioengine
 
-- [ ] Worst / Base / Best als wirtschaftlich zusammenhängende Szenarien
-- [ ] Analyst Low/Avg/High als kurzfristige Startwerte
-- [ ] Management Guidance als eigener Korridor
-- [ ] Sensitivität `Diskontsatz × Terminalwachstum`
-- [ ] Sensitivität `Wachstum × Zielmarge`
+- [ ] Worst / Base / Best als zusammenhängende wirtschaftliche Szenarien
+- [ ] Analyst Low/Avg/High als kurzfristige Anker
+- [ ] Guidance-Korridor
+- [ ] Sensitivität Diskontsatz × Terminal Growth
+- [ ] Sensitivität Wachstum × Zielmarge
 - [ ] später Monte Carlo / Latin Hypercube
-- [ ] Korrelationen und Plausibilitätsregeln
+- [ ] Korrelationen / Plausibilitätsregeln
 - [ ] P10/P25/P50/P75/P90
-- [ ] Wahrscheinlichkeit über/unter Marktpreis nur als Modelloutput kennzeichnen
 
 ---
 
-## Phase 11 — Entity-DCF / APV / Spezialfälle
+# Phase 11 — Entity-DCF / APV / Spezialfälle
 
 - [ ] FCFF
 - [ ] WACC
@@ -334,67 +419,63 @@ Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur
 - [ ] Equity-vs-Entity Cross-Check
 - [ ] APV optional
 - [ ] Banken/Versicherungen Sonderlogik
-- [ ] Verlustunternehmen
-- [ ] Liquidationsansatz
+- [ ] Verlustunternehmen / Liquidation
 - [ ] Zykliker / normalisierte Gewinne
 
 ---
 
-## Phase 12 — Streamlit UX
+# Phase 12 — Streamlit UX Ausbau
 
-- [x] Startseite mit lokaler ASML-Suche als Phase-0-Basis
-- [x] Neue Analyse / Analyse öffnen / Vergleich als Phase-0-Basis
-- [x] zuletzt bearbeitete Analysen als Phase-0-Basis
-- [ ] produktive Unternehmenssuche
-- [ ] Kapitel-Navigation
-- [ ] `ⓘ` Popover überall
+Grundnavigation existiert bereits. Ausbau:
+
+- [ ] Kapitel-Navigation entlang Buch/Excel
+- [ ] `ⓘ` überall aus zentralen YAML-Katalogen
 - [ ] Historiencharts
-- [ ] manuelle Eingabezentrale
+- [ ] übersichtliche Datenquellenanzeige
+- [ ] komfortables Aktienfinder-Formular
 - [ ] Szenarioeditor
-- [ ] Investmentthese und Risiken als strukturierte Formulare
-- [ ] erweiterte Änderungsansicht zwischen Revisionen
-- [ ] Datenquellenanzeige
+- [ ] Investmentthese/Risiken
+- [ ] Änderungsansicht zwischen Revisionen visuell ausbauen
+- [ ] responsive Darstellung
 
 ---
 
-## Phase 13 — PDF-Reporting
+# Phase 13 — PDF-Reporting
 
-### Kurzreport
-- [ ] 5–10 Seiten
+## Kurzreport
 - [ ] Executive Summary
 - [ ] Kernkennzahlen
 - [ ] Fair Value / DCF / Multiples
-- [ ] Investmentthese und Risiken
+- [ ] Investmentthese / Risiken
 
-### Vollreport
-- [ ] Stammdaten / Datenstand
+## Vollreport
+- [ ] Stammdaten und Datenstand
 - [ ] Finanzhistorie
 - [ ] Kennzahlenkapitel
 - [ ] Geschäftsmodell
 - [ ] Ausschüttungspolitik
 - [ ] Bewertungskennzahlen
-- [ ] Faires KGV
+- [ ] Fair-KGV
 - [ ] DCF
 - [ ] Szenarien / Sensitivität
-- [ ] Investmentthese / Risiken
 - [ ] Margin of Safety
 - [ ] Quellen / Methodik
 
-### Reproduzierbarkeit
-- [x] Report-Grundprinzip: ausschließlich aus gewähltem Analyse-Snapshot
-- [x] alte Analyse darf im Prototyp nicht mit heutigen Daten vermischt werden
-- [x] PDF-Dateiname enthält Unternehmen/Ticker, Stichtag und Revision
-- [ ] vollständige Report-Inhalte
+## Reproduzierbarkeit
+- [x] technischer PDF-Snapshot-Prototyp
+- [x] alter Snapshot mischt keine Live-Daten ein
+- [x] Dateiname mit Unternehmen/Stichtag/Revision
+- [ ] professionelles finales Layout
 
 ---
 
-## Phase 14 — Qualität / Release
+# Phase 14 — Qualität / Release
 
-- [ ] Testabdeckung zentrale Formeln
-- [ ] Datenvalidierung
-- [ ] Fehler-/Missing-Data UX
+- [ ] zentrale Formeln vollständig testen
+- [ ] Datenvalidierung / Missing-Data-UX
 - [ ] Logging
-- [ ] Backup/Restore der SQLite-Datenbank
-- [ ] Import/Export Analyse-Snapshot
-- [ ] lokale Installationsanleitung Windows
-- [ ] erster stabiler Release
+- [ ] Datenbankmigrationen
+- [ ] Backup / Restore
+- [ ] Snapshot Import / Export
+- [ ] lokale Windows-Installationsanleitung
+- [ ] stabiler erster Release
