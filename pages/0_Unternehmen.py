@@ -14,6 +14,11 @@ from stock_valuation.companies.deletion import (
     delete_company_completely,
 )
 from stock_valuation.companies.provider_symbols import upsert_provider_symbol
+from stock_valuation.companies.selection import (
+    choose_recommended_listing,
+    group_company_candidates,
+    resolve_fundamentals_symbol,
+)
 from stock_valuation.companies.service import (
     alpha_vantage_company_candidates,
     get_or_create_from_candidate,
@@ -43,8 +48,8 @@ def _optional_decimal(raw: str) -> Decimal | None:
 
 st.title("Unternehmen")
 st.caption(
-    "Unternehmen suchen, Analyse anlegen und danach unter **Finanzdaten** mit einem Klick "
-    "die historischen Abschlüsse und Analystenschätzungen laden."
+    "Suche nur nach dem Unternehmen. Börsenplatz und Alpha-Vantage-Symbol für Fundamentaldaten "
+    "werden beim Anlegen automatisch getrennt bestimmt."
 )
 
 api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
@@ -53,7 +58,7 @@ if not api_key_available:
 
 query = st.text_input(
     "Unternehmen oder Ticker",
-    placeholder="z. B. Microsoft, Siemens, LVMH, Novo Nordisk",
+    placeholder="z. B. ASML, Microsoft, Siemens, LVMH, Novo Nordisk",
 )
 
 if st.button(
@@ -67,7 +72,10 @@ if st.button(
         candidates = alpha_vantage_company_candidates(raw_matches)
         st.session_state["company_search_candidates"] = candidates
         if candidates:
-            st.success(f"{len(candidates)} Treffer gefunden.")
+            groups = group_company_candidates(candidates)
+            st.success(
+                f"{len(groups)} Unternehmen aus {len(candidates)} Börsen-/Instrumenttreffern erkannt."
+            )
         else:
             st.warning("Alpha Vantage hat für diese Suche keine Treffer geliefert.")
     except ProviderError as exc:
@@ -75,45 +83,87 @@ if st.button(
 
 candidates = st.session_state.get("company_search_candidates", [])
 if candidates:
-    labels = {
-        f"{candidate.name} · {candidate.ticker} · {candidate.exchange or '—'} · {candidate.currency}": candidate
-        for candidate in candidates
+    groups = group_company_candidates(candidates)
+    group_labels = {
+        f"{group.name} · {len(group.candidates)} Börsenplatz/Plätze": group
+        for group in groups
     }
-    selected_label = st.selectbox("Treffer", list(labels))
-    candidate = labels[selected_label]
-
-    details = st.columns(4)
-    details[0].metric("Unternehmen", candidate.name)
-    details[1].metric("Provider-Symbol", candidate.provider_symbol or candidate.ticker)
-    details[2].metric("Region/Börse", candidate.exchange or "—")
-    details[3].metric("Währung", candidate.currency)
+    selected_group_label = st.selectbox("Unternehmen", list(group_labels))
+    selected_group = group_labels[selected_group_label]
 
     st.info(
-        "Bei mehreren Börsenplätzen möglichst die Hauptnotierung bzw. das eigentliche Unternehmen "
-        "wählen. Der Fundamentals-Ticker kann von einer lokalen Zweitnotierung abweichen."
+        "Du musst **keinen Ticker oder Börsenplatz auswählen**. Beim Anlegen prüft das Tool "
+        "automatisch, welches Alpha-Vantage-Symbol echte Jahresabschlüsse liefert, und speichert "
+        "dies getrennt vom Börsenplatz."
     )
+
+    with st.expander("Technische Details / gefundene Börsenplätze", expanded=False):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Bezeichnung": item.name,
+                        "Symbol": item.provider_symbol or item.ticker,
+                        "Region/Börse": item.exchange,
+                        "Währung": item.currency,
+                    }
+                    for item in selected_group.candidates
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Diese Liste dient nur zur Kontrolle. Das Fundamentals-Symbol wird beim Anlegen mit "
+            "einem echten Income-Statement-Probe automatisch verifiziert (maximal 3 Versuche)."
+        )
 
     with st.form("create-analysis-from-provider"):
         analysis_date = st.date_input("Analyse-Stichtag", value=date.today())
         market_price_raw = st.text_input("Aktienkurs am Stichtag (optional)")
         title = st.text_input("Titel (optional)")
         notes = st.text_area("Notizen / erste Investmentthese (optional)")
-        create = st.form_submit_button("Analyse anlegen", type="primary")
+        create = st.form_submit_button("Unternehmen automatisch erkennen und Analyse anlegen", type="primary")
 
     if create:
         try:
             market_price = _optional_decimal(market_price_raw)
+            provider = AlphaVantageProvider()
+            with st.spinner("Ermittle automatisch Fundamentaldaten-Symbol und passenden Börsenplatz …"):
+                resolution = resolve_fundamentals_symbol(
+                    provider,
+                    selected_group.candidates,
+                    max_attempts=3,
+                )
+                listing = choose_recommended_listing(
+                    selected_group.candidates,
+                    reported_currency=resolution.reported_currency,
+                )
+
             with get_session() as session:
-                company = get_or_create_from_candidate(session, candidate)
+                company = get_or_create_from_candidate(session, listing)
+                upsert_provider_symbol(
+                    session,
+                    company,
+                    provider="alphavantage",
+                    purpose="listing",
+                    symbol=listing.provider_symbol or listing.ticker,
+                    exchange=listing.exchange,
+                    currency=listing.currency,
+                    note="Automatisch aus den SYMBOL_SEARCH-Börsenplätzen ausgewählte Haupt-/Referenznotierung.",
+                )
                 upsert_provider_symbol(
                     session,
                     company,
                     provider="alphavantage",
                     purpose="fundamentals",
-                    symbol=candidate.provider_symbol or candidate.ticker,
-                    exchange=candidate.exchange,
-                    currency=candidate.currency,
-                    note="Über Alpha Vantage SYMBOL_SEARCH ausgewählt.",
+                    symbol=resolution.symbol,
+                    currency=resolution.reported_currency,
+                    note=(
+                        "Automatisch per INCOME_STATEMENT-Probe bestätigt; "
+                        f"{resolution.annual_report_count} Jahresberichte, letzter Stichtag "
+                        f"{resolution.latest_fiscal_date or '—'}."
+                    ),
                 )
                 analysis = create_analysis(session, company=company, as_of_date=analysis_date)
                 update_analysis_metadata(
@@ -122,13 +172,19 @@ if candidates:
                     title=title or None,
                     notes=notes or None,
                     market_price=market_price,
-                    market_price_currency=candidate.currency,
+                    market_price_currency=listing.currency,
                 )
+
+            st.session_state.pop("company_search_candidates", None)
+            attempts = ", ".join(resolution.attempts)
             st.success(
-                f"{candidate.name}: Analyse R{analysis.revision_number} angelegt. "
+                f"{company.name}: Analyse R{analysis.revision_number} angelegt. "
+                f"Fundamentaldaten automatisch bestätigt mit `{resolution.symbol}` "
+                f"({resolution.reported_currency or 'Währung unbekannt'}); geprüft: {attempts}. "
                 "Jetzt links **Finanzdaten** öffnen und `Daten laden / aktualisieren` drücken."
             )
-        except ValueError as exc:
+            st.rerun()
+        except (ValueError, ProviderError) as exc:
             st.error(str(exc))
 
 st.divider()
