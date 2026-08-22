@@ -1,6 +1,6 @@
 # Current Task
 
-## Phase 3A – Kapitel 2 fachlich fertigstellen
+## Phase 3A – Kapitel 2 fachlich fertigstellen und gesperrte Rohfelder bereinigen
 
 Der erste echte lokale ASML-Import, die feldweise Primärquellenprüfung und die erste Kennzahlenengine laufen.
 
@@ -14,9 +14,8 @@ Der erste echte lokale ASML-Import, die feldweise Primärquellenprüfung und die
   - `INCOME_STATEMENT.depreciationAndAmortization` trifft ASML 2025 = 1.025,9 Mio. EUR exakt.
   - dasselbe Feld trifft ASML 2024 = 918,6 Mio. EUR exakt.
   - das Cashflow-D&A-Feld weicht 2024 deutlich ab und bleibt nur Cross-Check.
-- Mapping ist deshalb auf das Income-Statement-D&A-Feld umgestellt.
-- gezielte D&A-Aktualisierung benötigt nur 1 Alpha-Vantage-Request und ersetzt keine anderen Snapshot-Rohdaten.
-- EBITDA-Marge ist im Code implementiert und kann nach der D&A-Aktualisierung berechnet werden.
+- D&A-Mapping wurde lokal angewendet; `depreciation_amortization` ist im Feld-Gate freigegeben.
+- EBITDA-Marge ist aktiv und lokal als 10-Jahres-Serie sichtbar; 2025 ca. 37,74 %.
 
 ## Vor Beginn lesen
 
@@ -28,6 +27,28 @@ Der erste echte lokale ASML-Import, die feldweise Primärquellenprüfung und die
 6. `src/stock_valuation/knowledge/metrics.yaml`
 7. `src/stock_valuation/metrics/engine.py`
 8. `src/stock_valuation/metrics/service.py`
+9. `src/stock_valuation/data/providers/alphavantage.py`
+10. `pages/3_Datenqualitaet.py`
+
+## Aktueller technischer Schritt
+
+Die nächsten gesperrten Rohfelder werden mit genau zwei Diagnose-Requests untersucht:
+
+- `BALANCE_SHEET`
+- `CASH_FLOW`
+
+Die neue Diagnose zeigt mögliche Provider-Rohfelder für:
+
+- `accounts_receivable`
+- `inventory`
+- `ppe_net`
+- `short_term_debt`
+- `cash_and_short_term_investments`
+- `operating_cash_flow`
+- `capital_expenditures`
+- `dividends_paid`
+
+Daneben werden die offiziellen ASML-Kontrollwerte 2024/2025 und die rechnerische Abweichung angezeigt. Die Diagnose verändert den Snapshot nicht.
 
 ## Lokaler nächster Schritt
 
@@ -35,11 +56,10 @@ Der erste echte lokale ASML-Import, die feldweise Primärquellenprüfung und die
 2. `pytest -q`
 3. `streamlit run app.py`
 4. `Datenqualität` öffnen.
-5. `D&A-Mapping anwenden (1 Request)` genau einmal ausführen.
-6. Prüfen, dass `depreciation_amortization` danach im Feld-Gate freigegeben ist und die EBITDA-Marge-Datenbasis `BEREIT` zeigt.
-7. `Kennzahlen` öffnen.
-8. `Aktive Kennzahlen aus Snapshot berechnen` ausführen — 0 API-Requests.
-9. Prüfen, dass EBIT- und EBITDA-Marge als 10-Jahres-Serie erscheinen.
+5. Ganz unten `Gesperrte Felder prüfen (2 Requests)` genau einmal ausführen.
+6. Ergebnis erfassen/screenshotten.
+7. Nur Kandidaten weiterverfolgen, die in beiden Jahren numerisch eng an ASML liegen **und** fachlich dieselbe Bilanz-/Cashflow-Zeile darstellen.
+8. Kein Mapping allein wegen ähnlicher Größenordnung freigeben.
 
 ## Noch offene Kapitel-2-Methodik
 
@@ -54,25 +74,16 @@ Für die folgenden Kennzahlen ist die Rohdatenbasis grundsätzlich vorhanden, di
 
 Nutzer liefert jeweils nur Formel-/Definitionsabschnitt als Screenshot. Keine Formel erfinden.
 
-## Weiterhin datenblockiert für spätere Phasen
+## Weiterhin nicht vorziehen
 
-- `accounts_receivable`
-- `inventory`
-- `ppe_net`
-- `short_term_debt`
-- `operating_cash_flow`
-- `capital_expenditures`
-- Teile der Cash-/Debt-Brücke
+- keine Working-Capital-Kennzahlen aus gesperrten Feldern
+- kein FCF / Owner Earnings / DCF
+- keine Net-Debt-/EV-Logik auf ungeklärten Debt-Feldern
+- keine Fair-KGV-Punkte oder Risikostufen erfinden
 
-Deshalb weiterhin noch nicht starten:
+## Definition of Done dieses Teilblocks
 
-- Working-Capital-Kennzahlen aus den gesperrten Feldern
-- FCF / Owner Earnings / DCF
-- Net-Debt-/EV-Logik auf ungeklärten Debt-Feldern
-
-## Definition of Done nächster Block
-
-- D&A-Serie im lokalen Snapshot auf `depreciationAndAmortization` aktualisiert.
-- D&A-Gate 2024/2025 PASS.
-- EBITDA-Marge als versionierte 10-Jahres-Kennzahl sichtbar.
-- restliche Kapitel-2-Kennzahlen bleiben bis zur Buchverifikation blockiert.
+- Kandidaten der gesperrten Balance-Sheet-/Cashflow-Felder sind sichtbar.
+- numerisch und semantisch geeignete Providerfelder sind identifiziert oder als nicht vorhanden dokumentiert.
+- Mapping-Änderungen erfolgen erst nach Primärquellenvergleich.
+- EBIT- und EBITDA-Marge bleiben reproduzierbar aus dem Snapshot berechenbar.
