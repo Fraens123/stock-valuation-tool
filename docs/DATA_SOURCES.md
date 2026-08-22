@@ -18,40 +18,48 @@ Für den Referenzfall ASML:
 
 Offizielle Unternehmensangaben haben bei historischen veröffentlichten Zahlen Vorrang vor einem normalisierten Sekundärprovider.
 
-ASML stellt für 2025 sowohl US-GAAP- als auch IFRS-Berichte und Financial-Statements-Exceldateien bereit. Diese Dateien werden für die Validierung des automatischen EODHD-Imports verwendet.
+### 2. Alpha Vantage — aktueller automatisierter V1-Testkandidat
 
-### 2. EODHD Fundamentals v1.1 — primärer automatisierter Rohdatenprovider
+Referenzsymbol für ASML Amsterdam: `ASML.AMS`.
+
+Geplante Verwendung:
+- historische GuV über `INCOME_STATEMENT`
+- Bilanz über `BALANCE_SHEET`
+- Cashflow über `CASH_FLOW`
+- Analystenschätzungen über `EARNINGS_ESTIMATES`
+- Unternehmenssuche über `SYMBOL_SEARCH`
+
+Warum jetzt zuerst Alpha Vantage getestet wird:
+- der Anbieter stellt für den Free-Tier aktuell 25 Requests pro Tag bereit
+- laut Anbieter ist der Großteil der API-Endpunkte im Free-Tier nutzbar
+- Fundamentaldaten-Endpunkte sind öffentlich dokumentiert
+- globale Ticker werden unterstützt; `ASML.AMS` wird als Amsterdam-Listing verwendet
+
+Ein ASML-Import benötigt mehrere Requests (GuV, Bilanz, Cashflow, Estimates). Der Free-Tier ist daher für Entwicklung, Tests und wenige Analysen pro Tag geeignet, nicht für Massen-Screening.
+
+**Qualitäts-Gate:** Alpha Vantage wird erst als produktiver Primärprovider freigegeben, wenn die ASML-Daten gegen offizielle ASML-Berichte plausibilisiert wurden.
+
+Dokumentation:
+- `https://www.alphavantage.co/documentation/`
+- `https://www.alphavantage.co/support/`
+
+### 3. EODHD — integrierter Fallback, Fundamentals im Free-Tier nicht verfügbar
 
 Referenzsymbol: `ASML.AS`.
 
-Verwendung:
-- Unternehmensstammdaten
-- historische GuV
-- Bilanz
-- Cashflow
-- Shares
-- Dividenden
-- Earnings History
-- Analystenschätzungen, sofern die benötigten Felder für den Titel vorhanden sind
+Der lokale Test am 22.08.2026 mit einem gültigen kostenlosen EODHD-Key ergab beim Fundamentals-v1.1-Abruf für ASML:
 
-Warum EODHD als V1-Kandidat:
-- internationale Börsenabdeckung
-- non-US Fundamentaldaten
-- jährliche und quartalsweise Statements
-- v1.1 trennt Annual und Quarterly Earnings Trend sauber
-- Rohdatenfelder für die meisten benötigten Schmidlin-Kennzahlen vorhanden
+- HTTP `403 Forbidden`
+- API-Key wurde erkannt
+- der kostenlose Tarif schaltet Fundamentals für diesen Abruf nicht frei
 
-Wichtige Regel: Provider-ROE, Provider-EV oder ähnliche fertige Kennzahlen werden höchstens als Cross-Check genutzt. Unser Modell rechnet aus den Rohdaten selbst.
+EODHD dokumentiert, dass Fundamentals-Abfragen 10 API Calls kosten und bestimmte Datentypen im Free-Tier nicht zugänglich sind. Der Fundamentals Data Feed ist kostenpflichtig.
 
-Dokumentation:
-- `https://eodhd.com/financial-apis/stock-etfs-fundamental-data-feeds`
-- `https://eodhd.com/financial-academy/financial-faq/fundamentals-glossary-common-stock`
+**Entscheidung:** Vorläufig keinen EODHD-Fundamentals-Tarif kaufen. Adapter bleibt im Projekt, damit EODHD später optional als bezahlter Provider/Cross-Check genutzt werden kann.
 
-Das konkrete ASML-Feldmapping steht in `docs/ASML_DATA_MAPPING.md`.
+### 4. ECB Data API — risikofreier EUR-Zins
 
-### 3. ECB Data API — risikofreier EUR-Zins
-
-Für EUR-Unternehmen soll die Euro-Area-AAA-Zinskurve verwendet werden, z. B. der 10-jährige Punkt als risikofreie Näherung.
+Für EUR-Unternehmen wird die Euro-Area-AAA-Zinskurve verwendet, z. B. der 10-jährige Punkt als risikofreie Näherung.
 
 Zu speichern:
 - Wert
@@ -62,7 +70,7 @@ Zu speichern:
 
 Der Zins wird Teil des Analyse-Snapshots; eine alte Analyse verwendet bei späterem Öffnen nicht den heutigen Zins.
 
-### 4. Aktienfinder.de — zentrale manuelle Ergänzung
+### 5. Aktienfinder.de — zentrale manuelle Ergänzung
 
 Keine Abhängigkeit von einer undokumentierten API.
 
@@ -89,8 +97,6 @@ Ein manueller Wert darf einen API-Wert überschreiben, muss dann aber im UI, Ver
 ### Management Guidance
 
 Management Guidance wird **separat** gespeichert und nicht mit Analystenschätzungen vermischt.
-
-Für ASML ist sie besonders nützlich, weil das Unternehmen konkrete Umsatz-/Margenkorridore veröffentlicht.
 
 ### Analystenkonsens
 
@@ -137,17 +143,9 @@ Analystenwerte sind Input-Evidenz, keine automatische Wahrheit.
 
 Priorität:
 1. offizieller Geschäftsbericht / Filing
-2. EODHD
+2. freigegebener automatischer Provider
 3. optionaler Cross-Check-Provider
 4. manuelle Ergänzung
-
-### Zukunftsdaten
-
-Priorität:
-1. Management Guidance als eigener Korridor
-2. Analystenkonsens
-3. eigene Annahmen
-4. historische Extrapolation nur als letzter Anker
 
 ### Keine stillen Ersatzwerte
 
@@ -159,11 +157,7 @@ ROE, Gearing, ROCE, FCF usw. werden zentral definiert und aus denselben normalis
 
 ---
 
-## Cross-Checks / spätere Provider
-
-### Alpha Vantage
-
-Möglicher Fallback für Statements und Earnings Estimates.
+## Weitere mögliche Provider
 
 ### Financial Modeling Prep
 
@@ -175,16 +169,7 @@ Andere Provider werden nur hinter dem gemeinsamen Provider-Interface integriert.
 
 ## ASML-Referenzwerte für ersten Importtest
 
-Die offizielle ASML-2025-Berichterstattung nennt als erste Plausibilitätsanker unter anderem:
-
-- 2025 Total net sales: €32.7 Mrd.
-- Gross margin: 52.8 %
-- R&D: €4.7 Mrd.
-- Basic EPS: €24.73
-
-Für 2026 nennt ASML einen Umsatzkorridor von €34–39 Mrd. und eine erwartete Bruttomarge von 51–53 %. Für 2030 beschreibt ASML eine Umsatzchance von ungefähr €44–60 Mrd. und 56–60 % Bruttomarge.
-
-Diese Werte werden nicht hart in die Bewertungsengine codiert. Sie dienen als referenzierte Test- und Guidance-Daten im ASML-Snapshot.
+Die offizielle ASML-2025-Berichterstattung dient als Plausibilitätsanker für Umsatz, Margen, Gewinn, Bilanz und Cashflow. Diese Werte werden nicht hart in die Bewertungsengine codiert, sondern als referenzierte Test-/Guidance-Daten verwendet.
 
 ---
 
