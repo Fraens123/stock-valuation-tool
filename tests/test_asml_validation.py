@@ -10,19 +10,23 @@ from stock_valuation.validation.asml_reference import PrimarySourceReference
 from stock_valuation.validation.service import validate_asml_primary_source, validation_summary
 
 
+def _analysis(session: Session):
+    company = get_or_create_company(
+        session,
+        name="ASML Holding N.V.",
+        ticker="ASML",
+        currency="EUR",
+        provider_symbol="ASML.AS",
+    )
+    return create_analysis(session, company=company, as_of_date=date(2026, 8, 22))
+
+
 def test_asml_validation_flags_match_mismatch_and_missing() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
     with Session(engine, expire_on_commit=False) as session:
-        company = get_or_create_company(
-            session,
-            name="ASML Holding N.V.",
-            ticker="ASML",
-            currency="EUR",
-            provider_symbol="ASML.AS",
-        )
-        analysis = create_analysis(session, company=company, as_of_date=date(2026, 8, 22))
+        analysis = _analysis(session)
         session.add_all(
             [
                 FinancialFactSnapshot(
@@ -86,3 +90,56 @@ def test_asml_validation_flags_match_mismatch_and_missing() -> None:
         assert summary["critical_fail"] == 1
         assert summary["critical_missing"] == 1
         assert summary["provider_gate_passed"] is False
+
+
+def test_asml_primary_fact_has_priority_without_deleting_fallback_fact() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        session.add_all(
+            [
+                FinancialFactSnapshot(
+                    analysis_id=analysis.id,
+                    statement="balance_sheet",
+                    metric="accounts_receivable",
+                    period_end=date(2025, 12, 31),
+                    period_type="FY",
+                    value=Decimal("1400"),
+                    provider_value=Decimal("1400"),
+                    provider="alphavantage",
+                    provider_field="currentNetReceivables",
+                    source_type="provider",
+                ),
+                FinancialFactSnapshot(
+                    analysis_id=analysis.id,
+                    statement="balance_sheet",
+                    metric="accounts_receivable",
+                    period_end=date(2025, 12, 31),
+                    period_type="FY",
+                    value=Decimal("1000"),
+                    provider_value=Decimal("1000"),
+                    provider="asml_primary",
+                    provider_field="Balance Sheets!A13",
+                    source_type="primary_source",
+                ),
+            ]
+        )
+        session.commit()
+
+        refs = (
+            PrimarySourceReference(
+                metric="accounts_receivable",
+                period_end=date(2025, 12, 31),
+                value=Decimal("1000"),
+                label="Receivables",
+                source_url="https://example.com",
+            ),
+        )
+        result = validate_asml_primary_source(session, analysis, references=refs)[0]
+
+        assert result.status == "pass"
+        assert result.provider == "asml_primary"
+        assert result.provider_value == Decimal("1000")
+        assert "primary-source" in (result.note or "")
