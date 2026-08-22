@@ -17,9 +17,9 @@ Für folgende Kennzahlen ist die Rohdatenbasis grundsätzlich vorhanden, die exa
 - ROCE – Kindle S. 111: exakte Capital-Employed-Definition.
 - Umsatzverdienstrate – Kindle S. 114: konkrete Formel/Definition.
 
-EBIT-Marge ist bereits aktiv und getestet.
+EBIT- und EBITDA-Marge sind bereits aktiv und getestet.
 
-### 1.2 D&A / EBITDA-Marge – technisch geklärt
+### 1.2 D&A / EBITDA-Marge – abgeschlossen
 
 Die D&A-Rohfelddiagnose hat den bisherigen Datenblocker aufgelöst:
 
@@ -27,8 +27,9 @@ Die D&A-Rohfelddiagnose hat den bisherigen Datenblocker aufgelöst:
   - 2025 = 1.025,9 Mio. EUR — exakter ASML-Treffer
   - 2024 = 918,6 Mio. EUR — exakter ASML-Treffer
 - `CASH_FLOW.depreciationDepletionAndAmortization` bleibt nur Cross-Check, weil 2024 abweicht.
-
-Offen ist lokal nur noch, das neue D&A-Mapping einmal mit dem 1-Request-Refresh in den bestehenden Snapshot zu schreiben. Danach kann die EBITDA-Marge berechnet werden.
+- Das neue Mapping wurde lokal in den Snapshot geschrieben.
+- `depreciation_amortization` ist im Feld-Gate freigegeben.
+- EBITDA-Marge ist als 10-Jahres-Serie sichtbar; 2025 ca. 37,74 %.
 
 ## 2. Noch offene Datenqualität
 
@@ -43,10 +44,14 @@ Derzeit weiterhin problematisch/blockiert:
 - `operating_cash_flow`
 - `capital_expenditures`
 - `cash_and_short_term_investments` als Cross-Check-Feld
+- `dividends_paid` als nicht kritischer, aber derzeit abweichender Wert
 - weitere Felder, die im Feld-Gate FAIL/MISSING zeigen
+
+Neu verfügbar ist eine 2-Request-Diagnose aus `BALANCE_SHEET` und `CASH_FLOW`. Sie zeigt mögliche Alpha-Vantage-Rohfelder für die gesperrten internen Schlüssel direkt neben den offiziellen ASML-Kontrollwerten 2024/2025 und der rechnerischen Abweichung. Sie verändert den Snapshot nicht.
 
 Noch zu tun:
 
+- Diagnose lokal ausführen und Kandidaten prüfen,
 - problematische Providerfelder fachlich neu mappen oder ausschließen,
 - ältere Jahre stichprobenartig gegen ASML-Primärquellen prüfen,
 - keine offiziellen Kontrollwerte automatisch als Ersatz in die Providerhistorie schreiben,
@@ -180,6 +185,6 @@ Verbindlich in `docs/METHODOLOGY_OPEN_QUESTIONS.md` dokumentiert:
 Parallel arbeiten wir an zwei Strängen:
 
 1. **Buchmethodik:** Nutzer liefert die Formel-/Definitionsabschnitte für Kindle S. 94, 101, 107, 109, 111 und 114. Danach werden die restlichen Kapitel-2-Kennzahlen freigeschaltet.
-2. **Datenqualität:** Nach dem gelösten D&A-Thema werden als Nächstes Forderungen, Vorräte, PP&E, Debt, Operating Cash Flow und CAPEX bereinigt bzw. alternative Quellen evaluiert.
+2. **Datenqualität:** Die neue 2-Request-Diagnose untersucht Forderungen, Vorräte, PP&E, Debt, Operating Cash Flow, CAPEX und Dividenden gegen die 2024/2025-ASML-Kontrollwerte.
 
 Keine spätere Bewertungslogik wird vorgezogen, solange dafür zentrale Rohdaten oder Buchdefinitionen noch nicht verifiziert sind.
