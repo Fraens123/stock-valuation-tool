@@ -1,61 +1,81 @@
 # Current Task
 
-## Phase 3A – Erste Kennzahlenengine auf validierten ASML-Rohdaten
+## Phase 3A – Kapitel-2-Kennzahlen + parallele Datenbereinigung
 
-Der erste echte lokale ASML-Import und die feldweise Primärquellenprüfung sind erfolgreich gelaufen.
+Der erste echte lokale ASML-Import, die feldweise Primärquellenprüfung und die erste Kennzahlenengine sind erfolgreich gelaufen.
 
-## Verifizierter Datenstand
+## Verifizierter Stand
 
 - Alpha Vantage `ASML` liefert konsolidierte ASML-Holding-Abschlüsse in EUR.
 - erster Snapshot: 720 normalisierte jährliche Rohdatenpunkte über 20 Geschäftsjahre.
 - 2024/2025-Primärquellen-Gate ist aktiv.
-- lokale Nutzerprüfung bestätigt:
-  - `revenue`, `net_income`, `operating_income`, `total_assets`, `shareholders_equity` und `current_liabilities` besitzen eine freigegebene Datenbasis für Phase 3A.
-  - `depreciation_amortization`, `accounts_receivable`, `inventory`, `ppe_net`, `operating_cash_flow`, `capital_expenditures` u. a. bleiben blockiert.
-- Working-Capital- und DCF-Kennzahlen bleiben deshalb weiterhin gesperrt.
+- `revenue`, `net_income`, `operating_income`, `total_assets`, `shareholders_equity` und `current_liabilities` besitzen eine freigegebene Datenbasis für Phase 3A.
+- `depreciation_amortization`, `accounts_receivable`, `inventory`, `ppe_net`, `operating_cash_flow`, `capital_expenditures` u. a. bleiben blockiert.
+- EBIT-Marge wird bereits reproduzierbar aus dem gespeicherten Snapshot berechnet und als versionierter `MetricSnapshot` gespeichert.
+- lokale Anzeige wurde plausibilisiert: ASML EBIT-Marge 2025 ca. 34,60 %.
 
-## Neu implementiert
+Siehe `docs/OPEN_ITEMS.md` und `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`.
 
-- `src/stock_valuation/metrics/engine.py`: reine, testbare Verhältnis-/EBIT-Margen-Logik.
-- `src/stock_valuation/metrics/service.py`: Daten-Gate, Berechnung, Input-Hash und versionierte `MetricSnapshot`-Persistenz.
-- `pages/4_Kennzahlen.py`: erstes Kapitel-2-UI mit 10-Jahres-Historie, 5J Ø/Median, 10J Median und `ⓘ`.
-- `tests/test_phase3a_metrics.py`: Formel-, Daten-Gate-, Snapshot- und Freeze-Tests.
-- Berechnung verursacht **keine API-Requests**; sie verwendet ausschließlich gespeicherte Snapshot-Rohdaten.
+## Strang A – Buchmethodik Kapitel 2
 
-## Aktiver Kennzahlenstatus
+Für folgende Kennzahlen ist die Rohdatenbasis bereit, aber die exakte Schmidlin-Definition noch zu verifizieren:
 
-### Aktiv
+- ROE – Kindle S. 94
+- Umsatzrendite – Kindle S. 101
+- Kapitalumschlag – Kindle S. 107
+- Gesamtkapitalrendite – Kindle S. 109
+- ROCE – Kindle S. 111
+- Umsatzverdienstrate – Kindle S. 114
 
-- **EBIT-Marge**
-  - Zieldefinition: EBIT / Umsatz.
-  - ASML-V1-Input: validiertes `Income from operations / Total net sales`.
-  - provider-/unternehmensspezifische Zuordnung ist in `docs/DECISIONS.md` dokumentiert.
+Sobald die jeweiligen Formel-/Definitionsabschnitte vorliegen:
 
-### Rohdaten bereit, Methodik noch verifizieren
+1. Methodik in `metrics.yaml` finalisieren.
+2. Entscheidung ggf. in `docs/DECISIONS.md` dokumentieren.
+3. reine Formel in `metrics/engine.py` implementieren.
+4. Daten-Gate und Snapshot-Persistenz in `metrics/service.py` ergänzen.
+5. Unit Tests hinzufügen.
+6. 10-Jahres-UI analog zur EBIT-Marge ergänzen.
 
-- Eigenkapitalrendite (ROE) — Kindle S. 94
-- Umsatzrendite — Kindle S. 101
-- Kapitalumschlag — Kindle S. 107
-- Gesamtkapitalrendite — Kindle S. 109
-- ROCE — Kindle S. 111
-- Umsatzverdienstrate — Kindle S. 114
+Keine Formel aus allgemeinem Finanzwissen einsetzen, wenn die Projektmethodik ausdrücklich auf Buchprüfung wartet.
 
-### Daten blockiert
+## Strang B – technische Datenbereinigung ohne Buchseiten
 
-- EBITDA-Marge — `depreciation_amortization` ist im ASML-Gate gesperrt.
+Parallel dürfen die blockierten Providerfelder untersucht werden.
 
-## Lokaler Abnahmeschritt
+Priorität 1: `depreciation_amortization`
 
-Nach `git pull`:
+- verfügbare Alpha-Vantage-Rohfelder/Taxonomie prüfen.
+- unterscheiden zwischen Abschreibungen auf PP&E, Amortisation und Right-of-use assets.
+- 2024/2025 gegen ASML-Primärquelle plausibilisieren.
+- nur bei eindeutiger Semantik neu mappen und Feld-Gate erneut prüfen.
+- danach EBITDA-Marge freigeben, sofern Daten-Gate PASS ist.
 
-1. `pytest -q`
-2. `streamlit run app.py`
-3. Seite `Kennzahlen` öffnen.
-4. bestehende ASML-Analyse auswählen.
-5. `Kennzahlen aus Snapshot berechnen` klicken — **0 API-Requests**.
-6. prüfen, dass eine 10-Jahres-EBIT-Margen-Historie erscheint.
-7. aktuellen 2025-Wert auf ungefähr 34,6 % plausibilisieren.
-8. prüfen, dass methodisch offene Kennzahlen nicht berechnet werden.
+Priorität 2:
+
+- `accounts_receivable`
+- `inventory`
+- `ppe_net`
+- `short_term_debt`
+- `operating_cash_flow`
+- `capital_expenditures`
+- `cash_and_short_term_investments`
+
+Für jedes Feld gilt: neu mappen, explizit ausschließen oder gezielt eine bessere Quelle evaluieren. Keine stillen Primärquellen-Ersatzwerte.
+
+## Strang C – Datenhistorie
+
+- 2024/2025 bleiben die primären automatischen Kontrolljahre.
+- ältere Jahre werden stichprobenartig gegen offizielle ASML-Berichte geprüft.
+- ein historisches Providerfeld darf nur verwendet werden, wenn seine Semantik über die Jahre plausibel konsistent ist.
+
+## Bereits implementiert
+
+- `src/stock_valuation/metrics/engine.py`
+- `src/stock_valuation/metrics/service.py`
+- `pages/4_Kennzahlen.py`
+- `tests/test_phase3a_metrics.py`
+- Feld-Gates und Seite `Datenqualität`
+- `docs/OPEN_ITEMS.md` als Gesamtübersicht
 
 ## Noch NICHT tun
 
@@ -65,16 +85,14 @@ Nach `git pull`:
 - keine FCF-/Owner-Earnings-/DCF-Logik aus blockiertem OCF/CAPEX
 - keine Fair-KGV-Punkte oder Risikoaufschläge erfinden
 
-## Nächster fachlicher Input
+## Nächster Nutzer-Input
 
-Für die restlichen Phase-3A-Kennzahlen werden die relevanten Buchseiten benötigt, insbesondere Kindle S. 94, 101, 107, 109, 111 und 114. Es reichen Screenshots der jeweiligen Formel-/Definitionsabschnitte; keine langen Buchpassagen übernehmen.
+Formel-/Definitionsabschnitte aus Kindle S. 94, 101, 107, 109, 111 und 114. Je Kennzahl reicht der relevante Abschnitt; keine langen Buchpassagen übernehmen.
 
-## Definition of Done Phase 3A erster Block
+## Definition of Done für den aktuellen Block
 
-- lokale Tests bestehen.
-- EBIT-Marge wird reproduzierbar aus gespeicherten Rohdaten berechnet und als `MetricSnapshot` gespeichert.
-- 10-Jahres-UI funktioniert.
-- abgeschlossene Analysen können die Kennzahl nicht neu überschreiben.
-- methodisch offene oder datenblockierte Kennzahlen bleiben sichtbar gesperrt.
-
-Danach werden die Buchdefinitionen schrittweise freigegeben und die restlichen Kapitel-2-Kennzahlen ergänzt.
+- EBIT-Marge bleibt reproduzierbar und getestet.
+- die sechs methodisch offenen Kapitel-2-Kennzahlen werden nach Buchprüfung schrittweise freigeschaltet.
+- D&A wird technisch geklärt oder ausdrücklich als nicht belastbar dokumentiert.
+- EBITDA-Marge wird nur bei freigegebenem D&A aktiviert.
+- offene Datenfelder bleiben sichtbar blockiert.
