@@ -42,9 +42,50 @@ Die gezielte Rohfelddiagnose am 22.08.2026 zeigte:
   - 2024: ca. `1,030.8 Mio. EUR`
   - 2024 weicht deutlich ab und wird deshalb nur als Cross-Check-Feld geführt.
 
-**Entscheidung:** `depreciation_amortization` wird bei Alpha Vantage aus `INCOME_STATEMENT.depreciationAndAmortization` normalisiert. Das Cashflow-Feld wird als `depreciation_amortization_cashflow_crosscheck` getrennt gespeichert. Damit kann die EBITDA-Marge nach Aktualisierung der D&A-Serie feldweise freigegeben werden.
+**Entscheidung:** `depreciation_amortization` wird bei Alpha Vantage aus `INCOME_STATEMENT.depreciationAndAmortization` normalisiert. Das Cashflow-Feld wird als `depreciation_amortization_cashflow_crosscheck` getrennt gespeichert. Die lokale Prüfung bestätigt danach ein freigegebenes D&A-Gate und eine 2025 EBITDA-Marge von ca. 37,74 %.
 
-## Problematische Felder
+## Cash-Komponenten
+
+Das Provider-Aggregat `cashAndShortTermInvestments` wird **nicht** als Quelle für die Cash-Brücke verwendet.
+
+Die getrennten Komponenten sind dagegen brauchbar:
+
+- `cashAndCashEquivalentsAtCarryingValue`
+  - wird separat gegen `cash_and_equivalents` geprüft.
+- `shortTermInvestments`
+  - 2025 Alpha Vantage ca. `405.7 Mio. EUR`; offizieller Komponentenwert ca. `405.9 Mio. EUR`.
+  - 2024 Alpha Vantage `5.4 Mio. EUR`; offizieller Komponentenwert `5.4 Mio. EUR`.
+
+**Entscheidung:** Cash + Short-Term Investments wird später intern aus den freigegebenen Komponenten gebildet. Das fertige Provider-Aggregat bleibt Cross-Check und darf die Komponenten nicht überschreiben.
+
+## Cashflow-Statement: systematisches Skalierungsmuster
+
+Die lokale Rohfelddiagnose zeigt ein starkes Statement-weites Muster. Mehrere voneinander unabhängige Cashflow-Zeilen weichen innerhalb desselben Jahres nahezu mit **demselben Faktor** vom offiziellen ASML-US-GAAP-Wert ab:
+
+### 2025
+
+- Operating Cash Flow: Alpha Vantage / ASML ≈ `0.960532`
+- PP&E CAPEX: Alpha Vantage / ASML ≈ `0.960536`
+- Dividenden: Alpha Vantage / ASML ≈ `0.960514`
+
+Das entspricht jeweils ungefähr `-3.95 %`.
+
+### 2024
+
+- Operating Cash Flow: Alpha Vantage / ASML ≈ `1.044590`
+- PP&E CAPEX: Alpha Vantage / ASML ≈ `1.044601`
+- Dividenden: Alpha Vantage / ASML ≈ `1.044600`
+
+Das entspricht jeweils ungefähr `+4.46 %`.
+
+**Bewertung:** Das ist starke Evidenz für ein Provider-/Normalisierungsproblem auf Statement-Ebene und nicht für zufällig unabhängige Abweichungen einzelner Cashflow-Zeilen. Ein rechnerischer Korrekturfaktor ist ausdrücklich **nicht zulässig**, weil Ursache und historische Stabilität nicht bewiesen sind.
+
+**Entscheidung:** Für ASML werden Alpha-Vantage-Cashflow-Zeilen wie OCF, CAPEX und Dividenden bis auf Weiteres blockiert. Als nächster Datenweg wird die offizielle ASML-US-GAAP-Finanzdatei direkt als Primärquelle untersucht.
+
+Offizielle 2025 US-GAAP Financial Statements Excel:
+`https://ourbrand.asml.com/m/6cd86f972a9dfd24/original/2025-US-GAAP-Financial-Statements.xlsx`
+
+## Problematische Bilanzfelder
 
 ### `accounts_receivable`
 
@@ -60,41 +101,26 @@ Bewertung: **blocked**.
 
 `currentNetReceivables` ist semantisch breiter als reine Trade/Accounts Receivable. Das Feld darf nicht für DSO oder andere Working-Capital-Kennzahlen verwendet werden, solange kein engeres Primärquellen-/Providerfeld vorhanden ist.
 
-### `capital_expenditures`
-
-Beobachtung:
-- 2025 Provider ca. `1,511.5 Mio. EUR`; ASML PP&E purchases `1,573.6 Mio. EUR`
-- 2024 Provider ca. `2,159.4 Mio. EUR`; ASML PP&E purchases `2,067.2 Mio. EUR`
-
-Bewertung: **blocked**.
-
-Die Alpha-Vantage-Definition ist nicht hinreichend identisch mit dem für ASML benötigten PP&E-CAPEX. Für FCF/Owner Earnings wird später die explizite Primärquellen-Aufteilung in `capex_ppe` und `capex_intangibles` bevorzugt.
-
-### `operating_cash_flow`
-
-Beobachtung:
-- 2025 Provider ca. `12,158.9 Mio. EUR`; ASML US GAAP `12,658.5 Mio. EUR`
-- 2024 Provider ca. `11,664.1 Mio. EUR`; ASML US GAAP `11,166.2 Mio. EUR`
-
-Bewertung: **blocked**.
-
-Die Abweichung ist zu groß für Rundung und tritt in beiden Jahren mit wechselnder Richtung auf. Für DCF/FCF darf dieser Providerwert bei ASML vorerst nicht verwendet werden.
-
 ### `inventory`
 
-2024 zeigte eine deutliche Abweichung, obwohl 2025 plausibler sein kann. Bewertung: **blocked**, weil der Feld-Gate beide Jahre berücksichtigt.
+Beobachtung:
+- 2025 Alpha Vantage ca. `11,424.4 Mio. EUR`; ASML `11,429.3 Mio. EUR` — sehr eng.
+- 2024 Alpha Vantage ca. `11,707.1 Mio. EUR`; ASML `10,891.5 Mio. EUR` — deutliche Abweichung.
+
+Bewertung: **blocked**. Ein gutes 2025 darf die abweichende historische Definition 2024 nicht verdecken.
 
 ### `ppe_net`
 
-Providerfeld war im ASML-Live-Snapshot für 2024/2025 `None`. Bewertung: **blocked / missing**.
+Providerfeld `propertyPlantEquipment` war im ASML-Live-Payload für 2024/2025 `None`.
+
+Bewertung: **blocked / missing**.
 
 ### `short_term_debt`
 
-Mindestens ein Referenzjahr ist missing bzw. weicht ab. Das Feld bleibt für Net-Debt-/EV-Berechnungen gesperrt, bis die Debt-Bridge aus geeigneten Einzelpositionen aufgebaut wird.
+- 2025 `currentDebt` und `shortTermDebt` fehlen.
+- 2024 `shortTermDebt` liegt bei ca. `1,078.9 Mio. EUR` gegenüber offiziell `1,010.3 Mio. EUR`.
 
-## Cash und Short-Term Investments
-
-`cashAndShortTermInvestments` weicht vom offiziellen Komponentenwert ab. Das Feld ist bereits als Cross-Check zu behandeln. Für Net Debt / EV sollen die offiziellen bzw. validierten Komponenten `cash_and_equivalents` und `short_term_investments` verwendet werden.
+Bewertung: **blocked**. Für Net Debt / EV wird später eine explizite Debt-Bridge aus geeigneten Primärquellenpositionen aufgebaut.
 
 ## Konsequenz für Phase 3
 
@@ -103,11 +129,11 @@ Phase 3 darf **feldweise** beginnen.
 Zulässig sind Kennzahlen nur dann, wenn alle dafür benötigten Rohdatenfelder den Feld-Gate `approved` besitzen und die jeweilige Formel fachlich bereits festgelegt ist.
 
 - EBIT-Marge ist aktiv.
-- EBITDA-Marge ist methodisch freigegeben und wird nach Aktualisierung der D&A-Serie aus dem validierten Income-Statement-Feld aktiv.
+- EBITDA-Marge ist aktiv.
 - ROE, Umsatzrendite, Kapitalumschlag, Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten weiterhin auf die jeweilige Buchdefinition.
 - Working-Capital-Kennzahlen bleiben blockiert, solange Accounts Receivable / Inventory nicht sauber validiert sind.
-- DCF/FCF bleibt blockiert, solange OCF und CAPEX nicht sauber aus Primärquellen oder einem besser passenden Provider stammen.
+- DCF/FCF bleibt blockiert, solange OCF und CAPEX nicht sauber aus Primärquellen stammen.
 
 ## Architekturentscheidung
 
-Die Datenpipeline bleibt providerunabhängig. Für einzelne problematische Felder können später Primärquellenadapter oder alternative Provider eingesetzt werden, ohne die Kennzahlenengine neu zu definieren.
+Die Datenpipeline bleibt providerunabhängig. Für einzelne problematische Felder werden Primärquellenadapter bzw. alternative Provider eingesetzt, ohne die Kennzahlenengine neu zu definieren. Die offizielle ASML-US-GAAP-Excel-Datei wird deshalb zunächst diagnostisch gescannt; nach Bestätigung ihres Layouts folgt ein deterministischer Import der benötigten Originalzeilen.
