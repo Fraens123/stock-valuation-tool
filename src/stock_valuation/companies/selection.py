@@ -63,6 +63,11 @@ def canonical_issuer_key(name: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", name.casefold()))
 
 
+def _is_suspicious(candidate: CompanyCandidate) -> bool:
+    text = f" {candidate.name.casefold()} "
+    return any(marker in text for marker in SUSPICIOUS_INSTRUMENT_MARKERS)
+
+
 def group_company_candidates(candidates: list[CompanyCandidate]) -> list[IssuerCandidateGroup]:
     grouped: dict[str, list[CompanyCandidate]] = {}
     for candidate in candidates:
@@ -83,9 +88,18 @@ def group_company_candidates(candidates: list[CompanyCandidate]) -> list[IssuerC
     return sorted(groups, key=lambda group: group.name.casefold())
 
 
-def _is_suspicious(candidate: CompanyCandidate) -> bool:
-    text = f" {candidate.name.casefold()} "
-    return any(marker in text for marker in SUSPICIOUS_INSTRUMENT_MARKERS)
+def standard_issuer_groups(candidates: list[CompanyCandidate]) -> list[IssuerCandidateGroup]:
+    """Return issuer groups suitable for the normal UI.
+
+    Groups consisting only of derivative/ETP/CDR-like instruments stay out of the normal company
+    selector. Their raw search rows remain available in technical details if troubleshooting is
+    needed later.
+    """
+    return [
+        group
+        for group in group_company_candidates(candidates)
+        if any(not _is_suspicious(candidate) for candidate in group.candidates)
+    ]
 
 
 def _symbol_order_score(candidate: CompanyCandidate) -> tuple[int, int, int, str]:
