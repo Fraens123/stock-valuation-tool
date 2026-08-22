@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -18,6 +19,7 @@ from .base import (
     ProviderRateLimitError,
     ProviderResponseError,
 )
+from .response_cache import DEFAULT_PROVIDER_CACHE_DIR, ProviderResponseCache
 
 
 def extract_matching_annual_fields(
@@ -96,7 +98,13 @@ def extract_candidate_annual_fields(
 
 
 class AlphaVantageProvider(FinancialDataProvider):
-    """Alpha Vantage adapter for fundamentals testing."""
+    """Alpha Vantage adapter with persistent cache for the quota-limited free API.
+
+    Successful responses are stored below ``data/cache/providers/alphavantage``. By default a
+    repeated identical request is served from disk and therefore consumes no new provider quota.
+    ``force_refresh=True`` explicitly bypasses the cache, while ``cache_only=True`` forbids network
+    access completely.
+    """
 
     BASE_URL = "https://www.alphavantage.co/query"
 
@@ -105,12 +113,25 @@ class AlphaVantageProvider(FinancialDataProvider):
         api_key: str | None = None,
         timeout: int = 30,
         min_request_interval_seconds: float = 2.0,
+        *,
+        cache_enabled: bool = True,
+        cache_only: bool = False,
+        force_refresh: bool = False,
+        cache_root: Path = DEFAULT_PROVIDER_CACHE_DIR,
     ) -> None:
         self.api_key = api_key or os.getenv("ALPHA_VANTAGE_API_KEY")
         self.timeout = timeout
         self.min_request_interval_seconds = max(0.0, min_request_interval_seconds)
+        self.cache_enabled = cache_enabled
+        self.cache_only = cache_only
+        self.force_refresh = force_refresh
+        self.cache = ProviderResponseCache("alphavantage", root=cache_root)
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.network_requests = 0
+        self.last_response_from_cache = False
         self._last_request_started_at: float | None = None
-        if not self.api_key:
+        if not self.api_key and not self.cache_only:
             raise ValueError("ALPHA_VANTAGE_API_KEY fehlt.")
 
     def _wait_for_request_slot(self) -> None:
@@ -121,9 +142,33 @@ class AlphaVantageProvider(FinancialDataProvider):
         if remaining > 0:
             time.sleep(remaining)
 
+    def _sanitized_message(self, message: str) -> str:
+        if self.api_key:
+            return message.replace(self.api_key, "***")
+        return message
+
     def _request(self, function: str, **params: Any) -> dict[str, Any]:
+        cache_params = dict(params)
+        if self.cache_enabled and not self.force_refresh:
+            cached = self.cache.get(function, cache_params)
+            if cached is not None:
+                self.cache_hits += 1
+                self.last_response_from_cache = True
+                return cached
+            self.cache_misses += 1
+
+        if self.cache_only:
+            self.last_response_from_cache = False
+            raise ProviderAccessError(
+                "Alpha Vantage: Offline-Modus aktiv, aber für diese Anfrage liegt noch kein lokaler Cache vor."
+            )
+        if not self.api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY fehlt.")
+
         self._wait_for_request_slot()
         self._last_request_started_at = time.monotonic()
+        self.network_requests += 1
+        self.last_response_from_cache = False
 
         query = {"function": function, "apikey": self.api_key, **params}
         response = requests.get(self.BASE_URL, params=query, timeout=self.timeout)
@@ -149,6 +194,7 @@ class AlphaVantageProvider(FinancialDataProvider):
             )
 
         message = str(data.get("Information") or data.get("Note") or data.get("Error Message") or "")
+        safe_message = self._sanitized_message(message)
         lowered = message.lower()
         if message:
             rate_limit_markers = (
@@ -160,11 +206,14 @@ class AlphaVantageProvider(FinancialDataProvider):
                 "more sparingly",
             )
             if any(marker in lowered for marker in rate_limit_markers):
-                raise ProviderRateLimitError(f"Alpha Vantage: {function} — {message}")
+                raise ProviderRateLimitError(f"Alpha Vantage: {function} — {safe_message}")
             if "premium" in lowered or "subscription" in lowered or "entitlement" in lowered:
-                raise ProviderAccessError(f"Alpha Vantage: {function} — {message}")
+                raise ProviderAccessError(f"Alpha Vantage: {function} — {safe_message}")
             if data.get("Error Message"):
-                raise ProviderResponseError(f"Alpha Vantage: {function} — {message}")
+                raise ProviderResponseError(f"Alpha Vantage: {function} — {safe_message}")
+
+        if self.cache_enabled:
+            self.cache.put(function, cache_params, data)
         return data
 
     def probe_income_statement(self, symbol: str) -> dict[str, Any]:
@@ -205,12 +254,7 @@ class AlphaVantageProvider(FinancialDataProvider):
         ]
 
     def probe_blocked_field_candidates(self, symbol: str) -> list[dict[str, Any]]:
-        """Inspect candidate raw fields for still-blocked ASML facts using two requests.
-
-        Exactly one BALANCE_SHEET and one CASH_FLOW request are used. No data is persisted.
-        Candidate labels express only what a raw field *might* represent; primary-source
-        comparison remains mandatory before any normalization mapping is changed.
-        """
+        """Inspect candidate raw fields for still-blocked ASML facts using two requests."""
         balance_candidates = {
             "accounts_receivable": ("receiv",),
             "inventory": ("invent",),
@@ -242,7 +286,7 @@ class AlphaVantageProvider(FinancialDataProvider):
         ]
 
     def get_income_statement(self, symbol: str) -> dict[str, Any]:
-        """Fetch only the income statement; one API request."""
+        """Fetch only the income statement; one API request or cache hit."""
         return self._request("INCOME_STATEMENT", symbol=symbol)
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
