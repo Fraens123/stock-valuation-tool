@@ -8,6 +8,13 @@ import streamlit as st
 from dotenv import load_dotenv
 from sqlalchemy import select
 
+from stock_valuation.analyses.ai_review_service import (
+    AIReviewError,
+    accept_ai_review_finding,
+    execute_ai_review,
+    latest_ai_review_run,
+    reject_ai_review_finding,
+)
 from stock_valuation.analyses.estimate_service import (
     annual_estimates,
     estimate_period_type,
@@ -20,7 +27,7 @@ from stock_valuation.analyses.input_service import (
 )
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.companies.provider_symbols import get_provider_symbol, upsert_provider_symbol
-from stock_valuation.data.audit import build_ai_review_prompt, run_deterministic_audit
+from stock_valuation.data.audit import run_deterministic_audit
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.resolution import load_preferred_financial_facts
@@ -61,10 +68,16 @@ def _decimal(raw: str) -> Decimal:
         raise ValueError("Bitte einen gültigen Zahlenwert eingeben.") from exc
 
 
+def _format_value(value: Decimal | None, currency: str | None) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):,.2f} {currency or ''}".strip()
+
+
 st.title("Finanzdaten")
 st.caption(
-    "Normaler Ablauf: Analyse auswählen → **Daten laden / aktualisieren**. "
-    "Danach können die Daten automatisch geprüft und bei Bedarf nachvollziehbar korrigiert werden."
+    "Normaler Ablauf: Daten laden → automatisch prüfen → nur echte Abweichungen entscheiden. "
+    "Importierte Originalwerte bleiben immer auditierbar erhalten."
 )
 
 with get_session() as session:
@@ -94,7 +107,8 @@ with get_session() as session:
     company_ticker = analysis.company.ticker
 
 alpha_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
-api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
+alpha_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
+openai_key_available = bool(os.getenv("OPENAI_API_KEY"))
 
 header = st.columns(5)
 header[0].metric("Unternehmen", analysis.company.name)
@@ -104,7 +118,7 @@ header[3].metric("Revision", f"R{analysis.revision_number}")
 header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
 
 st.subheader("1. Daten laden")
-if not api_key_available:
+if not alpha_key_available:
     st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
 elif not editable:
     st.info(
@@ -165,8 +179,6 @@ else:
             )
         st.rerun()
 
-st.divider()
-st.subheader("2. Gespeicherter Datenstand")
 with get_session() as session:
     facts = session.scalars(
         select(FinancialFactSnapshot)
@@ -180,11 +192,13 @@ with get_session() as session:
     ).all()
     preferred = load_preferred_financial_facts(session, analysis_id)
 
+st.divider()
+st.subheader("2. Gespeicherter Datenstand")
 if not facts:
     st.caption("Noch keine Finanzdaten in diesem Snapshot.")
 else:
     missing_count = sum(1 for fact in facts if fact.value is None)
-    years = sorted({fact.period_end.year for fact in facts})
+    years = sorted({fact.period_end.year for fact in facts if fact.period_type == "FY"})
     providers = sorted({fact.provider or "—" for fact in facts})
     overrides = [fact for fact in facts if fact.provider == "manual_override"]
 
@@ -193,7 +207,7 @@ else:
     summary[1].metric("Geschäftsjahre", len(years))
     summary[2].metric("Missing", missing_count)
     summary[3].metric("Quellen", len(providers))
-    summary[4].metric("Manuelle Korrekturen", len(overrides))
+    summary[4].metric("Bestätigte Korrekturen", len(overrides))
 
     with st.expander("Rohdaten anzeigen", expanded=False):
         st.dataframe(
@@ -224,15 +238,16 @@ else:
     with get_session() as session:
         current = get_analysis(session, analysis_id)
         audit_checks = run_deterministic_audit(session, current) if current is not None else []
+        latest_run = latest_ai_review_run(session, analysis_id)
 
     check_count = sum(item.status == "CHECK" for item in audit_checks)
     audit_cols = st.columns(3)
     audit_cols[0].metric("Plausibilitätschecks", len(audit_checks))
     audit_cols[1].metric("PASS", sum(item.status == "PASS" for item in audit_checks))
-    audit_cols[2].metric("Prüfen", check_count)
+    audit_cols[2].metric("Intern prüfen", check_count)
 
     if audit_checks:
-        with st.expander("Automatische Plausibilitätsprüfung", expanded=bool(check_count)):
+        with st.expander("Kostenlose Plausibilitätsprüfung", expanded=bool(check_count)):
             st.dataframe(
                 pd.DataFrame(
                     [
@@ -252,40 +267,155 @@ else:
                 hide_index=True,
             )
 
-    with st.expander("KI-Prüfung", expanded=False):
-        st.write(
-            "Die KI-Prüfung soll später die importierten Zahlen mit offiziellen Annual Reports, "
-            "10-K/20-F bzw. Investor-Relations-Unterlagen vergleichen. Sie darf nur "
-            "Korrekturvorschläge machen; übernommen wird nichts ohne Bestätigung."
+    st.markdown("#### KI-Prüfung gegen offizielle Quellen")
+    st.write(
+        "Die KI recherchiert per Websuche bevorzugt Annual Reports, 10-K/20-F, regulatorische "
+        "Filings und offizielle Investor-Relations-Unterlagen. Sie **ändert keine Zahl selbst**. "
+        "Abweichungen werden als Vorschläge gespeichert und erst nach deiner Entscheidung übernommen."
+    )
+    if not openai_key_available:
+        st.warning(
+            "Für die direkte Prüfung fehlt `OPENAI_API_KEY` in `.env`. Der ChatGPT-Plan und die "
+            "OpenAI-API-Abrechnung sind getrennt."
         )
-        st.info(
-            "Aktuell erzeugt dieser Button das vollständige Prüf-Paket. Die direkte automatische "
-            "Ausführung wird als optionaler KI-Provider angebunden, damit kein kostenpflichtiger "
-            "API-Dienst still vorausgesetzt wird."
+    if not editable:
+        st.info("Eine eingefrorene Revision kann nicht erneut geprüft oder korrigiert werden.")
+
+    review_cols = st.columns([1, 2])
+    with review_cols[0]:
+        review_years = st.selectbox(
+            "Geschäftsjahre prüfen",
+            [2, 3, 5],
+            index=1,
+            help="3 Jahre sind für den ersten Test ein guter Kompromiss aus Tiefe, Zeit und API-Kosten.",
         )
-        if st.button("KI-Prüfprompt erstellen"):
+    with review_cols[1]:
+        st.caption(
+            "Die Prüfung nutzt die OpenAI Responses API mit Websuche. Modell- und Websuche-Kosten "
+            "werden über deinen OpenAI-API-Account abgerechnet."
+        )
+
+    if st.button(
+        "KI-Prüfung starten",
+        type="primary",
+        disabled=not openai_key_available or not editable,
+    ):
+        try:
             with get_session() as session:
                 current = get_analysis(session, analysis_id)
                 if current is None:
-                    st.error("Analyse nicht gefunden.")
-                else:
-                    st.session_state[f"ai-review-prompt-{analysis_id}"] = build_ai_review_prompt(
-                        session, current
-                    )
-        ai_prompt = st.session_state.get(f"ai-review-prompt-{analysis_id}")
-        if ai_prompt:
-            st.text_area(
-                "Prüfprompt",
-                value=ai_prompt,
-                height=420,
-                help="Kann bis zur direkten KI-Anbindung in einen Chat mit Webzugriff kopiert werden.",
+                    raise ValueError("Analyse nicht gefunden.")
+                with st.spinner(
+                    "KI prüft Finanzzahlen gegen offizielle Quellen. Das kann einige Minuten dauern …"
+                ):
+                    run = execute_ai_review(session, current, years=int(review_years))
+            st.success(f"KI-Prüfung abgeschlossen: Lauf #{run.id} gespeichert.")
+            st.rerun()
+        except (AIReviewError, AnalysisFrozenError, ValueError) as exc:
+            st.error(str(exc))
+
+    if latest_run is not None:
+        findings = list(latest_run.findings)
+        counts = {
+            status: sum(row.verdict == status for row in findings)
+            for status in ["PASS", "WARN", "FAIL", "UNKLAR"]
+        }
+        st.caption(
+            f"Letzte KI-Prüfung: {latest_run.created_at} · Modell `{latest_run.model}` · "
+            f"{latest_run.years_requested} Geschäftsjahre"
+        )
+        if latest_run.summary:
+            st.info(latest_run.summary)
+
+        result_cols = st.columns(4)
+        result_cols[0].metric("PASS", counts["PASS"])
+        result_cols[1].metric("WARN", counts["WARN"])
+        result_cols[2].metric("FAIL", counts["FAIL"])
+        result_cols[3].metric("UNKLAR", counts["UNKLAR"])
+
+        show_pass = st.checkbox("Auch PASS-Zeilen anzeigen", value=False)
+        visible = findings if show_pass else [row for row in findings if row.verdict != "PASS"]
+        if visible:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Jahr": row.period_end.year,
+                            "Status": row.verdict,
+                            "Metrik": row.metric,
+                            "Importiert": float(row.imported_value) if row.imported_value is not None else None,
+                            "Offiziell": float(row.official_value) if row.official_value is not None else None,
+                            "Abweichung %": float(row.deviation_pct) if row.deviation_pct is not None else None,
+                            "Währung": row.currency,
+                            "Offizielle Bezeichnung": row.official_label,
+                            "Quelle": row.source_title,
+                            "Entscheidung": row.decision,
+                            "Begründung": row.reason,
+                        }
+                        for row in visible
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
             )
+        else:
+            st.success("Keine Abweichungen oder unklaren Positionen in der letzten KI-Prüfung.")
+
+        pending = [
+            row
+            for row in findings
+            if row.decision == "pending"
+            and row.verdict in {"WARN", "FAIL"}
+            and row.official_value is not None
+        ]
+        if pending:
+            st.markdown("##### Korrekturvorschläge entscheiden")
+            st.caption(
+                "**Übernehmen** legt einen bestätigten Override an. **Verwerfen** behält den "
+                "bisher verwendeten Wert. In beiden Fällen bleibt die komplette Prüfhistorie erhalten."
+            )
+            for finding in sorted(pending, key=lambda row: (row.period_end, row.metric), reverse=True):
+                label = f"{finding.verdict} · {finding.period_end.year} · {finding.metric}"
+                with st.expander(label, expanded=finding.verdict == "FAIL"):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Importiert", _format_value(finding.imported_value, finding.currency))
+                    c2.metric("Offiziell", _format_value(finding.official_value, finding.currency))
+                    c3.metric(
+                        "Abweichung",
+                        f"{float(finding.deviation_pct):.3f} %" if finding.deviation_pct is not None else "—",
+                    )
+                    st.write(f"**Offizielle Bezeichnung:** {finding.official_label or '—'}")
+                    st.write(f"**Begründung:** {finding.reason or '—'}")
+                    if finding.source_url:
+                        st.link_button("Offizielle Quelle öffnen", finding.source_url)
+
+                    a, r = st.columns(2)
+                    if a.button("Übernehmen", key=f"accept-ai-{finding.id}", type="primary"):
+                        try:
+                            with get_session() as session:
+                                current = get_analysis(session, analysis_id)
+                                if current is None:
+                                    raise ValueError("Analyse nicht gefunden.")
+                                accept_ai_review_finding(session, current, finding.id)
+                            st.rerun()
+                        except (AnalysisFrozenError, ValueError) as exc:
+                            st.error(str(exc))
+                    if r.button("Verwerfen", key=f"reject-ai-{finding.id}"):
+                        try:
+                            with get_session() as session:
+                                current = get_analysis(session, analysis_id)
+                                if current is None:
+                                    raise ValueError("Analyse nicht gefunden.")
+                                reject_ai_review_finding(session, current, finding.id)
+                            st.rerun()
+                        except (AnalysisFrozenError, ValueError) as exc:
+                            st.error(str(exc))
 
 st.divider()
-st.subheader("4. Werte korrigieren")
+st.subheader("4. Manuelle Korrektur")
 st.caption(
-    "Korrekturen überschreiben Alpha Vantage **nicht**. Der Originalwert bleibt gespeichert; "
-    "deine bestätigte Korrektur wird als separater `manual_override` mit höherer Priorität geführt."
+    "Falls du selbst eine bessere Primärquelle kennst, kannst du einen Wert direkt korrigieren. "
+    "Der importierte Originalwert wird niemals gelöscht."
 )
 
 if not preferred:
@@ -297,22 +427,6 @@ else:
         for fact in selectable
     }
     selected_fact = labels[st.selectbox("Zu korrigierender Wert", list(labels))]
-
-    original_candidates = [
-        fact
-        for fact in facts
-        if fact.metric == selected_fact.metric
-        and fact.period_end == selected_fact.period_end
-        and fact.provider != "manual_override"
-        and fact.value is not None
-    ]
-    original_candidates.sort(key=lambda item: item.provider or "")
-    if original_candidates:
-        original = original_candidates[0]
-        st.caption(
-            f"Importierter Vergleichswert: **{original.value} {original.currency or ''}** · "
-            f"Quelle `{original.provider}` · Feld `{original.provider_field or '—'}`"
-        )
 
     with st.form("manual-financial-override"):
         corrected_raw = st.text_input("Korrigierter Wert", value=str(selected_fact.value))
@@ -349,40 +463,42 @@ else:
 
     manual_rows = [fact for fact in facts if fact.provider == "manual_override"]
     if manual_rows:
-        st.markdown("#### Aktive manuelle Korrekturen")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Jahr": row.period_end.year,
-                        "Metrik": row.metric,
-                        "Wert": float(row.value) if row.value is not None else None,
-                        "Währung": row.currency,
-                        "Quelle": row.source_url,
-                        "Begründung": row.note,
-                    }
-                    for row in manual_rows
-                ]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-        removal_options = {
-            f"{row.period_end.year} · {row.metric}": row for row in manual_rows
-        }
-        remove_label = st.selectbox("Korrektur entfernen", list(removal_options), key="remove-override")
-        if st.button("Ausgewählte Korrektur entfernen", disabled=not editable):
-            row = removal_options[remove_label]
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is not None:
-                    remove_manual_financial_override(
-                        session,
-                        current,
-                        metric=row.metric,
-                        period_end=row.period_end,
-                    )
-            st.rerun()
+        with st.expander("Aktive bestätigte Korrekturen", expanded=False):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Jahr": row.period_end.year,
+                            "Metrik": row.metric,
+                            "Wert": float(row.value) if row.value is not None else None,
+                            "Währung": row.currency,
+                            "Quelle": row.source_url,
+                            "Begründung": row.note,
+                        }
+                        for row in manual_rows
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            removal_options = {f"{row.period_end.year} · {row.metric}": row for row in manual_rows}
+            remove_label = st.selectbox(
+                "Bestätigte Korrektur entfernen",
+                list(removal_options),
+                key="remove-override",
+            )
+            if st.button("Ausgewählte Korrektur entfernen", disabled=not editable):
+                row = removal_options[remove_label]
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is not None:
+                        remove_manual_financial_override(
+                            session,
+                            current,
+                            metric=row.metric,
+                            period_end=row.period_end,
+                        )
+                st.rerun()
 
 st.divider()
 st.subheader("Analystenschätzungen")
@@ -399,11 +515,13 @@ else:
         if show_quarters
         else annual_estimates(base_estimates, fiscal_year_end=fiscal_year_end)
     )
+
     if fiscal_year_end:
         st.caption(
             f"Erkanntes Geschäftsjahresende: {fiscal_year_end[1]:02d}.{fiscal_year_end[0]:02d}. "
-            "Standardmäßig werden nur Jahresschätzungen gezeigt."
+            "Standardmäßig werden nur volle Geschäftsjahresschätzungen gezeigt."
         )
+
     st.dataframe(
         pd.DataFrame(
             [
@@ -424,25 +542,3 @@ else:
         use_container_width=True,
         hide_index=True,
     )
-
-with st.expander("Erweitert / Provider-Diagnose", expanded=False):
-    st.caption("Nur für Symbol-/Providerprobleme; im normalen Workflow nicht erforderlich.")
-    diagnostic_symbol = st.text_input(
-        "Alpha-Vantage-Fundamentals-Symbol",
-        value=alpha_symbol,
-        key=f"diagnostic-symbol-{analysis_id}",
-    ).strip()
-    if st.button(
-        "Fundamentals testen (1 Request)",
-        disabled=not api_key_available or not diagnostic_symbol,
-    ):
-        try:
-            provider = AlphaVantageProvider()
-            result = provider.probe_income_statement(diagnostic_symbol)
-            st.json(result)
-            if result["annual_report_count"]:
-                st.success("Fundamentals für dieses Symbol verfügbar.")
-            else:
-                st.warning("Für dieses Symbol wurden keine Jahresabschlüsse gefunden.")
-        except ProviderError as exc:
-            st.error(str(exc))
