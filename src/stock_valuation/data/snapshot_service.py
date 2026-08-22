@@ -7,6 +7,11 @@ from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
 from stock_valuation.data.normalization_alphavantage import normalize_alphavantage_financials
+from stock_valuation.data.providers.asml_primary import (
+    ASML_2025_US_GAAP_XLSX,
+    download_2025_us_gaap_workbook,
+    parse_primary_source_facts,
+)
 from stock_valuation.data.types import NormalizedEstimate, NormalizedFinancialFact
 from stock_valuation.database.models import Analysis, EstimateSnapshot, FinancialFactSnapshot
 
@@ -17,6 +22,7 @@ def _add_financial_fact(
     fact: NormalizedFinancialFact,
     *,
     source_url: str | None = None,
+    source_type: str = "provider",
 ) -> None:
     session.add(
         FinancialFactSnapshot(
@@ -31,7 +37,7 @@ def _add_financial_fact(
             unit=fact.unit,
             provider=fact.provider,
             provider_field=fact.provider_field,
-            source_type="provider",
+            source_type=source_type,
             source_url=source_url,
             filing_date=fact.filing_date,
             retrieved_at=fact.retrieved_at,
@@ -49,8 +55,9 @@ def replace_financial_facts(
     *,
     provider: str,
     source_url: str | None = None,
+    source_type: str = "provider",
 ) -> int:
-    """Replace one provider's imported financial facts inside an editable snapshot."""
+    """Replace one provider/source's imported financial facts inside an editable snapshot."""
     ensure_editable(analysis)
     rows = list(facts)
 
@@ -62,7 +69,13 @@ def replace_financial_facts(
     )
 
     for fact in rows:
-        _add_financial_fact(session, analysis, fact, source_url=source_url)
+        _add_financial_fact(
+            session,
+            analysis,
+            fact,
+            source_url=source_url,
+            source_type=source_type,
+        )
     session.commit()
     return len(rows)
 
@@ -75,6 +88,7 @@ def replace_financial_metric(
     provider: str,
     metric: str,
     source_url: str | None = None,
+    source_type: str = "provider",
 ) -> int:
     """Replace exactly one provider/metric series without touching other snapshot facts."""
     ensure_editable(analysis)
@@ -88,7 +102,13 @@ def replace_financial_metric(
         )
     )
     for fact in rows:
-        _add_financial_fact(session, analysis, fact, source_url=source_url)
+        _add_financial_fact(
+            session,
+            analysis,
+            fact,
+            source_url=source_url,
+            source_type=source_type,
+        )
     session.commit()
     return len(rows)
 
@@ -213,4 +233,31 @@ def sync_alphavantage_depreciation_amortization(
         provider="alphavantage",
         metric="depreciation_amortization",
         source_url="https://www.alphavantage.co/documentation/#income-statement",
+    )
+
+
+def sync_asml_primary_source_2024_2025(
+    session: Session,
+    analysis: Analysis,
+) -> int:
+    """Import validated 2024/2025 facts from ASML's official US-GAAP workbook.
+
+    The official source is stored alongside Alpha Vantage facts under its own provider key;
+    nothing from Alpha Vantage is overwritten. The imported records are marked as
+    `source_type=primary_source` for later deterministic source-priority resolution.
+    """
+    ensure_editable(analysis)
+    if analysis.company.ticker.upper() != "ASML":
+        raise ValueError("Der ASML-Primärquellenimport ist nur für den ASML-Referenzfall verfügbar.")
+    content = download_2025_us_gaap_workbook()
+    facts = parse_primary_source_facts(content)
+    if not facts:
+        raise ValueError("In der offiziellen ASML-Datei wurden keine importierbaren Fakten gefunden.")
+    return replace_financial_facts(
+        session,
+        analysis,
+        facts,
+        provider="asml_primary",
+        source_url=ASML_2025_US_GAAP_XLSX,
+        source_type="primary_source",
     )
