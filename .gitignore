@@ -10,5 +10,6 @@ __pycache__/
 *.sqlite3
 data/cache/
 data/private/
+reference/private/
 reports/output/
 .DS_Store
