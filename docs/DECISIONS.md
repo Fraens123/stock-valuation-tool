@@ -26,9 +26,9 @@ Lokale Persistenz über SQLite; Datenzugriff wird so gekapselt, dass PostgreSQL 
 Keine Abhängigkeit von einer undokumentierten API. Aktienfinder erhält eine zentrale manuelle Eingabemaske.
 
 ## D-006 — EODHD als erster API-Kandidat
-**Status:** Proposed / Validate in Phase 2
+**Status:** Superseded after Phase-2 live test
 
-Abdeckung, Datenqualität und Tarif werden an ASML geprüft, bevor die Entscheidung final wird.
+Der kostenlose EODHD-Key ist gültig, der Fundamentals-v1.1-Endpunkt für `ASML.AS` liefert jedoch HTTP 403. Ein kostenpflichtiger Fundamentals-Tarif wird vorerst nicht gekauft. Der Adapter bleibt als optionaler späterer Fallback/Cross-Check erhalten. Alpha Vantage wird stattdessen als automatischer V1-Kandidat feldweise gegen ASML-Primärquellen validiert.
 
 ## D-007 — Equity-DCF zuerst
 **Status:** Accepted
@@ -49,3 +49,13 @@ Ein risikoorientiertes KGV für den DCF-Diskontsatz soll vom vollständigen wach
 **Status:** Accepted
 
 Reports dürfen nur gespeicherte Snapshot-Daten verwenden und müssen historische Analysen reproduzierbar darstellen.
+
+## D-011 — Automatische Provider werden feldweise freigegeben
+**Status:** Accepted
+
+Ein Datenprovider wird nicht pauschal als korrekt betrachtet. Für den ASML-Referenzfall entscheidet der Primärquellencheck je internem Rohdatenfeld zwischen `approved`, `review` und `blocked`. FAIL/MISSING-Felder dürfen von Downstream-Kennzahlen nicht verwendet und nicht still mit offiziellen Kontrollwerten ersetzt werden.
+
+## D-012 — ASML EBIT-Marge verwendet validiertes Income from operations
+**Status:** Accepted for ASML reference case only
+
+Für die erste Phase-3A-Kennzahl wird bei ASML das gegen die Primärquelle validierte Feld `operating_income` (`Income from operations`) als operative EBIT-Basis verwendet und durch `revenue` dividiert. Diese provider-/unternehmensspezifische Zuordnung ist keine universelle Definition für andere Unternehmen; dort muss die EBIT-Semantik erneut geprüft werden.
