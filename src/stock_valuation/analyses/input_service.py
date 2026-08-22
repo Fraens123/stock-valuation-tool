@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
@@ -59,6 +59,88 @@ def upsert_manual_input(
     row.entered_at = datetime.now(UTC)
     session.commit()
     return row
+
+
+def upsert_manual_financial_override(
+    session: Session,
+    analysis: Analysis,
+    *,
+    metric: str,
+    period_end: date,
+    value: Decimal | float | int | str,
+    currency: str | None,
+    unit: str | None,
+    statement: str,
+    source_name: str,
+    source_url: str | None = None,
+    note: str | None = None,
+) -> FinancialFactSnapshot:
+    """Store an explicit user-approved correction without deleting provider data.
+
+    Manual overrides live beside the imported rows as `provider=manual_override`. The central
+    source resolver gives them highest priority, while the original Alpha-Vantage/primary-source
+    facts remain available for audit and comparison.
+    """
+    ensure_editable(analysis)
+    normalized_value = _decimal(value)
+    if normalized_value is None:
+        raise ValueError("Ein Override benötigt einen Zahlenwert.")
+
+    row = session.scalar(
+        select(FinancialFactSnapshot).where(
+            FinancialFactSnapshot.analysis_id == analysis.id,
+            FinancialFactSnapshot.provider == "manual_override",
+            FinancialFactSnapshot.metric == metric,
+            FinancialFactSnapshot.period_end == period_end,
+            FinancialFactSnapshot.period_type == "FY",
+        )
+    )
+    if row is None:
+        row = FinancialFactSnapshot(
+            analysis_id=analysis.id,
+            provider="manual_override",
+            metric=metric,
+            period_end=period_end,
+            period_type="FY",
+        )
+        session.add(row)
+
+    row.statement = statement
+    row.value = normalized_value
+    row.provider_value = normalized_value
+    row.currency = currency
+    row.unit = unit
+    row.provider_field = "manual_override"
+    row.source_type = "manual_override"
+    row.source_url = source_url.strip() if source_url else None
+    row.retrieved_at = datetime.now(UTC)
+    row.is_restated = False
+    row.is_cross_check_only = False
+    source_label = source_name.strip() or "Manuelle Korrektur"
+    reason = note.strip() if note else "Keine zusätzliche Begründung angegeben."
+    row.note = f"Quelle: {source_label}. {reason}"
+    session.commit()
+    return row
+
+
+def remove_manual_financial_override(
+    session: Session,
+    analysis: Analysis,
+    *,
+    metric: str,
+    period_end: date,
+) -> None:
+    ensure_editable(analysis)
+    session.execute(
+        delete(FinancialFactSnapshot).where(
+            FinancialFactSnapshot.analysis_id == analysis.id,
+            FinancialFactSnapshot.provider == "manual_override",
+            FinancialFactSnapshot.metric == metric,
+            FinancialFactSnapshot.period_end == period_end,
+            FinancialFactSnapshot.period_type == "FY",
+        )
+    )
+    session.commit()
 
 
 def upsert_guidance(
