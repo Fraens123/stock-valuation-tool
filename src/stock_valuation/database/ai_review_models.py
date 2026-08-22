@@ -23,7 +23,7 @@ class AIReviewRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     findings: Mapped[list[AIReviewFinding]] = relationship(
-        back_populates="run", cascade="all, delete-orphan"
+        "AIReviewFinding", back_populates="run", cascade="all, delete-orphan"
     )
 
 
@@ -50,4 +50,4 @@ class AIReviewFinding(Base):
     decision: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    run: Mapped[AIReviewRun] = relationship(back_populates="findings")
+    run: Mapped[AIReviewRun] = relationship("AIReviewRun", back_populates="findings")
