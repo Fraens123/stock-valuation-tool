@@ -9,6 +9,10 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from stock_valuation.analyses.service import create_analysis, update_analysis_metadata
+from stock_valuation.companies.deletion import (
+    delete_all_companies_completely,
+    delete_company_completely,
+)
 from stock_valuation.companies.provider_symbols import upsert_provider_symbol
 from stock_valuation.companies.service import (
     alpha_vantage_company_candidates,
@@ -152,3 +156,67 @@ if companies:
     )
 else:
     st.caption("Noch keine Unternehmen gespeichert.")
+
+with st.expander("Datenverwaltung – Unternehmen löschen", expanded=False):
+    st.warning(
+        "Das Löschen ist endgültig. Es entfernt das Unternehmen zusammen mit allen Analysen, "
+        "Revisionen, Finanzdaten, Estimates, ChatGPT-Prüfungen, Overrides, Kennzahlen und "
+        "später gespeicherten Bewertungs-/Thesendaten."
+    )
+
+    if not companies:
+        st.caption("Keine gespeicherten Unternehmen vorhanden.")
+    else:
+        single_tab, all_tab = st.tabs(["Ein Unternehmen", "Alle Unternehmen"])
+
+        with single_tab:
+            company_options = {
+                f"{item.name} · {item.ticker}": (item.id, item.ticker)
+                for item in companies
+            }
+            delete_label = st.selectbox(
+                "Zu löschendes Unternehmen",
+                list(company_options),
+                key="delete-company-select",
+            )
+            delete_company_id, delete_ticker = company_options[delete_label]
+            ticker_confirmation = st.text_input(
+                f"Zur Bestätigung `{delete_ticker}` eingeben",
+                key="delete-company-confirmation",
+            )
+            if st.button(
+                "Unternehmen vollständig löschen",
+                disabled=ticker_confirmation.strip().upper() != delete_ticker.upper(),
+                key="delete-company-button",
+            ):
+                with get_session() as session:
+                    summary = delete_company_completely(session, delete_company_id)
+                st.session_state.pop("company_search_candidates", None)
+                st.success(
+                    f"Gelöscht: {summary.companies} Unternehmen, {summary.analyses} Analysen und "
+                    f"{summary.related_rows} abhängige Datensätze."
+                )
+                st.rerun()
+
+        with all_tab:
+            st.write(
+                "Damit wird die lokale Unternehmens-/Analysedatenbank inhaltlich geleert. "
+                "Die Datenbankstruktur und die Anwendung selbst bleiben erhalten."
+            )
+            all_confirmation = st.text_input(
+                "Zur Bestätigung `ALLE LÖSCHEN` eingeben",
+                key="delete-all-confirmation",
+            )
+            if st.button(
+                "Alle Unternehmen und Analysen löschen",
+                disabled=all_confirmation.strip() != "ALLE LÖSCHEN",
+                key="delete-all-button",
+            ):
+                with get_session() as session:
+                    summary = delete_all_companies_completely(session)
+                st.session_state.pop("company_search_candidates", None)
+                st.success(
+                    f"Lokale Analysedaten geleert: {summary.companies} Unternehmen, "
+                    f"{summary.analyses} Analysen und {summary.related_rows} abhängige Datensätze gelöscht."
+                )
+                st.rerun()
