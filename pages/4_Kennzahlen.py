@@ -16,10 +16,12 @@ from stock_valuation.metrics.service import (
     phase_3a_method_states,
 )
 from stock_valuation.ui.components import metric_heading
+from stock_valuation.ui.navigation import render_navigation
 
 
 init_database()
 st.set_page_config(page_title="Kennzahlen", layout="wide")
+render_navigation()
 
 STATUS_LABELS = {
     AnalysisStatus.DRAFT: "Entwurf",
@@ -85,9 +87,7 @@ def _render_percentage_series(
         visible.sort_values("Jahr", ascending=False),
         use_container_width=True,
         hide_index=True,
-        column_config={
-            value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")
-        },
+        column_config={value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")},
     )
 
     calculation_versions = sorted({row.calculation_version for row in series})
@@ -129,7 +129,6 @@ with get_session() as session:
 
 st.divider()
 st.subheader("Kapitel 2 – Ertrag und Rentabilität")
-
 method_rows = [
     {
         "Kennzahl": _metric_title(state.metric_id),
@@ -142,8 +141,7 @@ st.dataframe(pd.DataFrame(method_rows), use_container_width=True, hide_index=Tru
 
 st.info(
     "EBIT- und EBITDA-Marge sind methodisch freigegeben. ROE, Umsatzrendite, Kapitalumschlag, "
-    "Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die verifizierte "
-    "Buchdefinition."
+    "Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die verifizierte Buchdefinition."
 )
 
 if editable:
@@ -171,37 +169,22 @@ else:
 
 st.divider()
 metric_heading("ebit_margin")
-st.caption(
-    "ASML-V1: `Income from operations / Total net sales`. Revenue und Operating Income haben "
-    "den 2024/2025-Primärquellen-Gate bestanden."
-)
+st.caption("V1: Operating Income / Revenue aus dem bevorzugten gespeicherten Datenstand.")
 _render_percentage_series(
     analysis_id,
     "ebit_margin",
     "EBIT-Marge %",
-    empty_message=(
-        "Für diese Analyse ist noch keine EBIT-Margen-Serie gespeichert. Bei einer offenen "
-        "Analyse oben `Aktive Kennzahlen aus Snapshot berechnen` wählen."
-    ),
+    empty_message="Für diese Analyse ist noch keine EBIT-Margen-Serie gespeichert.",
 )
 
 st.divider()
 metric_heading("ebitda_margin")
-st.caption(
-    "ASML-V1: `(Income from operations + Depreciation & Amortization) / Total net sales`. "
-    "D&A wird aus Alpha Vantage `INCOME_STATEMENT.depreciationAndAmortization` verwendet. "
-    "Dieses Feld stimmt für 2025 (1.025,9 Mio. €) und 2024 (918,6 Mio. €) exakt mit den "
-    "offiziellen ASML-Kontrollwerten überein."
-)
+st.caption("V1: (Operating Income + D&A) / Revenue aus dem bevorzugten gespeicherten Datenstand.")
 _render_percentage_series(
     analysis_id,
     "ebitda_margin",
     "EBITDA-Marge %",
-    empty_message=(
-        "Noch keine EBITDA-Margen-Serie gespeichert. Falls das D&A-Feld im Datenqualitäts-Gate "
-        "noch gesperrt ist, zuerst dort `D&A-Mapping anwenden (1 Request)` ausführen und danach "
-        "die aktiven Kennzahlen neu berechnen."
-    ),
+    empty_message="Für diese Analyse ist noch keine EBITDA-Margen-Serie gespeichert.",
 )
 
 st.divider()
