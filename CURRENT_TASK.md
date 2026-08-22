@@ -1,85 +1,94 @@
 # Current Task
 
-## Phase 3A – ASML-Primärquellenwerte in Snapshot integrieren
+## Phase 2/3 Übergang – Universellen Unternehmensimport fertigstellen
 
-Der ASML-Liveimport, die feldweise Datenqualitätsprüfung sowie EBIT-/EBITDA-Margen funktionieren lokal.
+ASML bleibt der Referenzfall für Datenqualitätsprüfungen, darf aber **keine Voraussetzung** für den normalen Import sein. Das Tool muss neue Aktien ohne Codeänderung suchen, anlegen und importieren können.
 
-## Verifizierter Datenstand
+## Bereits funktionierend
 
-- Alpha Vantage `ASML` liefert 20 Jahresberichte und eine breite historische Datenbasis in EUR.
-- EBIT-Marge ist aktiv und plausibilisiert.
-- D&A wurde auf `INCOME_STATEMENT.depreciationAndAmortization` korrigiert.
-- EBITDA-Marge ist aktiv; 2025 lokal ca. 37,74 %.
-- Alpha-Vantage-Cashflow ist für ASML nicht als Primärbasis freigegeben.
-- die offizielle ASML-2025-US-GAAP-XLSX kann lokal gelesen werden.
-- das reale Workbook-Layout wurde bestätigt:
-  - `Balance Sheets`: eindeutige Bilanzzeilen für 2024/2025.
-  - `Cash Flow`: eindeutige Cashflow-Zeilen für 2023/2024/2025.
+- Alpha Vantage liefert für unterstützte Symbole GuV, Bilanz, Cashflow und Analystenschätzungen.
+- der Import schreibt reproduzierbar in den Analyse-Snapshot.
+- ASML ist als Referenzunternehmen primärquellenvalidiert.
+- offizielle ASML-Fakten stehen separat neben Providerdaten.
+- zentrale Source Resolution bevorzugt Primärquelle vor API-Provider.
+- EBIT-/EBITDA-Marge funktionieren für den Referenzfall.
 
-## Neu implementiert
+## Neu generalisiert
 
-### Deterministischer ASML-Primärquellenparser
+### Universelle Unternehmenssuche
 
-`src/stock_valuation/data/providers/asml_primary.py` importiert aus dem offiziellen Workbook bewusst nur eindeutige 2024/2025-Zeilen:
+`pages/0_Unternehmen.py`
 
-- `cash_and_equivalents`
-- `short_term_investments`
-- `accounts_receivable`
-- `inventory`
-- `ppe_net`
-- `short_term_debt`
-- `operating_cash_flow`
-- `capital_expenditures`
-- `intangible_purchases`
-- `dividends_paid`
+- explizite Alpha-Vantage-Online-Suche über `SYMBOL_SEARCH` (1 Request),
+- Treffer werden nicht im Code hinterlegt,
+- aus einem Treffer kann direkt eine neue Analyse angelegt werden,
+- das gewählte Alpha-Vantage-Symbol wird dauerhaft gespeichert.
 
-Bei Cashflow-Abflüssen bleibt der Originalwert in Mio. EUR auditierbar; `value` folgt der internen positiven Outflow-Konvention und wird auf EUR normalisiert.
+### Provider-spezifische Symbole
 
-### Separate Persistenz
+Neue Tabelle `company_provider_symbols`.
 
-`sync_asml_primary_source_2024_2025()` schreibt die offiziellen Werte unter:
+Ein Unternehmen kann getrennte Identifikatoren besitzen für:
 
-- `provider = asml_primary`
-- `source_type = primary_source`
+- Provider,
+- Zweck (`fundamentals`, später `market_price`, `estimates`),
+- Börse/Region,
+- Währung.
 
-Alpha-Vantage-Werte werden **nicht** gelöscht oder überschrieben.
+Damit wird `Company.ticker` nicht mehr fälschlich als universeller Provider-Identifier verwendet.
 
-### Quellenpriorität
+### Generischer Datenimport
 
-Für dasselbe Feld/Jahr gilt:
+`pages/1_Datenimport.py`
 
-1. `asml_primary`
-2. `alphavantage`
-3. `eodhd`
+- funktioniert für jede gespeicherte Analyse,
+- nimmt bevorzugt das gespeicherte Alpha-Vantage-Fundamentals-Symbol,
+- 1-Request-Probe prüft, ob Jahresabschlüsse vorhanden sind,
+- erfolgreicher Ticker wird dauerhaft gespeichert,
+- vollständiger Import verwendet 4 Requests,
+- ASML-Sonderlogik ist keine Voraussetzung mehr für den Import.
 
-`src/stock_valuation/data/resolution.py` kapselt diese Auswahl zentral.
+### Generische Importqualität
 
-Der ASML-Daten-Gate verwendet ebenfalls `asml_primary` vor Alpha Vantage. Dadurch kann ein zuvor rotes API-Feld nach dem offiziellen Import freigegeben werden, während der alte Providerwert auditierbar erhalten bleibt.
+`pages/3_Importqualitaet.py`
 
-Die bestehende Kennzahlenengine verwendet jetzt ebenfalls den zentralen Source Resolver.
+- funktioniert für alle Unternehmen,
+- zeigt bevorzugte Fakten, Quellenmix und Kernfelder der letzten zwei Geschäftsjahre,
+- unterscheidet `PRIMÄRQUELLE`, `API – NICHT PRIMÄRVALIDIERT` und `FEHLT`,
+- importierte Daten werden nicht fälschlich als offiziell validiert dargestellt.
 
-## Lokaler nächster Schritt
+### Unternehmensidentität
+
+- bevorzugt ISIN, wenn vorhanden,
+- sonst Ticker + Börse/Region,
+- gleiche Ticker auf unterschiedlichen Börsen werden nicht mehr automatisch zusammengeführt.
+
+## Nächster technischer Block
+
+Der Import muss anschließend auch bei schwacher/fehlender Alpha-Vantage-Coverage einen sauberen Fallback haben.
+
+Priorität:
+
+1. SEC Company Facts / XBRL als generischer Primärquellenadapter für SEC-reporting Unternehmen,
+2. generischer offizieller XLSX/CSV/XBRL-Import für Investor-Relations-Dokumente,
+3. europäische ESEF/XBRL-Strategie,
+4. zweiter automatischer Fundamentals-Provider nur wenn technisch/finanziell sinnvoll.
+
+Ziel ist **breite Unternehmensabdeckung**, nicht ein eigener hart codierter Parser je Aktie.
+
+## Lokaler Abnahmetest jetzt
 
 1. `git pull`
 2. `pip install -e ".[dev]"`
 3. `pytest -q`
 4. `streamlit run app.py`
-5. `Datenqualität` öffnen.
-6. `Offizielle ASML-2025-US-GAAP-Excel prüfen (0 AV Requests)` ausführen.
-7. Im Abschnitt `Deterministischer Importvorschlag` kontrollieren, dass je Feld 2024/2025 plausible Werte erscheinen.
-8. `ASML-Primärquellenwerte 2024/2025 in Snapshot übernehmen (0 AV Requests)` genau einmal ausführen.
-9. Nach dem Rerun prüfen:
-   - `ASML-Primärfakten` > 0,
-   - zuvor problematische 2024/2025-Felder wie Forderungen, Vorräte, PP&E, OCF und CAPEX werden im Gate aus `asml_primary` bewertet,
-   - Alpha-Vantage-Daten bleiben im Snapshot erhalten.
-
-## Danach
-
-Nach erfolgreicher lokaler Abnahme wird der nächste Datenblock geplant:
-
-- historische Primärquellenstrategie für ältere Geschäftsjahre,
-- Komponentenlogik für `cash + short_term_investments`,
-- vorbereitende Datenbasis für Working Capital und spätere DCF-Felder.
+5. Seite `Unternehmen` öffnen.
+6. Eine andere Aktie als ASML suchen, z. B. Microsoft.
+7. Provider-Treffer auswählen und Analyse anlegen.
+8. `Datenimport` öffnen.
+9. `Fundamentals testen (1 Request)`.
+10. Wenn Jahresberichte gefunden werden, `Finanzdaten und Schätzungen importieren (4 Requests)`.
+11. `Importqualität` öffnen und prüfen, ob historische Daten und Kernfelder sichtbar sind.
 
 ## Noch offene Kapitel-2-Methodik
 
@@ -94,17 +103,11 @@ Weiterhin Buchverifikation erforderlich:
 
 Keine dieser Formeln eigenmächtig festlegen.
 
-## Weiterhin nicht vorziehen
+## Definition of Done des Universal-Import-Blocks
 
-- kein Working Capital mit ungeklärter historischen Datenbasis
-- kein FCF / Owner Earnings / DCF
-- keine endgültige Net-Debt-/EV-Brücke
-- keine Fair-KGV-Punkte oder Risikostufen erfinden
-
-## Definition of Done dieses Teilblocks
-
-- offizieller 2024/2025-Primärquellenimport läuft lokal.
-- offizielle Fakten stehen separat neben Alpha Vantage im Snapshot.
-- Daten-Gate priorisiert Primärquelle korrekt.
-- zentrale Source-Resolution ist getestet.
-- EBIT-/EBITDA-Marge funktionieren unverändert.
+- eine neue Aktie kann ohne Codeänderung online gefunden werden,
+- Analyse kann direkt aus Provider-Treffer angelegt werden,
+- Fundamentals-Symbol ist providerbezogen persistiert,
+- Import funktioniert ohne ASML-Sonderfall,
+- Datenqualität für nicht-ASML-Unternehmen ist sichtbar,
+- fehlende Provider-Coverage führt zu einem klaren Fallback-Pfad statt zu einem toten Ende.
