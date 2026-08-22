@@ -1,121 +1,98 @@
 # Current Task
 
-## Phase 1.1 – Excel-Inventarisierung und fachlicher Kennzahlenkatalog
+## Phase 1.2 – Buchvalidierung, Normalisierung und ASML-Datenbedarf
 
-Phase 0 (Application Foundation) ist implementiert. Der nächste Block ist bewusst **fachlich**, nicht DCF-Programmierung.
+Phase 0 ist implementiert. Phase 1.1 hat das bestehende Excel fachlich inventarisiert und die maschinenlesbaren Kataloge angelegt.
 
 ## Vor Beginn lesen
 
-- `AGENTS.md`
-- `ROADMAP.md`
-- `docs/PROJECT_CHARTER.md`
-- `docs/EXCEL_MAPPING.md`
-- `docs/BOOK_MAPPING.md`
-- `docs/DATA_MODEL.md`
-- `docs/DCF_METHOD.md`
-- `reference/README.md`
+1. `AGENTS.md`
+2. `ROADMAP.md`
+3. `docs/PHASE_1_METRIC_INVENTORY.md`
+4. `docs/RAW_DATA_SCHEMA.md`
+5. `docs/BOOK_MAPPING.md`
+6. `docs/QUALITATIVE_ANALYSIS_SPEC.md`
+7. `docs/METHODOLOGY_OPEN_QUESTIONS.md`
+8. `docs/DCF_METHOD.md`
+9. `src/stock_valuation/knowledge/metrics.yaml`
+10. `src/stock_valuation/knowledge/qualitative.yaml`
 
-## Lokale Referenzdatei
+## Stand Phase 1.1
 
-Wenn vorhanden, liegt die bestehende Excel-Datei lokal unter:
+Erledigt:
 
-```text
-reference/private/Aktien Bewertungs Tool.xlsm
-```
+- bestehendes Excel von Rohdaten über Kennzahlen, Multiples, DCF und Fair-KGV inventarisiert
+- aktuelle Excel-Formeln und relevante Zellbereiche dokumentiert
+- fehlende Buchkennzahlen identifiziert
+- Kennzahlen in `keep`, `add`, `adjust`, `special` bzw. `verify` klassifiziert
+- Kindle-Seiten aus der Nutzer-Ausgabe übernommen
+- umfangreiche eigene `ⓘ`-Erklärungen angelegt
+- qualitative Kapitel-5-Struktur und Porter-/Fair-KGV-Kriterien katalogisiert
+- normalisiertes Rohdatenwörterbuch als Entwurf angelegt
+- methodische Abweichungen des Alt-Excel explizit dokumentiert
 
-Diese Datei darf analysiert, aber **nicht committed** werden.
+## Ziel Phase 1.2
 
-## Ziel
+Vor Beginn der produktiven Datenprovider müssen die **Zieldefinitionen** ausreichend stabil sein.
 
-Eine vollständige fachliche Spezifikation erstellen, bevor Kennzahlen oder Bewertungsformeln in Python implementiert werden.
+### A. Buchdefinitionen verifizieren
 
-Für jeden Analyseparameter benötigen wir mindestens:
+Priorität:
 
-1. stabile interne ID
-2. Anzeigeüberschrift, z. B. `Eigenkapitalrendite (Return on Equity, ROE)`
-3. Buchkapitel und verifizierte Kindle-Seite, soweit vorhanden
-4. exakte fachliche Definition
-5. benötigte Rohdaten
-6. Formel / Rechenweg
-7. Einheit
-8. Bedeutung
-9. Interpretation
-10. typische Fallstricke
-11. Zusammenhang mit anderen Kennzahlen
-12. primäre Datenquelle
-13. Excel-Referenz / bisherige Position oder Formel
-14. Entscheidung: `keep`, `add`, `special_case`, `drop`
+1. ROE – Kindle 94
+2. Gesamtkapitalrendite – 109
+3. ROCE – 111
+4. Gearing – 124
+5. Dynamischer Verschuldungsgrad – 129
+6. Sachinvestitionsquote – 136
+7. Anlagenabnutzungsgrad – 141
+8. Wachstumsquote – 144
+9. Debitoren/Kreditoren – 158
+10. Inventory Turnover / DIO – 171
+11. Equity-DCF – ab 295
+12. Faires KGV – ab 351
 
-## Aufgaben
+Wenn Buchtext nicht zuverlässig verfügbar ist, **nicht raten**. Offenen Punkt in `docs/METHODOLOGY_OPEN_QUESTIONS.md` belassen.
 
-### 1. Excel vollständig inventarisieren
+### B. Rohdatenschema finalisieren
 
-- alle fachlichen Abschnitte in Reihenfolge aufnehmen
-- alle Eingabefelder identifizieren
-- alle berechneten Kennzahlen identifizieren
-- Equitymultiplikatoren und Enterprise-Value-Ansatz getrennt erfassen
-- DCF-Schritte getrennt erfassen
-- Multiplikatorenmethode / Fair-KGV-Blöcke getrennt erfassen
+Für jede Zielkennzahl prüfen:
 
-### 2. Maschinenlesbaren Kennzahlenkatalog anlegen
+- welcher Rohdatenwert benötigt wird
+- ob EODHD ihn direkt liefert
+- ob er aus anderen Rohdaten ableitbar ist
+- ob ASML IR / Geschäftsbericht nötig ist
+- ob Aktienfinder manuell sinnvoll ist
+- ob die Kennzahl nur bei bestimmten Geschäftsmodellen angezeigt wird
 
-Zieldatei:
+### C. ASML-Datenbedarf definieren
 
-```text
-src/stock_valuation/knowledge/metrics.yaml
-```
+Eine Mapping-Tabelle erstellen:
 
-Noch **keine** Rechenengine daraus bauen.
+`internal_key -> EODHD field -> ASML annual-report field -> fallback/manual -> unit/currency`
 
-### 3. Mapping-Dokument vervollständigen
+Noch keine blinde Providerimplementierung.
 
-`docs/EXCEL_MAPPING.md` aktualisieren mit:
+### D. Jahresabschlussbereinigung spezifizieren
 
-- Excel-Reihenfolge
-- Kennzahl
-- Inputs
-- Formel
-- Buchreferenz
-- Datenquelle
-- Statusentscheidung
+Relevante Kindle-Stellen:
+- 8.3 Jahresabschlussbereinigung – 422
+- 8.3.1 Pro-forma-Abschlüsse und Sondereffekte – 427
 
-### 4. Informationssystem vorbereiten
+Festlegen, wie historische und prognostizierte Werte als `reported` und `normalized` gespeichert werden sollen.
 
-Für jedes spätere `ⓘ` muss die Struktur vorbereitet sein:
+## Noch NICHT tun
 
-- Kurzdefinition
-- ausführliche Bedeutung
-- Interpretation
-- Fallstricke
-- Kindle-Seite
+- keine endgültige Kennzahlenengine
+- keine produktive DCF-Engine
+- keine Fair-KGV-Punkte erfinden
+- keine Risiko-Dropdown-Prozentwerte festlegen
+- keine Analystenschätzungen ohne Quellenmetadaten speichern
 
-Keine längeren Buchpassagen kopieren; Erklärungen werden eigenständig formuliert.
+## Definition of Done Phase 1.2
 
-### 5. Offene methodische Fragen markieren
-
-Wenn Excel und Buch nicht eindeutig sind oder Definitionen abweichen:
-
-- nicht eigenständig entscheiden
-- in `docs/METHODOLOGY_OPEN_QUESTIONS.md` dokumentieren
-- konkrete Entscheidung vom Nutzer anfordern
-
-## Noch ausdrücklich NICHT tun
-
-- keine ROE-/ROCE-/Working-Capital-Berechnungsengine implementieren
-- keine DCF-Formeln implementieren
-- keine Risiko-Stufenwerte festlegen
-- keine Fair-KGV-Formel verändern
-- keine API-Feldzuordnung finalisieren, bevor der Rohdatenbedarf vollständig ist
-- keine langen Buchtexte übernehmen
-
-## Definition of Done
-
-Phase 1.1 ist fertig, wenn alle Kennzahlen und Bewertungsblöcke des bestehenden Excel in einem strukturierten Katalog erfasst sind und für jeden Punkt eindeutig ist:
-
-- was er bedeutet,
-- wie er berechnet wird,
-- welche Rohdaten benötigt werden,
-- wo er im Buch zu finden ist,
-- und ob er im neuen Tool erhalten bleibt.
-
-Danach folgt die Implementierung der Datenquellen und anschließend die Kennzahlenengine.
+- Ziel-Rohdatenschema für Industrieunternehmen ist ausreichend stabil.
+- ASML-Feldmapping für Phase 2 ist definiert.
+- alle noch offenen Buch-/Methodikfragen sind explizit markiert.
+- Normalisierung/Sondereffekte sind konzeptionell definiert.
+- danach kann Phase 2 (Datenprovider) kontrolliert beginnen.
