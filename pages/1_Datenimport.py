@@ -91,9 +91,10 @@ provider_choice = st.radio(
 
 if provider_choice == "Alpha Vantage":
     st.write(
-        "Für einen vollständigen Import werden getrennte API-Requests für GuV, Bilanz, "
-        "Cashflow und Analystenschätzungen verwendet. Der kostenlose Account ist daher nur "
-        "für wenige Unternehmensaktualisierungen pro Tag gedacht, reicht aber gut zum Testen."
+        "Ein vollständiger Import verwendet vier getrennte Requests: GuV, Bilanz, Cashflow "
+        "und Analystenschätzungen. Der Provider wartet im Free-Tier automatisch mindestens "
+        "1,1 Sekunden zwischen Requests, damit das 1-Request-pro-Sekunde-Burst-Limit nicht "
+        "überschritten wird. Das Tageslimit von 25 Requests bleibt davon unabhängig."
     )
     api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
     if api_key_available:
@@ -126,7 +127,10 @@ if provider_choice == "Alpha Vantage":
                 current = get_analysis(session, analysis_id)
                 if current is None:
                     raise ValueError("Analyse wurde nicht gefunden.")
-                with st.spinner(f"Lade {alpha_symbol} von Alpha Vantage …"):
+                with st.spinner(
+                    f"Lade {alpha_symbol} von Alpha Vantage … "
+                    "Der Free-Tier-Import dauert wegen der Request-Abstände einige Sekunden."
+                ):
                     fact_count, estimate_count = sync_alphavantage_snapshot(
                         session,
                         current,
@@ -140,6 +144,11 @@ if provider_choice == "Alpha Vantage":
             st.rerun()
         except (ValueError, AnalysisFrozenError, ProviderError) as exc:
             st.error(str(exc))
+            st.caption(
+                "Wenn Alpha Vantage weiterhin die Free-Tier-Limitmeldung zeigt, "
+                "ist möglicherweise das Tageskontingent bereits aufgebraucht. Dann nicht "
+                "weiter klicken, sondern am nächsten Kalendertag erneut testen."
+            )
         except Exception as exc:
             st.exception(exc)
 
