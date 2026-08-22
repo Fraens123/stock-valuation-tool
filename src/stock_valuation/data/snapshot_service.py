@@ -12,6 +12,7 @@ from stock_valuation.data.providers.asml_primary import (
     download_2025_us_gaap_workbook,
     parse_primary_source_facts,
 )
+from stock_valuation.data.providers.esef import parse_esef_ixbrl
 from stock_valuation.data.types import NormalizedEstimate, NormalizedFinancialFact
 from stock_valuation.database.models import Analysis, EstimateSnapshot, FinancialFactSnapshot
 
@@ -276,6 +277,31 @@ def sync_sec_companyfacts(
         facts,
         provider="sec_companyfacts",
         source_url=f"https://data.sec.gov/api/xbrl/companyfacts/CIK{normalized_cik}.json",
+        source_type="primary_source",
+    )
+
+
+def sync_esef_primary_source(
+    session: Session,
+    analysis: Analysis,
+    content: bytes,
+    *,
+    filename: str,
+    source_url: str | None = None,
+) -> int:
+    """Import official European ESEF/iXBRL facts from an uploaded XHTML or ZIP report."""
+    ensure_editable(analysis)
+    facts = parse_esef_ixbrl(content, filename=filename)
+    if not facts:
+        raise ValueError(
+            "Im ESEF-Bericht wurden keine unterstützten standardisierten `ifrs-full`-Finanzfakten gefunden."
+        )
+    return replace_financial_facts(
+        session,
+        analysis,
+        facts,
+        provider="esef_ixbrl",
+        source_url=source_url,
         source_type="primary_source",
     )
 
