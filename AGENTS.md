@@ -11,12 +11,15 @@ Die Anwendung soll die Analyse unterstützen, nicht ersetzen. Sie muss den Nutze
 ## 2. Vor jeder Implementierung lesen
 
 1. `AGENTS.md`
-2. `ROADMAP.md`
-3. `docs/ARCHITECTURE.md`
-4. für fachliche Arbeiten zusätzlich die passende Datei unter `docs/`
-5. bei Bewertungslogik immer `docs/DCF_METHOD.md` und `docs/DECISIONS.md`
+2. `CURRENT_TASK.md`
+3. `ROADMAP.md`
+4. `docs/ARCHITECTURE.md`
+5. für fachliche Arbeiten zusätzlich die passende Datei unter `docs/`
+6. bei Bewertungslogik immer `docs/DCF_METHOD.md`, `docs/DECISIONS.md` und `docs/METHODOLOGY_OPEN_QUESTIONS.md`
 
-Nicht eigenmächtig Bewertungsmethodik verändern. Methodische Änderungen zuerst in `docs/DECISIONS.md` dokumentieren.
+`CURRENT_TASK.md` ist der operative Auftrag. Nicht ungefragt einen späteren Roadmap-Block beginnen.
+
+Nicht eigenmächtig Bewertungsmethodik verändern. Methodische Änderungen zuerst dokumentieren und bei fachlich offenen Fragen die Entscheidung des Nutzers einholen.
 
 ## 3. Fachliche Grundregeln
 
@@ -103,14 +106,16 @@ V1-Ziel:
 
 ## 9. Arbeitsweise für Codex lokal
 
-Wenn der Nutzer sagt: `Bearbeite als Nächstes Roadmap Phase X`, dann:
-1. Roadmap-Eintrag und relevante Doku lesen.
-2. Implementierungsplan kurz erstellen.
-3. Nur den abgegrenzten Roadmap-Block bearbeiten.
-4. Tests hinzufügen/aktualisieren.
-5. `docs/DECISIONS.md` nur bei methodischen/architektonischen Entscheidungen ändern.
-6. `ROADMAP.md` nur abhaken, wenn die Definition of Done erfüllt ist.
-7. Ergebnis mit geänderten Dateien, Tests und offenen Punkten zusammenfassen.
+1. `CURRENT_TASK.md` lesen.
+2. Die dort referenzierten Dokumente lesen.
+3. Implementierungsplan kurz erstellen.
+4. Nur den abgegrenzten Task bearbeiten.
+5. Tests hinzufügen/aktualisieren.
+6. `docs/DECISIONS.md` nur bei methodischen/architektonischen Entscheidungen ändern.
+7. Fachlich offene Punkte in `docs/METHODOLOGY_OPEN_QUESTIONS.md` dokumentieren, nicht erfinden.
+8. `ROADMAP.md` nur abhaken, wenn die Definition of Done erfüllt ist.
+9. `CURRENT_TASK.md` nur dann auf die nächste Aufgabe setzen, wenn der aktuelle Block tatsächlich abgeschlossen ist.
+10. Ergebnis mit geänderten Dateien, Tests und offenen Punkten zusammenfassen.
 
 ## 10. Copyright / Buch
 
