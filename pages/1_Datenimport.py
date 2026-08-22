@@ -36,10 +36,12 @@ def _analysis_label(analysis) -> str:
 
 
 def _default_alpha_symbol(analysis) -> str:
-    # ASML is the reference case. Productive provider-specific symbol resolution follows
-    # later through company search / identifiers instead of hard-coding all exchanges.
+    # For fundamentals, Alpha Vantage can expose statement data under a different
+    # symbol than the local market-price listing. ASML.AMS is known for market data,
+    # but the first fundamentals probe returned an empty statement payload. Therefore
+    # the ASML reference case uses the NASDAQ/ADR symbol ASML for statement testing.
     if analysis.company.ticker.upper() == "ASML":
-        return "ASML.AMS"
+        return "ASML"
     return analysis.company.ticker
 
 
@@ -105,15 +107,20 @@ if provider_choice == "Alpha Vantage":
         )
 
     alpha_symbol = st.text_input(
-        "Alpha-Vantage-Symbol",
+        "Alpha-Vantage-Fundamentals-Symbol",
         value=_default_alpha_symbol(analysis),
-        help="Für die ASML-Aktie in Amsterdam verwenden wir beim Test `ASML.AMS`.",
+        help=(
+            "Für ASML testen wir Fundamentals mit `ASML` (NASDAQ/ADR). `ASML.AMS` kann für "
+            "Kursdaten funktionieren, lieferte beim Fundamentals-Test aber 0 Reports. "
+            "Marktpreis und Fundamentaldaten dürfen deshalb providerseitig unterschiedliche "
+            "Symbole verwenden."
+        ),
     )
 
     st.markdown("#### Verbindungstest")
     st.caption(
         "Dieser Test verwendet genau **einen** API-Request (`INCOME_STATEMENT`) und speichert "
-        "noch keine Daten. Erst wenn dieser Test erfolgreich ist, sollte der vollständige "
+        "noch keine Daten. Erst wenn Jahresberichte vorhanden sind, sollte der vollständige "
         "4-Request-Import gestartet werden."
     )
     if st.button(
@@ -124,20 +131,37 @@ if provider_choice == "Alpha Vantage":
             provider = AlphaVantageProvider()
             with st.spinner(f"Teste INCOME_STATEMENT für {alpha_symbol} …"):
                 result = provider.probe_income_statement(alpha_symbol)
-            st.success(
-                "Einzeltest erfolgreich: "
-                f"{result['annual_report_count']} Jahresberichte und "
-                f"{result['quarterly_report_count']} Quartalsberichte wurden vom Endpoint erkannt."
-            )
-            st.session_state["alpha_probe_ok"] = True
+
+            if result["annual_report_count"] == 0 and result["quarterly_report_count"] == 0:
+                st.warning(
+                    "Der API-Request selbst war erfolgreich, aber dieses Symbol liefert keine "
+                    "GuV-Berichte. Das spricht für ein Symbol-/Coverage-Problem und nicht für "
+                    "einen ungültigen API-Key."
+                )
+                st.session_state["alpha_probe_ok"] = False
+            else:
+                st.success(
+                    "Einzeltest erfolgreich: "
+                    f"{result['annual_report_count']} Jahresberichte und "
+                    f"{result['quarterly_report_count']} Quartalsberichte erkannt."
+                )
+                st.session_state["alpha_probe_ok"] = True
+
+            details = {
+                "Angefragt": result.get("requested_symbol"),
+                "Zurückgegeben": result.get("returned_symbol"),
+                "Letztes Geschäftsjahr": result.get("latest_fiscal_date") or "—",
+                "Berichtswährung": result.get("reported_currency") or "—",
+                "Letzter Umsatz (raw)": result.get("latest_revenue") or "—",
+            }
+            st.json(details)
         except ProviderError as exc:
             st.session_state["alpha_probe_ok"] = False
             st.error(str(exc))
             st.info(
-                "Wenn bereits dieser einzelne Request dieselbe Limitmeldung liefert, liegt das "
-                "Problem nicht an den Abständen innerhalb unseres 4-Request-Imports. Dann heute "
-                "keine weiteren Alpha-Vantage-Requests verbrauchen und den Einzeltest später bzw. "
-                "nach Rücksetzung des Tageslimits erneut ausführen."
+                "Wenn bereits dieser einzelne Request eine Limitmeldung liefert, liegt das "
+                "Problem nicht an den Abständen innerhalb unseres 4-Request-Imports. Dann keine "
+                "weiteren Alpha-Vantage-Requests verbrauchen und später erneut testen."
             )
         except Exception as exc:
             st.session_state["alpha_probe_ok"] = False
@@ -151,10 +175,10 @@ if provider_choice == "Alpha Vantage":
     elif st.button(
         "Alpha-Vantage-Finanzdaten und Schätzungen aktualisieren",
         type="primary",
-        disabled=not api_key_available,
+        disabled=not api_key_available or not st.session_state.get("alpha_probe_ok", False),
         help=(
-            "Bitte zuerst den 1-Request-Verbindungstest ausführen. Der vollständige Import "
-            "benötigt vier API-Requests."
+            "Der vollständige Import wird erst freigeschaltet, wenn der 1-Request-Test für "
+            "das gewählte Fundamentals-Symbol tatsächlich Reports liefert."
         ),
     ):
         try:
