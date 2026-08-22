@@ -34,6 +34,7 @@ def test_provider_symbol_is_persisted_and_updated_per_company() -> None:
             name="Microsoft Corporation",
             ticker="MSFT",
             currency="USD",
+            exchange="United States",
         )
         first = upsert_provider_symbol(
             session,
@@ -61,3 +62,25 @@ def test_provider_symbol_is_persisted_and_updated_per_company() -> None:
         )
         assert stored is not None
         assert stored.symbol == "MSFT_ALT"
+
+
+def test_same_ticker_on_different_exchanges_does_not_merge_companies() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine, expire_on_commit=False) as session:
+        first = get_or_create_company(
+            session,
+            name="Example Holdings US",
+            ticker="ABC",
+            exchange="United States",
+            currency="USD",
+        )
+        second = get_or_create_company(
+            session,
+            name="Example Holdings Europe",
+            ticker="ABC",
+            exchange="Europe",
+            currency="EUR",
+        )
+        assert first.id != second.id
