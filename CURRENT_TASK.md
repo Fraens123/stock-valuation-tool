@@ -66,7 +66,23 @@ Für SEC-reporting Unternehmen:
 - Source Resolution priorisiert `sec_companyfacts` vor Alpha Vantage,
 - Alpha-Vantage-Werte bleiben parallel auditierbar.
 
-Die SEC dokumentiert Company Facts für 10-K, 20-F, 40-F u. a. sowie US-GAAP-/IFRS-XBRL ohne API-Key.
+### 6. Generischer Europa-Fallback: ESEF / Inline XBRL
+
+`src/stock_valuation/data/providers/esef.py`
+`pages/1_Offizielle_Daten.py`
+
+Für europäische IFRS-Emittenten:
+
+- `.xhtml`, `.html`, `.htm` und ESEF-`.zip` werden lokal verarbeitet,
+- standardisierte `ifrs-full`-Tags werden auf interne Rohdatenfelder gemappt,
+- nicht-dimensionale Hauptabschluss-Kontexte werden bevorzugt,
+- Jahresperioden werden von Quartals-/Segmentkontexten getrennt,
+- Zahlenformat, Scale, Sign und Währung werden normalisiert,
+- offizielle Fakten werden als `provider=esef_ixbrl`, `source_type=primary_source` gespeichert,
+- ESEF wird in der Source Resolution vor SEC/Alpha Vantage priorisiert,
+- Upload benötigt keine Alpha-Vantage-Requests.
+
+Das zentrale ESAP sammelt seit Juli 2026 Daten, ist laut ESMA für die Öffentlichkeit aber erst spätestens Juli 2027 vorgesehen. V1 ist deshalb nicht von einer heute noch nicht öffentlichen ESAP-Suche abhängig.
 
 ## Lokaler Abnahmetest
 
@@ -75,7 +91,7 @@ Die SEC dokumentiert Company Facts für 10-K, 20-F, 40-F u. a. sowie US-GAAP-/IF
 3. `pytest -q`
 4. `streamlit run app.py`
 5. Seite `Unternehmen` öffnen.
-6. Eine andere Aktie als ASML suchen, idealerweise zuerst `Microsoft`.
+6. Eine andere Aktie als ASML suchen, zuerst sinnvoll: `Microsoft`.
 7. Analyse anlegen.
 8. `Datenimport`:
    - `Fundamentals testen (1 Request)`,
@@ -87,24 +103,18 @@ Die SEC dokumentiert Company Facts für 10-K, 20-F, 40-F u. a. sowie US-GAAP-/IF
 11. `Offizielle Daten` öffnen.
 12. `SEC-Registrierung prüfen (1 Request)`.
 13. Falls gefunden: `SEC Company Facts in Snapshot importieren (1 SEC Request)`.
-14. Danach `Importqualität` erneut öffnen: SEC-Fakten müssen als Primärquelle vor Alpha Vantage erscheinen.
+14. `Importqualität` erneut öffnen: SEC-Fakten müssen als Primärquelle vor Alpha Vantage erscheinen.
+15. Optional europäischen Fall testen: offiziellen ESEF-XHTML/ZIP-Bericht hochladen, Vorschau prüfen und in Snapshot übernehmen.
 
-## Nächster generischer Fallback
+## Noch offene Importthemen
 
-### Europa / ESEF
-
-ESEF/iXBRL ist der nächste Baustein. Wichtig für den aktuellen Stand 2026:
-
-- IFRS-Konzernabschlüsse europäischer Emittenten sind im ESEF-Format maschinenlesbar getaggt.
-- das zentrale ESAP sammelt seit Juli 2026 Daten, ist für die Öffentlichkeit aber erst spätestens Juli 2027 vorgesehen.
-- deshalb wird V1 nicht auf eine heute noch nicht öffentliche ESAP-Daten-API angewiesen.
-
-Nächste Implementierung:
-
-1. generischer ESEF/iXBRL-Datei-/URL-Parser,
-2. Zuordnung standardisierter `ifrs-full`-Tags auf interne Rohdatenfelder,
-3. IR-/OAM-Dokument als Quelle speichern,
-4. später öffentliche ESAP-Discovery ergänzen, sobald verfügbar.
+- automatische Discovery offizieller ESEF/IR-Dokumente für europäische Emittenten,
+- später öffentliche ESAP-Suche/API ergänzen, sobald verfügbar,
+- Mapping weiterer IFRS-/US-GAAP-Standardtags erweitern,
+- unternehmensspezifische XBRL-Extension-Tags nur kontrolliert und nachvollziehbar behandeln,
+- aktueller Marktpreis als eigener Provider-Pfad,
+- ISIN/LEI-Anreicherung aus zusätzlichen Referenzquellen,
+- optional zweiter breiter Fundamentals-Provider als Fallback, wenn Kosten/Nutzen passt.
 
 ## Noch offene Kapitel-2-Methodik
 
@@ -126,6 +136,6 @@ Keine dieser Formeln eigenmächtig festlegen.
 - providerbezogene Identifikatoren persistiert,
 - Alpha-Vantage-Finanzabschlüsse unabhängig von Estimates importierbar,
 - SEC-offizielle Daten für SEC-reporting Unternehmen importierbar,
+- ESEF/iXBRL für europäische IFRS-Berichte importierbar,
 - Datenqualität für jede Aktie sichtbar,
-- Europa-Fallback über generisches ESEF/iXBRL vorbereitet,
 - kein hart codierter Unternehmensparser als Voraussetzung für den normalen Workflow.
