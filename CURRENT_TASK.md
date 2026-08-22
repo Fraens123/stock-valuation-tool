@@ -1,24 +1,23 @@
 # Current Task
 
-## Phase 2/3 Übergang – Preferred Data als verbindliche Berechnungsbasis
+## Phase 2/3 Übergang – sauberer Neustart mit Preferred Data
 
 ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import, Prüfung oder Speicherung neuer Aktien.
 
 ## Verifizierter Stand
 
-- ASML wurde erfolgreich importiert und gegen offizielle Primärquellen geprüft.
-- Microsoft wurde als zweite, nicht hart codierte Aktie erfolgreich importiert.
-- Microsoft-Snapshot: 740 Finanzdatenpunkte über 20 Geschäftsjahre; 32/32 definierte Core-Felder der letzten zwei Geschäftsjahre vorhanden.
-- Analystenschätzungen wurden erfolgreich geladen.
-- Erster echter Microsoft-ChatGPT-Dateiprüflauf durchgeführt: 92 Fakten, 81 PASS, 2 FAIL (`ppe_net` 2024/2025), 9 UNKLAR (`short_term_debt`, D&A, EBITDA über drei Jahre).
-- Alpha-Vantage-Import ist damit für unterstützte Symbole unternehmensunabhängig bestätigt, aber Providerwerte werden nicht pauschal als berechnungsbereit betrachtet.
+- ASML und Microsoft wurden bereits als Referenzfälle für Import und Datenqualität verwendet.
+- Der erste echte Microsoft-ChatGPT-Dateiprüflauf zeigte, warum Providerwerte nicht direkt als Berechnungsbasis dienen dürfen.
+- Preferred Data ist als verbindliche Berechnungsschicht implementiert.
+- Einzelne Unternehmen können jetzt vollständig aus der lokalen Datenbank entfernt werden.
+- Zusätzlich kann der komplette lokale Unternehmens-/Analysedatenbestand geleert werden, ohne DB-Schema oder Anwendung zu löschen.
 
 ## Sichtbarer Standardablauf
 
 1. **Übersicht** – alle Unternehmen/Revisionen verwalten und vergleichen.
-2. **Unternehmen** – Aktie suchen und Analyse anlegen.
+2. **Unternehmen** – Aktie suchen, Analyse anlegen und bei Bedarf lokale Unternehmen vollständig löschen.
 3. **Finanzdaten**
-   - `Daten laden / aktualisieren` (Alpha Vantage, normalerweise 4 Requests),
+   - `Daten laden / aktualisieren` (Alpha Vantage),
    - kostenlose interne Plausibilitätschecks,
    - ChatGPT-Prüfpaket herunterladen,
    - Prüfpaket im normalen ChatGPT mit Websuche prüfen lassen,
@@ -30,6 +29,37 @@ ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** f
 5. **Kennzahlen** – ausschließlich **berechnungsbereite Preferred Data** verwenden.
 
 Später folgen Geschäftsmodell, Bewertung, Investmentthese und Report.
+
+## Unternehmen vollständig löschen
+
+Implementiert in:
+- `src/stock_valuation/companies/deletion.py`
+- `pages/0_Unternehmen.py`
+- `tests/test_company_deletion.py`
+
+### Einzellöschung
+
+Unter `Unternehmen -> Datenverwaltung – Unternehmen löschen` kann ein Unternehmen ausgewählt werden.
+Zur Bestätigung muss der Ticker eingegeben werden.
+
+Gelöscht werden zusammen mit dem Unternehmen insbesondere:
+- alle Analysen und Revisionen,
+- Finanzdaten und Adjustments,
+- Analystenschätzungen und Guidance,
+- manuelle Inputs/Overrides,
+- operative Daten,
+- Kennzahlen-Snapshots,
+- qualitative Einschätzungen,
+- Bewertungsannahmen und -ergebnisse,
+- Investmentthese,
+- ChatGPT-Prüfläufe und Findings,
+- providerbezogene Symbole.
+
+### Alle Unternehmen löschen
+
+Im selben Bereich gibt es `Alle Unternehmen`.
+Zur Bestätigung muss exakt `ALLE LÖSCHEN` eingegeben werden.
+Die Datenbankstruktur bleibt bestehen; danach kann ein Unternehmen wieder frisch als R1 angelegt werden.
 
 ## Preferred Data / Calculation Readiness
 
@@ -76,7 +106,7 @@ Zentral in `src/stock_valuation/data/preferred_data.py` und `docs/RAW_DATA_SCHEM
 - `depreciation_amortization`: reine Abschreibungen + Amortisation; kein automatisches `and other`.
 - `ebitda`: selbst aus freigegebenem EBIT + freigegebenem D&A berechnen; Provider-EBITDA nur Cross-Check.
 
-Diese Definitionen werden in neue ChatGPT-Prüfpakete eingebettet. Die Package-ID basiert weiterhin auf Snapshot-Identität und Fakten, damit bereits erzeugte Ergebnisdateien bei unverändertem Snapshot kompatibel bleiben.
+Diese Definitionen werden in neue ChatGPT-Prüfpakete eingebettet.
 
 ## Kennzahlenengine
 
@@ -87,38 +117,35 @@ Diese Definitionen werden in neue ChatGPT-Prüfpakete eingebettet. Die Package-I
 - EBITDA-Marge:
   - (freigegebenes EBIT + freigegebenes D&A) / Revenue,
   - Provider-EBITDA wird nicht direkt verwendet.
-- Für Microsoft kann nach Import des Prüfergebnisses die EBIT-Marge aus den geprüften Jahren berechnet werden.
-- Microsoft-EBITDA-Marge bleibt bewusst blockiert, solange D&A `UNKLAR` ist.
 
 ## ChatGPT-Dateiprüfung ohne separate API-Abrechnung
 
 - keine OpenAI Responses API im normalen Workflow,
 - kein `OPENAI_API_KEY` erforderlich,
 - keine `openai`-Python-Abhängigkeit,
-- UI erlaubt 2 / 3 / 5 tief zu prüfende Geschäftsjahre,
 - Prüfpaket enthält Unternehmensidentität, Fact-IDs, Providerfelder, Werte, lokale Plausibilitätschecks, interne Felddefinitionen und verbindlichen Prüfauftrag,
 - Rückimport validiert Schema-Version, Package-ID, Ticker, Stichtag, Revision und Fact-IDs,
 - Ergebnisse werden lokal als `AIReviewRun` und `AIReviewFinding` gespeichert.
 
-## Lokaler Abnahmetest jetzt
+## Lokaler Abnahmetest jetzt – kompletter ASML-Neustart
 
 1. `git pull`
-2. `pip install -e ".[dev]"`
-3. `pytest -q`
-4. `streamlit run app.py`
-5. Microsoft unter `Finanzdaten` öffnen.
-6. Bereits erzeugte Microsoft-JSON-Datei einlesen, falls noch nicht erfolgt.
-7. Die beiden `ppe_net`-FAIL-Vorschläge 2024/2025 prüfen und bei bestätigter Quelle `Übernehmen`.
-8. `Kennzahlen` öffnen.
-9. Preferred-Data-Status prüfen: PASS-Inputs müssen berechnungsbereit sein; D&A/EBITDA müssen blockiert bleiben.
-10. `Aktive Kennzahlen aus Preferred Data berechnen` drücken.
-11. Erwartung Microsoft: EBIT-Marge für die verifizierten Jahre wird erzeugt; EBITDA-Marge bleibt 0/blockiert.
-12. Prüfen, dass Rohdaten von Alpha Vantage weiterhin sichtbar/gespeichert bleiben und die PP&E-Overrides separat existieren.
+2. `pytest -q`
+3. `streamlit run app.py`
+4. `Unternehmen` öffnen.
+5. `Datenverwaltung – Unternehmen löschen` aufklappen.
+6. Tab `Alle Unternehmen` öffnen.
+7. `ALLE LÖSCHEN` eingeben und Löschung ausführen.
+8. Prüfen: `Gespeicherte Unternehmen` ist leer; Übersicht zeigt 0 Unternehmen / 0 Analysen.
+9. ASML neu suchen und als frische Analyse R1 anlegen.
+10. Unter `Finanzdaten` den Alpha-Vantage-Import neu durchführen.
+11. Danach ein neues ChatGPT-Prüfpaket erzeugen und den kompletten neuen Datenpfad testen.
 
 ## Noch offene Import-/Prüfthemen
 
-- realen Microsoft-Rückimport lokal testen und Preferred-Data-UI anhand der Anzeige nachschärfen,
-- nächste Microsoft-Prüfung mit den neuen Felddefinitionen testen; `short_term_debt` sollte dadurch eindeutiger klassifizierbar sein,
+- kompletten ASML-Neustart lokal durchführen,
+- ASML-Neuimport mit Preferred-Data-Status prüfen,
+- neue ChatGPT-Prüfung mit den zentralen Felddefinitionen testen,
 - weitere semantisch kritische Rohfelder schrittweise in `FIELD_DEFINITIONS` aufnehmen,
 - aktuellen Marktpreis automatisch laden und Listing/Währung sauber trennen,
 - automatische Primärquellen-Discovery dort ergänzen, wo zuverlässig möglich,
