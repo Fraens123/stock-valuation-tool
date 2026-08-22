@@ -206,6 +206,11 @@ def sync_alphavantage_financials(
     if not symbol.strip():
         raise ValueError("Für Alpha Vantage fehlt das Symbol.")
     facts = provider.get_normalized_financials(symbol.strip(), period_type="FY")
+    if not facts:
+        raise ValueError(
+            "Alpha Vantage lieferte für dieses Symbol keine importierbaren Jahresabschlüsse. "
+            "Der bestehende Snapshot wurde nicht verändert."
+        )
     return replace_financial_facts(
         session,
         analysis,
@@ -227,6 +232,8 @@ def sync_alphavantage_estimates(
     if not symbol.strip():
         raise ValueError("Für Alpha Vantage fehlt das Symbol.")
     estimates = provider.get_normalized_estimates(symbol.strip())
+    if not estimates:
+        return 0
     return replace_estimates(
         session,
         analysis,
@@ -242,7 +249,7 @@ def sync_alphavantage_snapshot(
     *,
     symbol: str,
 ) -> tuple[int, int]:
-    """Backward-compatible combined import. Prefer the separate V1 UI actions."""
+    """Combined Alpha Vantage import for the normal one-click workflow."""
     fact_count = sync_alphavantage_financials(
         session,
         analysis,
