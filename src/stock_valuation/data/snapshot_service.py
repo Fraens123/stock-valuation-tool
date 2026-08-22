@@ -6,8 +6,40 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
+from stock_valuation.data.normalization_alphavantage import normalize_alphavantage_financials
 from stock_valuation.data.types import NormalizedEstimate, NormalizedFinancialFact
 from stock_valuation.database.models import Analysis, EstimateSnapshot, FinancialFactSnapshot
+
+
+def _add_financial_fact(
+    session: Session,
+    analysis: Analysis,
+    fact: NormalizedFinancialFact,
+    *,
+    source_url: str | None = None,
+) -> None:
+    session.add(
+        FinancialFactSnapshot(
+            analysis_id=analysis.id,
+            statement=fact.statement,
+            metric=fact.metric,
+            period_end=fact.period_end,
+            period_type=fact.period_type,
+            value=fact.value,
+            provider_value=fact.provider_value,
+            currency=fact.currency,
+            unit=fact.unit,
+            provider=fact.provider,
+            provider_field=fact.provider_field,
+            source_type="provider",
+            source_url=source_url,
+            filing_date=fact.filing_date,
+            retrieved_at=fact.retrieved_at,
+            is_restated=False,
+            is_cross_check_only=fact.is_cross_check_only,
+            note=fact.note,
+        )
+    )
 
 
 def replace_financial_facts(
@@ -30,28 +62,33 @@ def replace_financial_facts(
     )
 
     for fact in rows:
-        session.add(
-            FinancialFactSnapshot(
-                analysis_id=analysis.id,
-                statement=fact.statement,
-                metric=fact.metric,
-                period_end=fact.period_end,
-                period_type=fact.period_type,
-                value=fact.value,
-                provider_value=fact.provider_value,
-                currency=fact.currency,
-                unit=fact.unit,
-                provider=fact.provider,
-                provider_field=fact.provider_field,
-                source_type="provider",
-                source_url=source_url,
-                filing_date=fact.filing_date,
-                retrieved_at=fact.retrieved_at,
-                is_restated=False,
-                is_cross_check_only=fact.is_cross_check_only,
-                note=fact.note,
-            )
+        _add_financial_fact(session, analysis, fact, source_url=source_url)
+    session.commit()
+    return len(rows)
+
+
+def replace_financial_metric(
+    session: Session,
+    analysis: Analysis,
+    facts: Iterable[NormalizedFinancialFact],
+    *,
+    provider: str,
+    metric: str,
+    source_url: str | None = None,
+) -> int:
+    """Replace exactly one provider/metric series without touching other snapshot facts."""
+    ensure_editable(analysis)
+    rows = [fact for fact in facts if fact.metric == metric]
+
+    session.execute(
+        delete(FinancialFactSnapshot).where(
+            FinancialFactSnapshot.analysis_id == analysis.id,
+            FinancialFactSnapshot.provider == provider,
+            FinancialFactSnapshot.metric == metric,
         )
+    )
+    for fact in rows:
+        _add_financial_fact(session, analysis, fact, source_url=source_url)
     session.commit()
     return len(rows)
 
@@ -123,7 +160,6 @@ def _sync_provider_snapshot(
 
 
 def sync_eodhd_snapshot(session: Session, analysis: Analysis, provider) -> tuple[int, int]:
-    """Load EODHD annual financials and annual estimates into an editable analysis."""
     symbol = analysis.company.provider_symbol
     if not symbol:
         raise ValueError("Für das Unternehmen fehlt ein EODHD-Provider-Symbol.")
@@ -144,7 +180,6 @@ def sync_alphavantage_snapshot(
     *,
     symbol: str,
 ) -> tuple[int, int]:
-    """Load Alpha Vantage annual statements and estimates into an editable analysis."""
     if not symbol.strip():
         raise ValueError("Für Alpha Vantage fehlt das Symbol.")
     return _sync_provider_snapshot(
@@ -154,4 +189,28 @@ def sync_alphavantage_snapshot(
         symbol=symbol.strip(),
         provider_name="alphavantage",
         source_url="https://www.alphavantage.co/documentation/#fundamentals",
+    )
+
+
+def sync_alphavantage_depreciation_amortization(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    symbol: str = "ASML",
+) -> int:
+    """Refresh only D&A from Alpha Vantage INCOME_STATEMENT using one API request."""
+    ensure_editable(analysis)
+    payload = provider.get_income_statement(symbol)
+    facts = normalize_alphavantage_financials(
+        {"income_statement": payload},
+        period_type="FY",
+    )
+    return replace_financial_metric(
+        session,
+        analysis,
+        facts,
+        provider="alphavantage",
+        metric="depreciation_amortization",
+        source_url="https://www.alphavantage.co/documentation/#income-statement",
     )
