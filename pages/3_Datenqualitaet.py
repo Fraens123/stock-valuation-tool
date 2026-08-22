@@ -6,17 +6,22 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from sqlalchemy import select
 
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.asml_primary import (
     ASMLPrimarySourceError,
     download_2025_us_gaap_workbook,
+    parse_primary_source_facts,
     scan_financial_statement_workbook,
 )
 from stock_valuation.data.providers.base import ProviderError
-from stock_valuation.data.snapshot_service import sync_alphavantage_depreciation_amortization
-from stock_valuation.database.models import AnalysisStatus
+from stock_valuation.data.snapshot_service import (
+    sync_alphavantage_depreciation_amortization,
+    sync_asml_primary_source_2024_2025,
+)
+from stock_valuation.database.models import AnalysisStatus, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.validation.asml_reference import ASML_US_GAAP_REFERENCES
 from stock_valuation.validation.service import (
@@ -79,6 +84,22 @@ def _enrich_candidate_rows(rows: list[dict]) -> list[dict]:
     return enriched
 
 
+def _primary_preview_rows(facts) -> list[dict]:
+    return [
+        {
+            "Jahr": fact.period_end.year,
+            "Statement": fact.statement,
+            "Interner Schlüssel": fact.metric,
+            "Wert Mio. €": float(fact.value / Decimal("1000000")) if fact.value is not None else None,
+            "Original Mio. €": (
+                float(fact.provider_value) if fact.provider_value is not None else None
+            ),
+            "ASML-Zeile": fact.provider_field,
+        }
+        for fact in facts
+    ]
+
+
 st.title("Datenqualität")
 st.caption(
     "Provider werden nicht pauschal freigegeben. Entscheidend ist, ob ein konkretes Rohdatenfeld "
@@ -107,13 +128,19 @@ with get_session() as session:
         st.stop()
     results = validate_asml_primary_source(session, analysis)
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    primary_facts_saved = session.scalars(
+        select(FinancialFactSnapshot).where(
+            FinancialFactSnapshot.analysis_id == analysis_id,
+            FinancialFactSnapshot.provider == "asml_primary",
+        )
+    ).all()
 
 if analysis.company.ticker.upper() != "ASML":
     st.info("Der automatische Primärquellen-Gate ist derzeit für den ASML-Referenzfall implementiert.")
     st.stop()
 
 if not results:
-    st.warning("Für diese Analyse wurden noch keine validierbaren Alpha-Vantage-Daten gefunden.")
+    st.warning("Für diese Analyse wurden noch keine validierbaren Fundamentaldaten gefunden.")
     st.stop()
 
 gates = metric_validation_gates(results)
@@ -123,16 +150,17 @@ approved = sum(gate.status == "approved" for gate in gates)
 review = sum(gate.status == "review" for gate in gates)
 blocked = sum(gate.status == "blocked" for gate in gates)
 
-cols = st.columns(3)
+cols = st.columns(4)
 cols[0].metric("Felder freigegeben", approved)
 cols[1].metric("Felder prüfen", review)
 cols[2].metric("Felder gesperrt", blocked)
+cols[3].metric("ASML-Primärfakten", len(primary_facts_saved))
 
 st.subheader("Feldfreigabe")
 st.write(
     "Ein Feld wird nur freigegeben, wenn **alle vorhandenen 2024/2025-Primärquellenchecks PASS** "
-    "sind. Ein einziges FAIL oder MISSING sperrt das Feld. Damit kann ein gutes Jahr eine "
-    "problematische Historie nicht verdecken."
+    "sind. Für jedes Feld/Jahr gilt die Quellenpriorität **ASML-Primärquelle > Alpha Vantage**. "
+    "Die schlechtere Providerzahl wird nicht gelöscht, sondern bleibt auditierbar gespeichert."
 )
 
 gate_rows = [
@@ -169,56 +197,36 @@ st.dataframe(pd.DataFrame(readiness_rows), use_container_width=True, hide_index=
 
 st.info(
     "Aktueller Grundsatz: Umsatz-/Ergebniskennzahlen dürfen auf freigegebenen Feldern aufbauen. "
-    "Working-Capital- und DCF-Kennzahlen bleiben gesperrt, solange z. B. Forderungen, CAPEX oder "
-    "Operating Cash Flow die Primärquellenprüfung nicht bestehen."
+    "Working-Capital- und DCF-Kennzahlen bleiben gesperrt, solange die jeweils benötigte Historie "
+    "noch nicht zuverlässig aus Primärquelle oder validiertem Provider vorliegt."
 )
 
 st.divider()
 st.subheader("D&A-Rohfelddiagnose")
 st.caption(
-    "Die Diagnose zeigte für ASML, dass `depreciationAndAmortization` aus dem "
-    "`INCOME_STATEMENT` die offiziellen D&A-Kontrollwerte 2025 (1.025,9 Mio. €) und 2024 "
-    "(918,6 Mio. €) exakt trifft. Das Cashflow-Feld weicht 2024 ab und bleibt deshalb nur "
-    "Cross-Check."
+    "Für ASML ist `INCOME_STATEMENT.depreciationAndAmortization` validiert. Das Cashflow-D&A-Feld "
+    "bleibt nur Cross-Check."
 )
 
 api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 if not api_key_available:
-    st.warning("Für die optionale Diagnose/Reparatur fehlt `ALPHA_VANTAGE_API_KEY` in der lokalen `.env`.")
+    st.warning("Für optionale Alpha-Vantage-Diagnosen fehlt `ALPHA_VANTAGE_API_KEY` in `.env`.")
 
 button_cols = st.columns(2)
 with button_cols[0]:
-    if st.button(
-        "D&A-Rohfelder prüfen (2 Requests)",
-        disabled=not api_key_available,
-        help="Technische Diagnose; verändert den Snapshot nicht.",
-    ):
+    if st.button("D&A-Rohfelder prüfen (2 Requests)", disabled=not api_key_available):
         try:
             provider = AlphaVantageProvider()
             with st.spinner("Prüfe D&A-Rohfelder für ASML …"):
                 rows = provider.probe_depreciation_fields("ASML")
-            if not rows:
-                st.warning("In den beiden Statements wurden keine passenden Rohfelder gefunden.")
-            else:
-                st.success(
-                    f"Diagnose abgeschlossen: {len(rows)} passende Rohfeld-Zeilen gefunden. "
-                    "Es wurden keine Snapshot-Daten verändert."
-                )
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         except ProviderError as exc:
             st.error(str(exc))
-        except Exception as exc:
-            st.exception(exc)
 
 with button_cols[1]:
     if st.button(
         "D&A-Mapping anwenden (1 Request)",
-        type="primary",
         disabled=not api_key_available or not editable,
-        help=(
-            "Lädt nur INCOME_STATEMENT und ersetzt ausschließlich die D&A-Serie im bestehenden "
-            "Snapshot. Alle anderen Rohdaten bleiben unverändert."
-        ),
     ):
         try:
             provider = AlphaVantageProvider()
@@ -226,93 +234,45 @@ with button_cols[1]:
                 current = get_analysis(session, analysis_id)
                 if current is None:
                     raise ValueError("Analyse nicht gefunden.")
-                with st.spinner("Aktualisiere nur die D&A-Serie aus INCOME_STATEMENT …"):
-                    count = sync_alphavantage_depreciation_amortization(
-                        session,
-                        current,
-                        provider,
-                        symbol="ASML",
-                    )
-            st.success(
-                f"D&A-Mapping aktualisiert: {count} Jahreswerte gespeichert. "
-                "Verbraucht wurde genau 1 Alpha-Vantage-Request."
-            )
+                count = sync_alphavantage_depreciation_amortization(
+                    session, current, provider, symbol="ASML"
+                )
+            st.success(f"D&A-Mapping aktualisiert: {count} Jahreswerte gespeichert.")
             st.rerun()
         except (ProviderError, AnalysisFrozenError, ValueError) as exc:
             st.error(str(exc))
-        except Exception as exc:
-            st.exception(exc)
-
-if not editable:
-    st.caption(
-        "Die ausgewählte Analyse ist abgeschlossen/archiviert. Das D&A-Mapping kann nur in einer "
-        "offenen Revision geändert werden."
-    )
 
 st.divider()
-st.subheader("Nächste gesperrte Rohfelder diagnostizieren")
+st.subheader("Gesperrte Alpha-Vantage-Rohfelder diagnostizieren")
 st.caption(
-    "Dieser Diagnoseabruf verbraucht genau **2 Alpha-Vantage-Requests**: einmal `BALANCE_SHEET` "
-    "und einmal `CASH_FLOW`. Er verändert den Snapshot nicht. Angezeigt werden nur plausible "
-    "Rohfeld-Kandidaten für die noch gesperrten Felder; daneben steht direkt der offizielle "
-    "ASML-Kontrollwert 2024/2025 und die rechnerische Abweichung. Eine kleine Abweichung allein "
-    "reicht noch nicht für ein Mapping — die Semantik des Feldes muss ebenfalls passen."
+    "Optionaler Diagnoseabruf mit genau **2 Alpha-Vantage-Requests**. Er verändert den Snapshot nicht."
 )
 
-if st.button(
-    "Gesperrte Felder prüfen (2 Requests)",
-    disabled=not api_key_available,
-    help=(
-        "Diagnose für Forderungen, Vorräte, PP&E, kurzfristige Schulden, Cash/Investments, "
-        "Operating Cash Flow, CAPEX und Dividenden. Keine Persistenz."
-    ),
-):
+if st.button("Gesperrte Felder prüfen (2 Requests)", disabled=not api_key_available):
     try:
         provider = AlphaVantageProvider()
         with st.spinner("Prüfe Balance-Sheet- und Cashflow-Rohfelder für ASML …"):
             rows = provider.probe_blocked_field_candidates("ASML")
-        if not rows:
-            st.warning("Keine passenden Rohfeld-Kandidaten gefunden.")
-        else:
-            enriched = _enrich_candidate_rows(rows)
-            st.success(
-                f"Diagnose abgeschlossen: {len(enriched)} Kandidatenzeilen gefunden. "
-                "Der Snapshot wurde nicht verändert."
-            )
-            st.dataframe(
-                pd.DataFrame(enriched),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Alpha Vantage Mio. €": st.column_config.NumberColumn(
-                        "Alpha Vantage Mio. €", format="%.1f"
-                    ),
-                    "ASML offiziell Mio. €": st.column_config.NumberColumn(
-                        "ASML offiziell Mio. €", format="%.1f"
-                    ),
-                    "Abweichung %": st.column_config.NumberColumn(
-                        "Abweichung %", format="%.3f"
-                    ),
-                },
-            )
-            st.info(
-                "Für die nächste Mapping-Entscheidung sind vor allem Kandidaten interessant, die "
-                "in **beiden** Jahren eng am offiziellen Wert liegen und fachlich dieselbe "
-                "Bilanz-/Cashflow-Zeile darstellen."
-            )
+        enriched = _enrich_candidate_rows(rows)
+        st.dataframe(
+            pd.DataFrame(enriched),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Alpha Vantage Mio. €": st.column_config.NumberColumn(format="%.1f"),
+                "ASML offiziell Mio. €": st.column_config.NumberColumn(format="%.1f"),
+                "Abweichung %": st.column_config.NumberColumn(format="%.3f"),
+            },
+        )
     except ProviderError as exc:
         st.error(str(exc))
-    except Exception as exc:
-        st.exception(exc)
 
 st.divider()
 st.subheader("Offizielle ASML-Primärquelle – US-GAAP Excel")
 st.caption(
-    "Die Cashflow-Diagnose zeigt für 2024 und 2025 einen nahezu einheitlichen Skalierungsfehler "
-    "über OCF, PP&E-CAPEX und Dividenden. Deshalb wird das Alpha-Vantage-Cashflow-Statement für "
-    "ASML nicht durch einen Korrekturfaktor repariert. Stattdessen prüfen wir die offizielle "
-    "ASML-US-GAAP-Finanzdatei direkt. Dieser Abruf benötigt **0 Alpha-Vantage-Requests**, "
-    "verändert den Snapshot noch nicht und zeigt zunächst nur die gefundenen Originalzeilen."
+    "Die offizielle ASML-Datei ist für die problematischen 2024/2025-Zeilen maßgeblich. "
+    "Der Abruf benötigt **0 Alpha-Vantage-Requests**. Der Import speichert die offiziellen Werte "
+    "unter `provider=asml_primary` **zusätzlich** zu Alpha Vantage; nichts wird überschrieben."
 )
 
 if st.button("Offizielle ASML-2025-US-GAAP-Excel prüfen (0 AV Requests)"):
@@ -320,15 +280,18 @@ if st.button("Offizielle ASML-2025-US-GAAP-Excel prüfen (0 AV Requests)"):
         with st.spinner("Lade und untersuche die offizielle ASML-US-GAAP-Finanzdatei …"):
             workbook_content = download_2025_us_gaap_workbook()
             primary_matches = scan_financial_statement_workbook(workbook_content)
+            primary_preview = parse_primary_source_facts(workbook_content)
         st.session_state["asml_primary_matches"] = primary_matches
+        st.session_state["asml_primary_preview"] = primary_preview
         st.success(
-            f"Offizielle ASML-Datei gelesen: {len(primary_matches)} relevante Zeilen gefunden. "
-            "Noch wurden keine Primärquellenwerte in den Snapshot geschrieben."
+            f"Offizielle ASML-Datei gelesen: {len(primary_matches)} relevante Zeilen gefunden; "
+            f"{len(primary_preview)} deterministische 2024/2025-Fakten sind importierbar."
         )
     except ASMLPrimarySourceError as exc:
         st.error(str(exc))
 
 primary_matches = st.session_state.get("asml_primary_matches")
+primary_preview = st.session_state.get("asml_primary_preview")
 if primary_matches:
     primary_rows = [
         {
@@ -338,13 +301,62 @@ if primary_matches:
             "Treffer": row["matched_pattern"],
             "Originalzeile": row["row_values"],
             "Kopfzeile -1": row["header_minus_1"],
-            "Kopfzeile -2": row["header_minus_2"],
         }
         for row in primary_matches
     ]
     st.dataframe(pd.DataFrame(primary_rows), use_container_width=True, hide_index=True)
-    st.info(
-        "Diese Tabelle dient einmalig dazu, das Layout der offiziellen ASML-Datei zu bestätigen. "
-        "Danach wird daraus ein deterministischer Primärquellen-Importer für die gesperrten "
-        "Bilanz- und Cashflow-Zeilen gebaut."
+
+if primary_preview:
+    st.markdown("#### Deterministischer Importvorschlag")
+    st.dataframe(
+        pd.DataFrame(_primary_preview_rows(primary_preview)),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Wert Mio. €": st.column_config.NumberColumn(format="%.1f"),
+            "Original Mio. €": st.column_config.NumberColumn(format="%.1f"),
+        },
+    )
+    st.caption(
+        "Importiert werden ausschließlich eindeutig identifizierte Abschlusszeilen für 2024/2025. "
+        "Cashflow-Bewegungszeilen mit ähnlicher Bezeichnung werden nicht als Bilanzbestände verwendet."
+    )
+
+    if st.button(
+        "ASML-Primärquellenwerte 2024/2025 in Snapshot übernehmen (0 AV Requests)",
+        type="primary",
+        disabled=not editable,
+    ):
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse nicht gefunden.")
+                with st.spinner("Importiere offizielle ASML-Primärquellenwerte …"):
+                    count = sync_asml_primary_source_2024_2025(session, current)
+            st.success(
+                f"{count} ASML-Primärquellenfakten gespeichert. Alpha-Vantage-Daten wurden nicht gelöscht."
+            )
+            st.rerun()
+        except (ASMLPrimarySourceError, AnalysisFrozenError, ValueError) as exc:
+            st.error(str(exc))
+
+if primary_facts_saved:
+    st.markdown("#### Bereits gespeicherte ASML-Primärquellenwerte")
+    stored_rows = [
+        {
+            "Jahr": fact.period_end.year,
+            "Statement": fact.statement,
+            "Interner Schlüssel": fact.metric,
+            "Wert Mio. €": float(fact.value / Decimal("1000000")) if fact.value is not None else None,
+            "Quelle": fact.provider_field,
+            "Source Type": fact.source_type,
+        }
+        for fact in sorted(primary_facts_saved, key=lambda item: (item.period_end, item.metric))
+    ]
+    st.dataframe(
+        pd.DataFrame(stored_rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={"Wert Mio. €": st.column_config.NumberColumn(format="%.1f")},
     )
