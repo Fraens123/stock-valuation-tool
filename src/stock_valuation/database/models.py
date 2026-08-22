@@ -4,7 +4,7 @@ import enum
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -70,14 +70,36 @@ class FinancialFactSnapshot(Base):
     analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
     statement: Mapped[str] = mapped_column(String(40))
     metric: Mapped[str] = mapped_column(String(160), index=True)
-    period_end: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date, index=True)
     period_type: Mapped[str] = mapped_column(String(20))
     value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    provider_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_field: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    filing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_restated: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_cross_check_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class FinancialAdjustmentSnapshot(Base):
+    __tablename__ = "financial_adjustment_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    metric: Mapped[str] = mapped_column(String(160), index=True)
+    period_end: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(30, 8))
+    category: Mapped[str] = mapped_column(String(80))
+    reason: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    included_in_normalized: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class EstimateSnapshot(Base):
@@ -92,7 +114,10 @@ class EstimateSnapshot(Base):
     high: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
     analyst_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class GuidanceSnapshot(Base):
@@ -125,6 +150,36 @@ class ManualInputSnapshot(Base):
     source_name: Mapped[str] = mapped_column(String(120), default="Aktienfinder")
     entered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    overrides_metric: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
+
+class OperatingFactSnapshot(Base):
+    __tablename__ = "operating_fact_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    metric: Mapped[str] = mapped_column(String(160), index=True)
+    period: Mapped[str] = mapped_column(String(40), index=True)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    publication_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MetricSnapshot(Base):
+    __tablename__ = "metric_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    metric_id: Mapped[str] = mapped_column(String(160), index=True)
+    period: Mapped[str] = mapped_column(String(40), index=True)
+    basis: Mapped[str] = mapped_column(String(24), default="reported")
+    value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    calculation_version: Mapped[str] = mapped_column(String(40), default="0.1")
+    inputs_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class QualitativeAssessment(Base):
@@ -138,6 +193,7 @@ class QualitativeAssessment(Base):
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ValuationAssumption(Base):
@@ -165,3 +221,15 @@ class ValuationResult(Base):
     value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     calculation_version: Mapped[str] = mapped_column(String(40), default="0.1")
+
+
+class InvestmentThesis(Base):
+    __tablename__ = "investment_theses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), unique=True, index=True)
+    thesis_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    value_drivers: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    invalidation_conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    watch_items: Mapped[str | None] = mapped_column(Text, nullable=True)
