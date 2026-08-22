@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from stock_valuation.data.resolution import load_preferred_financial_facts
 from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
-from stock_valuation.database.models import FinancialFactSnapshot
+from stock_valuation.database.models import Analysis, FinancialFactSnapshot
+from stock_valuation.validation.service import metric_validation_gates, validate_asml_primary_source
 
 
 PRIMARY_SOURCE_PROVIDERS = {
@@ -76,6 +77,24 @@ def _latest_review_index(
     return result
 
 
+def _legacy_approved_metrics(session: Session, analysis_id: int) -> set[str]:
+    """Bridge the original ASML field gate into the generic preferred-data layer.
+
+    The ASML reference workflow predates ChatGPT file reviews and already performs a deterministic
+    primary-source comparison. Keeping that evidence prevents the new generic layer from making the
+    validated ASML reference case appear unverified.
+    """
+    analysis = session.get(Analysis, analysis_id)
+    if analysis is None or analysis.company.ticker.upper() != "ASML":
+        return set()
+    validation = validate_asml_primary_source(session, analysis)
+    return {
+        gate.metric
+        for gate in metric_validation_gates(validation)
+        if gate.status == "approved"
+    }
+
+
 def _is_primary_source(fact: FinancialFactSnapshot) -> bool:
     return fact.source_type == "primary_source" or (fact.provider or "") in PRIMARY_SOURCE_PROVIDERS
 
@@ -95,6 +114,8 @@ def _finding_matches_fact(finding: AIReviewFinding, fact: FinancialFactSnapshot)
 def _state_for_fact(
     fact: FinancialFactSnapshot,
     finding: AIReviewFinding | None,
+    *,
+    legacy_approved_metrics: set[str],
 ) -> PreferredDataState:
     if fact.provider == "manual_override":
         return PreferredDataState(
@@ -123,6 +144,17 @@ def _state_for_fact(
             ),
             review_verdict=finding.verdict if finding else None,
             review_decision=finding.decision if finding else None,
+        )
+
+    if fact.provider == "alphavantage" and fact.metric in legacy_approved_metrics:
+        return PreferredDataState(
+            fact=fact,
+            quality_status="legacy_primary_validated",
+            calculation_ready=True,
+            reason=(
+                "Alpha-Vantage-Feld wurde im bestehenden ASML-Referenzgate feldweise gegen "
+                "offizielle Primärquellen freigegeben."
+            ),
         )
 
     if finding is None:
@@ -214,8 +246,13 @@ def load_preferred_data_states(
         period_type=period_type,
     )
     review_index = _latest_review_index(session, analysis_id)
+    legacy_approved = _legacy_approved_metrics(session, analysis_id)
     return [
-        _state_for_fact(fact, review_index.get((fact.metric, fact.period_end)))
+        _state_for_fact(
+            fact,
+            review_index.get((fact.metric, fact.period_end)),
+            legacy_approved_metrics=legacy_approved,
+        )
         for fact in facts
     ]
 
