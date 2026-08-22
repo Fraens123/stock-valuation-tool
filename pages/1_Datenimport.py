@@ -11,7 +11,8 @@ from sqlalchemy import select
 from stock_valuation.analyses.ai_review_service import (
     AIReviewError,
     accept_ai_review_finding,
-    execute_ai_review,
+    build_chatgpt_review_package,
+    import_chatgpt_review_result,
     latest_ai_review_run,
     reject_ai_review_finding,
 )
@@ -76,8 +77,8 @@ def _format_value(value: Decimal | None, currency: str | None) -> str:
 
 st.title("Finanzdaten")
 st.caption(
-    "Normaler Ablauf: Daten laden → automatisch prüfen → nur echte Abweichungen entscheiden. "
-    "Importierte Originalwerte bleiben immer auditierbar erhalten."
+    "Normaler Ablauf: Alpha Vantage laden → lokal plausibilisieren → optional mit ChatGPT gegen "
+    "offizielle Quellen prüfen → Abweichungen selbst übernehmen oder verwerfen."
 )
 
 with get_session() as session:
@@ -108,7 +109,6 @@ with get_session() as session:
 
 alpha_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
 alpha_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
-openai_key_available = bool(os.getenv("OPENAI_API_KEY"))
 
 header = st.columns(5)
 header[0].metric("Unternehmen", analysis.company.name)
@@ -117,6 +117,9 @@ header[2].metric("Fundamentals-Symbol", alpha_symbol or "—")
 header[3].metric("Revision", f"R{analysis.revision_number}")
 header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
 
+# -----------------------------------------------------------------------------
+# 1. Import
+# -----------------------------------------------------------------------------
 st.subheader("1. Daten laden")
 if not alpha_key_available:
     st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
@@ -192,6 +195,9 @@ with get_session() as session:
     ).all()
     preferred = load_preferred_financial_facts(session, analysis_id)
 
+# -----------------------------------------------------------------------------
+# 2. Stored data
+# -----------------------------------------------------------------------------
 st.divider()
 st.subheader("2. Gespeicherter Datenstand")
 if not facts:
@@ -230,6 +236,9 @@ else:
             hide_index=True,
         )
 
+# -----------------------------------------------------------------------------
+# 3. Review
+# -----------------------------------------------------------------------------
 st.divider()
 st.subheader("3. Daten prüfen")
 if not preferred:
@@ -247,7 +256,7 @@ else:
     audit_cols[2].metric("Intern prüfen", check_count)
 
     if audit_checks:
-        with st.expander("Kostenlose Plausibilitätsprüfung", expanded=bool(check_count)):
+        with st.expander("Kostenlose lokale Plausibilitätsprüfung", expanded=bool(check_count)):
             st.dataframe(
                 pd.DataFrame(
                     [
@@ -267,52 +276,81 @@ else:
                 hide_index=True,
             )
 
-    st.markdown("#### KI-Prüfung gegen offizielle Quellen")
+    st.markdown("#### ChatGPT-Prüfung gegen offizielle Quellen")
     st.write(
-        "Die KI recherchiert per Websuche bevorzugt Annual Reports, 10-K/20-F, regulatorische "
-        "Filings und offizielle Investor-Relations-Unterlagen. Sie **ändert keine Zahl selbst**. "
-        "Abweichungen werden als Vorschläge gespeichert und erst nach deiner Entscheidung übernommen."
+        "Diese Prüfung verwendet **keinen OpenAI-API-Key**. Das Tool erstellt ein Prüfpaket, "
+        "das du in deinem normalen ChatGPT hochlädst. ChatGPT recherchiert die offiziellen Quellen "
+        "und gibt eine JSON-Ergebnisdatei zurück, die hier wieder eingelesen wird."
     )
-    if not openai_key_available:
-        st.warning(
-            "Für die direkte Prüfung fehlt `OPENAI_API_KEY` in `.env`. Der ChatGPT-Plan und die "
-            "OpenAI-API-Abrechnung sind getrennt."
-        )
-    if not editable:
-        st.info("Eine eingefrorene Revision kann nicht erneut geprüft oder korrigiert werden.")
 
-    review_cols = st.columns([1, 2])
-    with review_cols[0]:
-        review_years = st.selectbox(
-            "Geschäftsjahre prüfen",
-            [2, 3, 5],
-            index=1,
-            help="3 Jahre sind für den ersten Test ein guter Kompromiss aus Tiefe, Zeit und API-Kosten.",
-        )
-    with review_cols[1]:
-        st.caption(
-            "Die Prüfung nutzt die OpenAI Responses API mit Websuche. Modell- und Websuche-Kosten "
-            "werden über deinen OpenAI-API-Account abgerechnet."
+    review_years = st.selectbox(
+        "Geschäftsjahre tief prüfen",
+        [2, 3, 5],
+        index=1,
+        help="Für den ersten Test sind 2 oder 3 Jahre sinnvoll. Die lokale Historie bleibt vollständig gespeichert.",
+    )
+
+    try:
+        with get_session() as session:
+            current = get_analysis(session, analysis_id)
+            if current is None:
+                raise ValueError("Analyse nicht gefunden.")
+            review_package = build_chatgpt_review_package(
+                session,
+                current,
+                years=int(review_years),
+            )
+
+        package_cols = st.columns([1, 2])
+        with package_cols[0]:
+            st.download_button(
+                "1. ChatGPT-Prüfpaket herunterladen",
+                data=review_package.content,
+                file_name=review_package.filename,
+                mime="text/markdown",
+                type="primary",
+            )
+        with package_cols[1]:
+            st.caption(
+                f"{review_package.fact_count} Fakten · Package-ID `{review_package.package_id[:12]}…` · "
+                f"erwartete Ergebnisdatei: `{review_package.result_filename}`"
+            )
+
+        st.info(
+            "**In ChatGPT:** Datei hochladen und schreiben: „Führe die Prüfung aus und erstelle die "
+            "angeforderte JSON-Ergebnisdatei.“ Danach die von ChatGPT erzeugte `.json`-Datei hier hochladen."
         )
 
-    if st.button(
-        "KI-Prüfung starten",
-        type="primary",
-        disabled=not openai_key_available or not editable,
-    ):
-        try:
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse nicht gefunden.")
-                with st.spinner(
-                    "KI prüft Finanzzahlen gegen offizielle Quellen. Das kann einige Minuten dauern …"
-                ):
-                    run = execute_ai_review(session, current, years=int(review_years))
-            st.success(f"KI-Prüfung abgeschlossen: Lauf #{run.id} gespeichert.")
-            st.rerun()
-        except (AIReviewError, AnalysisFrozenError, ValueError) as exc:
-            st.error(str(exc))
+        uploaded_review = st.file_uploader(
+            "2. ChatGPT-Prüfergebnis hochladen",
+            type=["json"],
+            accept_multiple_files=False,
+            key=f"chatgpt-review-result-{analysis_id}",
+        )
+        if uploaded_review is not None:
+            st.caption(f"Ausgewählt: `{uploaded_review.name}`")
+            if st.button(
+                "3. Prüfergebnis einlesen",
+                disabled=not editable,
+            ):
+                try:
+                    with get_session() as session:
+                        current = get_analysis(session, analysis_id)
+                        if current is None:
+                            raise ValueError("Analyse nicht gefunden.")
+                        run = import_chatgpt_review_result(
+                            session,
+                            current,
+                            uploaded_review.getvalue(),
+                        )
+                    st.success(
+                        f"ChatGPT-Prüfung eingelesen: Lauf #{run.id} mit {len(run.findings)} Prüffunden."
+                    )
+                    st.rerun()
+                except (AIReviewError, AnalysisFrozenError, ValueError) as exc:
+                    st.error(str(exc))
+    except (AIReviewError, ValueError) as exc:
+        st.error(str(exc))
 
     if latest_run is not None:
         findings = list(latest_run.findings)
@@ -320,9 +358,10 @@ else:
             status: sum(row.verdict == status for row in findings)
             for status in ["PASS", "WARN", "FAIL", "UNKLAR"]
         }
+        st.markdown("##### Letztes eingelesenes ChatGPT-Prüfergebnis")
         st.caption(
-            f"Letzte KI-Prüfung: {latest_run.created_at} · Modell `{latest_run.model}` · "
-            f"{latest_run.years_requested} Geschäftsjahre"
+            f"Importiert: {latest_run.created_at} · {latest_run.years_requested} Geschäftsjahre · "
+            f"Package-ID `{(latest_run.response_id or '—')[:12]}…`"
         )
         if latest_run.summary:
             st.info(latest_run.summary)
@@ -359,7 +398,7 @@ else:
                 hide_index=True,
             )
         else:
-            st.success("Keine Abweichungen oder unklaren Positionen in der letzten KI-Prüfung.")
+            st.success("Keine Abweichungen oder unklaren Positionen in der letzten ChatGPT-Prüfung.")
 
         pending = [
             row
@@ -372,9 +411,13 @@ else:
             st.markdown("##### Korrekturvorschläge entscheiden")
             st.caption(
                 "**Übernehmen** legt einen bestätigten Override an. **Verwerfen** behält den "
-                "bisher verwendeten Wert. In beiden Fällen bleibt die komplette Prüfhistorie erhalten."
+                "bisher verwendeten Wert. Der Alpha-Vantage-Originalwert bleibt in beiden Fällen erhalten."
             )
-            for finding in sorted(pending, key=lambda row: (row.period_end, row.metric), reverse=True):
+            for finding in sorted(
+                pending,
+                key=lambda row: (row.period_end, row.metric),
+                reverse=True,
+            ):
                 label = f"{finding.verdict} · {finding.period_end.year} · {finding.metric}"
                 with st.expander(label, expanded=finding.verdict == "FAIL"):
                     c1, c2, c3 = st.columns(3)
@@ -382,7 +425,11 @@ else:
                     c2.metric("Offiziell", _format_value(finding.official_value, finding.currency))
                     c3.metric(
                         "Abweichung",
-                        f"{float(finding.deviation_pct):.3f} %" if finding.deviation_pct is not None else "—",
+                        (
+                            f"{float(finding.deviation_pct):.3f} %"
+                            if finding.deviation_pct is not None
+                            else "—"
+                        ),
                     )
                     st.write(f"**Offizielle Bezeichnung:** {finding.official_label or '—'}")
                     st.write(f"**Begründung:** {finding.reason or '—'}")
@@ -411,6 +458,9 @@ else:
                         except (AnalysisFrozenError, ValueError) as exc:
                             st.error(str(exc))
 
+# -----------------------------------------------------------------------------
+# 4. Manual correction
+# -----------------------------------------------------------------------------
 st.divider()
 st.subheader("4. Manuelle Korrektur")
 st.caption(
@@ -500,6 +550,9 @@ else:
                         )
                 st.rerun()
 
+# -----------------------------------------------------------------------------
+# Estimates
+# -----------------------------------------------------------------------------
 st.divider()
 st.subheader("Analystenschätzungen")
 if not estimates:
