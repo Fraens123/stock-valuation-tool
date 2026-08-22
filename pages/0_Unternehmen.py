@@ -24,6 +24,7 @@ from stock_valuation.companies.service import (
     get_or_create_from_candidate,
     list_companies,
 )
+from stock_valuation.data.offline_replay import OfflineReplayError, replay_review_files
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.database.session import get_session, init_database
@@ -56,13 +57,51 @@ api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 if not api_key_available:
     st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
 
+with st.expander("Offline-Entwicklung – vorhandenes ChatGPT-Prüfpaket wiederherstellen", expanded=False):
+    st.write(
+        "Damit kann ein zuvor exportiertes **Prüfpaket zusammen mit der zugehörigen JSON-Ergebnisdatei** "
+        "ohne Alpha-Vantage-Request als Entwicklungs-Snapshot wiederhergestellt werden. "
+        "Es werden nur die im Prüfpaket enthaltenen Jahre/Fakten rekonstruiert; vollständige 20-Jahres-Historie "
+        "und Analystenschätzungen lassen sich daraus nicht zurückholen."
+    )
+    replay_package = st.file_uploader(
+        "ChatGPT-Prüfpaket (.md)",
+        type=["md"],
+        key="offline-replay-package",
+    )
+    replay_result = st.file_uploader(
+        "Zugehöriges ChatGPT-Prüfergebnis (.json)",
+        type=["json"],
+        key="offline-replay-result",
+    )
+    if st.button(
+        "Offline-Snapshot wiederherstellen",
+        disabled=replay_package is None or replay_result is None,
+        key="offline-replay-button",
+    ):
+        try:
+            with get_session() as session:
+                summary = replay_review_files(
+                    session,
+                    replay_package.getvalue(),
+                    replay_result.getvalue(),
+                )
+            st.session_state.pop("company_search_candidates", None)
+            st.success(
+                f"{summary.ticker} offline wiederhergestellt: {summary.fact_count} Finanzfakten und "
+                f"{summary.review_finding_count} Prüfergebnisse. Kein Alpha-Vantage-Request verwendet."
+            )
+            st.rerun()
+        except OfflineReplayError as exc:
+            st.error(str(exc))
+
 query = st.text_input(
     "Unternehmen oder Ticker",
     placeholder="z. B. ASML, Microsoft, Siemens, LVMH, Novo Nordisk",
 )
 
 if st.button(
-    "Unternehmen suchen (1 Request)",
+    "Unternehmen suchen (Cache oder 1 Request)",
     disabled=not api_key_available or not query.strip(),
 ):
     try:
@@ -71,11 +110,12 @@ if st.button(
             raw_matches = provider.search_companies(query.strip())
         candidates = alpha_vantage_company_candidates(raw_matches)
         st.session_state["company_search_candidates"] = candidates
+        source = "lokalem Cache" if provider.cache_hits else "Alpha Vantage"
         if candidates:
             groups = standard_issuer_groups(candidates)
             if groups:
                 st.success(
-                    f"{len(groups)} Unternehmen aus {len(candidates)} Börsen-/Instrumenttreffern erkannt."
+                    f"{len(groups)} Unternehmen aus {len(candidates)} Börsen-/Instrumenttreffern erkannt · Quelle: {source}."
                 )
             else:
                 st.warning("Die Treffer enthalten kein eindeutig auswählbares Unternehmen.")
@@ -100,7 +140,7 @@ if candidates:
         st.info(
             "Du musst **keinen Ticker oder Börsenplatz auswählen**. Beim Anlegen prüft das Tool "
             "automatisch, welches Alpha-Vantage-Symbol echte Jahresabschlüsse liefert, und speichert "
-            "dies getrennt vom Börsenplatz."
+            "dies getrennt vom Börsenplatz. Bereits bekannte Providerantworten kommen aus dem lokalen Cache."
         )
 
         with st.expander("Technische Details / gefundene Börsenplätze", expanded=False):
@@ -121,7 +161,7 @@ if candidates:
             )
             st.caption(
                 "Diese Liste dient nur zur Kontrolle. Das Fundamentals-Symbol wird beim Anlegen mit "
-                "einem echten Income-Statement-Probe automatisch verifiziert (maximal 3 Versuche)."
+                "einem Income-Statement-Probe automatisch verifiziert; identische Probe-Anfragen werden gecacht."
             )
 
         with st.form("create-analysis-from-provider"):
@@ -186,10 +226,11 @@ if candidates:
 
                 st.session_state.pop("company_search_candidates", None)
                 attempts = ", ".join(resolution.attempts)
+                source = "Cache" if provider.cache_hits and provider.network_requests == 0 else "Provider/Cache"
                 st.success(
                     f"{company.name}: Analyse R{analysis.revision_number} angelegt. "
                     f"Fundamentaldaten automatisch bestätigt mit `{resolution.symbol}` "
-                    f"({resolution.reported_currency or 'Währung unbekannt'}); geprüft: {attempts}. "
+                    f"({resolution.reported_currency or 'Währung unbekannt'}); geprüft: {attempts}; Quelle: {source}. "
                     "Jetzt links **Finanzdaten** öffnen und `Daten laden / aktualisieren` drücken."
                 )
                 st.rerun()
@@ -226,7 +267,7 @@ with st.expander("Datenverwaltung – Unternehmen löschen", expanded=False):
     st.warning(
         "Das Löschen ist endgültig. Es entfernt das Unternehmen zusammen mit allen Analysen, "
         "Revisionen, Finanzdaten, Estimates, ChatGPT-Prüfungen, Overrides, Kennzahlen und "
-        "später gespeicherten Bewertungs-/Thesendaten."
+        "später gespeicherten Bewertungs-/Thesendaten. Der lokale Provider-Cache bleibt bewusst erhalten."
     )
 
     if not companies:
@@ -266,7 +307,7 @@ with st.expander("Datenverwaltung – Unternehmen löschen", expanded=False):
         with all_tab:
             st.write(
                 "Damit wird die lokale Unternehmens-/Analysedatenbank inhaltlich geleert. "
-                "Die Datenbankstruktur und die Anwendung selbst bleiben erhalten."
+                "Die Datenbankstruktur, Anwendung und der Provider-Cache bleiben erhalten."
             )
             all_confirmation = st.text_input(
                 "Zur Bestätigung `ALLE LÖSCHEN` eingeben",
