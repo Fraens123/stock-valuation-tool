@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot, MetricSnapshot
-from stock_valuation.metrics.engine import CALCULATION_VERSION, MetricPoint, calculate_ebit_margin
+from stock_valuation.metrics.engine import (
+    CALCULATION_VERSION,
+    MetricPoint,
+    calculate_ebit_margin,
+    calculate_ebitda_margin,
+)
 from stock_valuation.validation.service import metric_validation_gates, validate_asml_primary_source
 
 
@@ -42,8 +47,8 @@ PHASE_3A_METHOD_STATES: tuple[Phase3AMetricState, ...] = (
     ),
     Phase3AMetricState(
         "ebitda_margin",
-        "data_blocked",
-        "Depreciation/Amortization ist im ASML-Primärquellen-Gate derzeit gesperrt.",
+        "implemented",
+        "ASML-V1 nutzt (Income from operations + D&A) / Revenue; D&A kommt aus dem 2024/2025 exakt validierten Income-Statement-Feld depreciationAndAmortization.",
     ),
     Phase3AMetricState(
         "capital_turnover",
@@ -89,31 +94,13 @@ def _inputs_hash(*facts: FinancialFactSnapshot) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def calculate_asml_ebit_margin_series(
+def _annual_facts(
     session: Session,
     analysis: Analysis,
+    required: set[str],
     *,
-    provider: str = "alphavantage",
-) -> list[MetricPoint]:
-    """Calculate ASML EBIT margin only from field-gated annual snapshot facts.
-
-    No live API call occurs here. The calculation uses only facts already stored inside the
-    selected analysis snapshot. The 2024/2025 primary-source gate must approve both revenue
-    and operating_income before the historical series is allowed to calculate.
-    """
-    if analysis.company.ticker.upper() != "ASML":
-        raise MetricDataQualityError(
-            "Phase 3A ist derzeit nur für den validierten ASML-Referenzfall freigegeben."
-        )
-
-    approved = _approved_asml_fields(session, analysis)
-    required = {"revenue", "operating_income"}
-    blocked = sorted(required - approved)
-    if blocked:
-        raise MetricDataQualityError(
-            "EBIT-Marge ist wegen nicht freigegebener Rohdaten blockiert: " + ", ".join(blocked)
-        )
-
+    provider: str,
+) -> dict[object, dict[str, FinancialFactSnapshot]]:
     facts = session.scalars(
         select(FinancialFactSnapshot).where(
             FinancialFactSnapshot.analysis_id == analysis.id,
@@ -123,10 +110,40 @@ def calculate_asml_ebit_margin_series(
             FinancialFactSnapshot.period_end <= analysis.as_of_date,
         )
     ).all()
-
     by_period: dict[object, dict[str, FinancialFactSnapshot]] = {}
     for fact in facts:
         by_period.setdefault(fact.period_end, {})[fact.metric] = fact
+    return by_period
+
+
+def _require_approved(
+    session: Session,
+    analysis: Analysis,
+    required: set[str],
+    *,
+    label: str,
+) -> None:
+    if analysis.company.ticker.upper() != "ASML":
+        raise MetricDataQualityError(
+            "Phase 3A ist derzeit nur für den validierten ASML-Referenzfall freigegeben."
+        )
+    approved = _approved_asml_fields(session, analysis)
+    blocked = sorted(required - approved)
+    if blocked:
+        raise MetricDataQualityError(
+            f"{label} ist wegen nicht freigegebener Rohdaten blockiert: " + ", ".join(blocked)
+        )
+
+
+def calculate_asml_ebit_margin_series(
+    session: Session,
+    analysis: Analysis,
+    *,
+    provider: str = "alphavantage",
+) -> list[MetricPoint]:
+    required = {"revenue", "operating_income"}
+    _require_approved(session, analysis, required, label="EBIT-Marge")
+    by_period = _annual_facts(session, analysis, required, provider=provider)
 
     points: list[MetricPoint] = []
     for period_end in sorted(by_period):
@@ -135,17 +152,51 @@ def calculate_asml_ebit_margin_series(
         operating_income = period_facts.get("operating_income")
         if revenue is None or operating_income is None:
             continue
-
-        value = calculate_ebit_margin(operating_income.value, revenue.value)
         points.append(
             MetricPoint(
                 metric_id="ebit_margin",
                 period_end=period_end,
-                value=value,
+                value=calculate_ebit_margin(operating_income.value, revenue.value),
                 unit="decimal_ratio",
                 basis="reported",
                 calculation_version=CALCULATION_VERSION,
                 inputs_hash=_inputs_hash(revenue, operating_income),
+            )
+        )
+    return points
+
+
+def calculate_asml_ebitda_margin_series(
+    session: Session,
+    analysis: Analysis,
+    *,
+    provider: str = "alphavantage",
+) -> list[MetricPoint]:
+    required = {"revenue", "operating_income", "depreciation_amortization"}
+    _require_approved(session, analysis, required, label="EBITDA-Marge")
+    by_period = _annual_facts(session, analysis, required, provider=provider)
+
+    points: list[MetricPoint] = []
+    for period_end in sorted(by_period):
+        period_facts = by_period[period_end]
+        revenue = period_facts.get("revenue")
+        operating_income = period_facts.get("operating_income")
+        d_and_a = period_facts.get("depreciation_amortization")
+        if revenue is None or operating_income is None or d_and_a is None:
+            continue
+        points.append(
+            MetricPoint(
+                metric_id="ebitda_margin",
+                period_end=period_end,
+                value=calculate_ebitda_margin(
+                    operating_income.value,
+                    d_and_a.value,
+                    revenue.value,
+                ),
+                unit="decimal_ratio",
+                basis="reported",
+                calculation_version=CALCULATION_VERSION,
+                inputs_hash=_inputs_hash(revenue, operating_income, d_and_a),
             )
         )
     return points
@@ -159,7 +210,6 @@ def replace_metric_points(
     metric_id: str,
     basis: str = "reported",
 ) -> int:
-    """Persist a deterministic metric series inside an editable analysis snapshot."""
     ensure_editable(analysis)
     session.execute(
         delete(MetricSnapshot).where(
@@ -186,15 +236,30 @@ def replace_metric_points(
 
 
 def calculate_and_store_phase_3a(session: Session, analysis: Analysis) -> dict[str, int]:
-    points = calculate_asml_ebit_margin_series(session, analysis)
-    count = replace_metric_points(
-        session,
-        analysis,
-        points,
-        metric_id="ebit_margin",
-        basis="reported",
-    )
-    return {"ebit_margin": count}
+    ebit_points = calculate_asml_ebit_margin_series(session, analysis)
+    counts = {
+        "ebit_margin": replace_metric_points(
+            session,
+            analysis,
+            ebit_points,
+            metric_id="ebit_margin",
+            basis="reported",
+        )
+    }
+
+    try:
+        ebitda_points = calculate_asml_ebitda_margin_series(session, analysis)
+    except MetricDataQualityError:
+        counts["ebitda_margin"] = 0
+    else:
+        counts["ebitda_margin"] = replace_metric_points(
+            session,
+            analysis,
+            ebitda_points,
+            metric_id="ebitda_margin",
+            basis="reported",
+        )
+    return counts
 
 
 def load_metric_series(
