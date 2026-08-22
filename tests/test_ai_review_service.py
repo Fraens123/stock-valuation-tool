@@ -1,14 +1,16 @@
 import json
 from datetime import date
 from decimal import Decimal
-from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.ai_review_service import (
+    AIReviewError,
     accept_ai_review_finding,
-    execute_ai_review,
+    build_chatgpt_review_package,
+    import_chatgpt_review_result,
     reject_ai_review_finding,
 )
 from stock_valuation.analyses.service import create_analysis
@@ -16,24 +18,6 @@ from stock_valuation.companies.service import get_or_create_company
 from stock_valuation.data.resolution import load_preferred_financial_facts
 from stock_valuation.database.ai_review_models import AIReviewFinding
 from stock_valuation.database.models import Base, FinancialFactSnapshot
-
-
-class _FakeResponses:
-    def __init__(self, payload: dict):
-        self.payload = payload
-        self.last_kwargs = None
-
-    def create(self, **kwargs):
-        self.last_kwargs = kwargs
-        return SimpleNamespace(
-            id="resp_test",
-            output_text=json.dumps(self.payload),
-        )
-
-
-class _FakeClient:
-    def __init__(self, payload: dict):
-        self.responses = _FakeResponses(payload)
 
 
 def _analysis(session: Session):
@@ -68,39 +52,82 @@ def _fact(session: Session, analysis_id: int) -> FinancialFactSnapshot:
     return row
 
 
-def test_ai_review_persists_findings_without_changing_financial_fact() -> None:
+def _result_payload(package, fact, *, value=102, status="WARN") -> dict:
+    return {
+        "schema_version": "1.0",
+        "package_id": package.package_id,
+        "years_requested": package.years_requested,
+        "company": {
+            "name": "Microsoft Corporation",
+            "ticker": "MSFT",
+            "analysis_as_of_date": "2026-08-22",
+            "revision": 1,
+        },
+        "summary": "One verified difference.",
+        "findings": [
+            {
+                "fact_id": fact.id,
+                "official_value": value,
+                "status": status,
+                "official_label": "Revenue",
+                "source_title": "Microsoft Annual Report",
+                "source_url": "https://www.microsoft.com/investor/example",
+                "reason": "Official filing reports a different value in the same base unit.",
+            }
+        ],
+    }
+
+
+def test_review_package_contains_snapshot_identity_and_requires_no_api() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as session:
         analysis = _analysis(session)
         fact = _fact(session, analysis.id)
-        client = _FakeClient(
-            {
-                "summary": "One verified difference.",
-                "findings": [
-                    {
-                        "fact_id": fact.id,
-                        "official_value": 102,
-                        "status": "WARN",
-                        "official_label": "Revenue",
-                        "source_title": "Microsoft Annual Report",
-                        "source_url": "https://www.microsoft.com/investor/example",
-                        "reason": "Official filing reports 102 in the same base unit.",
-                    }
-                ],
-            }
-        )
 
-        run = execute_ai_review(session, analysis, years=3, client=client, model="test-model")
+        package = build_chatgpt_review_package(session, analysis, years=3)
+        text = package.content.decode("utf-8")
 
-        assert run.response_id == "resp_test"
+        assert package.fact_count == 1
+        assert package.package_id in text
+        assert str(fact.id) in text
+        assert "MSFT" in package.filename
+        assert package.result_filename.endswith("_chatgpt_review_result.json")
+        assert "OpenAI-API" not in text
+
+
+def test_imported_chatgpt_result_persists_findings_without_changing_original() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        fact = _fact(session, analysis.id)
+        package = build_chatgpt_review_package(session, analysis, years=3)
+        payload = _result_payload(package, fact)
+
+        run = import_chatgpt_review_result(session, analysis, json.dumps(payload).encode("utf-8"))
+
+        assert run.response_id == package.package_id
+        assert run.model == "chatgpt_file_review"
         assert len(run.findings) == 1
         assert run.findings[0].decision == "pending"
         assert run.findings[0].official_value == Decimal("102.00000000")
         original = session.get(FinancialFactSnapshot, fact.id)
         assert original.value == Decimal("100")
-        assert client.responses.last_kwargs["tools"] == [{"type": "web_search"}]
-        assert client.responses.last_kwargs["store"] is False
+
+
+def test_result_for_different_package_is_rejected() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        fact = _fact(session, analysis.id)
+        package = build_chatgpt_review_package(session, analysis, years=3)
+        payload = _result_payload(package, fact)
+        payload["package_id"] = "wrong-package-id"
+
+        with pytest.raises(AIReviewError, match="Package-ID"):
+            import_chatgpt_review_result(session, analysis, json.dumps(payload))
 
 
 def test_user_acceptance_creates_priority_override_and_rejection_does_not() -> None:
@@ -109,23 +136,9 @@ def test_user_acceptance_creates_priority_override_and_rejection_does_not() -> N
     with Session(engine, expire_on_commit=False) as session:
         analysis = _analysis(session)
         fact = _fact(session, analysis.id)
-        client = _FakeClient(
-            {
-                "summary": "Difference found.",
-                "findings": [
-                    {
-                        "fact_id": fact.id,
-                        "official_value": 105,
-                        "status": "FAIL",
-                        "official_label": "Revenue",
-                        "source_title": "Official Annual Report",
-                        "source_url": "https://example.com/annual-report",
-                        "reason": "Provider differs from the official value.",
-                    }
-                ],
-            }
-        )
-        run = execute_ai_review(session, analysis, client=client, model="test-model")
+        package = build_chatgpt_review_package(session, analysis, years=3)
+        payload = _result_payload(package, fact, value=105, status="FAIL")
+        run = import_chatgpt_review_result(session, analysis, json.dumps(payload))
         finding = run.findings[0]
 
         accept_ai_review_finding(session, analysis, finding.id)
