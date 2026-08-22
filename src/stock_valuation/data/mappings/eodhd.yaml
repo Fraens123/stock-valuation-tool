@@ -1,0 +1,171 @@
+version: 1
+provider: eodhd
+endpoint_version: v1.1
+
+income_statement:
+  revenue:
+    field: totalRevenue
+    unit: currency
+  cost_of_goods_sold:
+    field: costOfRevenue
+    unit: currency
+  gross_profit:
+    field: grossProfit
+    unit: currency
+  operating_expenses:
+    field: totalOperatingExpenses
+    unit: currency
+  ebit:
+    field: ebit
+    fallback_fields: [operatingIncome]
+    unit: currency
+  ebitda:
+    field: ebitda
+    unit: currency
+    cross_check_only: true
+  interest_expense:
+    field: interestExpense
+    unit: currency
+  income_before_tax:
+    field: incomeBeforeTax
+    unit: currency
+  income_tax_expense:
+    field: incomeTaxExpense
+    fallback_fields: [taxProvision]
+    unit: currency
+  net_income:
+    field: netIncome
+    unit: currency
+  net_income_attributable:
+    field: netIncomeApplicableToCommonShares
+    fallback_fields: [netIncome]
+    unit: currency
+  depreciation_amortization_is:
+    field: depreciationAndAmortization
+    fallback_fields: [reconciledDepreciation]
+    unit: currency
+    cross_check_only: true
+  research_and_development:
+    field: researchDevelopment
+    unit: currency
+
+balance_sheet:
+  cash_and_short_term_investments:
+    field: cashAndShortTermInvestments
+    fallback_fields: [cash]
+    unit: currency
+  accounts_receivable:
+    field: netReceivables
+    unit: currency
+  inventory:
+    field: inventory
+    unit: currency
+  current_assets:
+    field: totalCurrentAssets
+    unit: currency
+  ppe_net:
+    field: propertyPlantAndEquipmentNet
+    fallback_fields: [propertyPlantEquipment]
+    unit: currency
+  ppe_gross:
+    field: propertyPlantAndEquipmentGross
+    unit: currency
+  accumulated_depreciation:
+    field: accumulatedDepreciation
+    unit: currency
+  intangible_assets:
+    field: intangibleAssets
+    unit: currency
+  goodwill:
+    field: goodwill
+    unit: currency
+    optional: true
+  non_current_assets:
+    field: nonCurrentAssetsTotal
+    unit: currency
+  total_assets:
+    field: totalAssets
+    unit: currency
+  accounts_payable:
+    field: accountsPayable
+    unit: currency
+  current_liabilities:
+    field: totalCurrentLiabilities
+    unit: currency
+  short_term_debt:
+    field: shortTermDebt
+    unit: currency
+  current_portion_long_term_debt:
+    field: shortLongTermDebt
+    unit: currency
+  long_term_debt:
+    field: longTermDebtTotal
+    fallback_fields: [longTermDebt]
+    unit: currency
+  total_debt_provider:
+    field: shortLongTermDebtTotal
+    unit: currency
+    cross_check_only: true
+  net_debt_provider:
+    field: netDebt
+    unit: currency
+    cross_check_only: true
+  long_term_liabilities:
+    field: nonCurrentLiabilitiesTotal
+    unit: currency
+  total_liabilities:
+    field: totalLiab
+    unit: currency
+  total_equity:
+    field: totalStockholderEquity
+    unit: currency
+  diluted_shares_provider:
+    field: commonStockSharesOutstanding
+    unit: shares
+    cross_check_only: true
+
+cash_flow:
+  operating_cash_flow:
+    field: totalCashFromOperatingActivities
+    unit: currency
+  depreciation_amortization:
+    field: depreciation
+    unit: currency
+  capex_ppe:
+    field: capitalExpenditures
+    unit: currency
+    sign_policy: outflow_magnitude
+  change_in_working_capital_provider:
+    field: changeInWorkingCapital
+    unit: currency
+    cross_check_only: true
+  stock_based_compensation:
+    field: stockBasedCompensation
+    unit: currency
+  other_non_cash_items:
+    field: otherNonCashItems
+    unit: currency
+  dividends_paid:
+    field: dividendsPaid
+    unit: currency
+    sign_policy: outflow_magnitude
+  share_purchase_sale_cashflow:
+    field: salePurchaseOfStock
+    unit: currency
+    sign_policy: preserve
+  issuance_of_capital_stock:
+    field: issuanceOfCapitalStock
+    unit: currency
+    sign_policy: preserve
+  free_cash_flow_provider:
+    field: freeCashFlow
+    unit: currency
+    cross_check_only: true
+
+# Fields below are deliberately not mapped until verified in an actual ASML payload
+# or official statements. Missing data must remain missing rather than being guessed.
+unmapped_required_or_optional:
+  - capex_intangibles
+  - acquisitions
+  - diluted_weighted_average_shares
+  - basic_weighted_average_shares
