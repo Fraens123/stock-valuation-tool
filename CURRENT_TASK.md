@@ -1,6 +1,6 @@
 # Current Task
 
-## Phase 2/3 Übergang – Universellen Unternehmensimport fertigstellen
+## Phase 2/3 Übergang – Import, Prüfung und Bedienung vereinfachen
 
 ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import oder Speicherung neuer Aktien.
 
@@ -13,70 +13,82 @@ ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** f
 
 Damit ist bestätigt: Der automatische Fundamentals-Import funktioniert unternehmensunabhängig für von Alpha Vantage unterstützte Symbole.
 
-## Vereinfachter Anwender-Workflow
+## Sichtbarer Standardablauf
 
-Der normale Workflow darf keine Diagnosekette sein.
-
-### Sichtbarer Standardablauf
-
-1. `Unternehmen`
-   - Aktie online suchen,
-   - richtigen Provider-Treffer auswählen,
+1. **Übersicht**
+   - alle Unternehmen und Analyse-Revisionen sehen,
+   - Analyse verwalten / abschließen / neue Revision anlegen,
+   - Revisionen vergleichen.
+2. **Unternehmen**
+   - Aktie suchen,
+   - Haupt-/Provider-Treffer auswählen,
    - Analyse anlegen.
-2. `Datenimport` / Finanzdaten
-   - **ein Button: `Daten laden / aktualisieren`**,
-   - intern 3 Requests für GuV/Bilanz/Cashflow,
-   - intern 1 Request für Analystenschätzungen,
-   - Finanzabschlüsse werden zuerst gespeichert; ein Estimate-Fehler löscht sie nicht.
-3. `Kennzahlen`
-   - gespeicherte Snapshot-Daten verwenden.
-4. später Geschäftsmodell, Bewertung, Investmentthese und Report.
+3. **Finanzdaten**
+   - ein Button `Daten laden / aktualisieren`,
+   - intern GuV + Bilanz + Cashflow + Estimates,
+   - gespeicherten Datenstand sehen,
+   - automatische Plausibilitätsprüfung,
+   - KI-Prüfpaket erzeugen,
+   - einzelne Werte nachvollziehbar korrigieren.
+4. **Manuelle Daten**
+   - Aktienfinder/zusätzliche Inputs,
+   - Management Guidance,
+   - risikofreier Zins.
+5. **Kennzahlen**
+   - ausschließlich Snapshot-Daten verwenden.
 
-### Diagnose nicht im normalen Menü
+Später folgen Geschäftsmodell, Bewertung, Investmentthese und Report.
 
-Die früher sichtbaren Seiten
+## Navigation / UI
 
-- Offizielle Daten,
-- Datenqualität,
-- Importqualität
+- Streamlits automatische Dateinavigation wird ausgeblendet.
+- eigene fachliche Sidebar: `Übersicht`, `Unternehmen`, `Finanzdaten`, `Manuelle Daten`, `Kennzahlen`.
+- technische Diagnosewerkzeuge bleiben im Repository, sind aber kein normaler Arbeitsschritt.
+- die frühere `app`-Startseite wurde zu einer echten Übersicht über **alle** Unternehmen und Analysen umgebaut; keine ASML-only-Startlogik mehr.
 
-wurden aus der normalen `pages/`-Navigation entfernt. Technische Werkzeuge liegen nun unter `diagnostics/` und sind kein notwendiger Arbeitsschritt.
+## Datenprüfung
+
+### Deterministische Prüfung
+
+`src/stock_valuation/data/audit.py`
+
+Prüft ohne Netzwerkzugriff u. a.:
+- Gross Profit = Revenue - Cost of Revenue,
+- Bilanzsumme ungefähr Liabilities + Equity,
+- Current Assets <= Total Assets,
+- Current Liabilities <= Total Liabilities,
+- Cash <= Current Assets.
+
+Diese Checks erkennen Inkonsistenzen, ersetzen aber keine Primärquellenprüfung.
+
+### KI-Prüfung
+
+Die Anwendung kann aus dem Snapshot einen ausführlichen, reproduzierbaren Prüf-Prompt erzeugen. Dieser fordert eine web-/quellenbasierte Prüfung gegen Annual Reports, 10-K/20-F bzw. IR-Unterlagen und verlangt strukturierte PASS/WARN/FAIL/UNKLAR-Ergebnisse plus Quellen.
+
+Aktuell wird das Prüf-Paket erzeugt, aber **nicht automatisch an einen kostenpflichtigen KI-API-Provider gesendet**. Direkte Ausführung wird später als optionaler Provider angebunden. Es darf nie still eine kostenpflichtige Abhängigkeit vorausgesetzt werden.
+
+KI-Ergebnisse dürfen nur Korrekturvorschläge liefern. Kein Wert wird automatisch überschrieben.
+
+## Manuelle Korrekturen importierter Finanzwerte
+
+Finanzdaten können direkt auf der Seite **Finanzdaten** korrigiert werden.
+
+Regeln:
+- Originalwert von Alpha Vantage/Primärquelle bleibt erhalten.
+- Korrektur wird separat als `provider=manual_override` gespeichert.
+- Quelle und Begründung sind erforderlich bzw. sichtbar.
+- Source Resolution priorisiert `manual_override` vor Primärquelle/API.
+- Override kann wieder entfernt werden; dann greift automatisch wieder die darunterliegende Quelle.
+- abgeschlossene Snapshots bleiben unveränderlich.
 
 ## Estimate-Logik
 
 Alpha Vantage `EARNINGS_ESTIMATES` enthält Jahres- und Quartalsschätzungen im selben Endpoint.
 
-Neu:
-- Geschäftsjahresende wird aus den gespeicherten FY-Abschlussdaten des Unternehmens abgeleitet,
-- Estimates mit diesem Geschäftsjahresende werden als `Jahr` klassifiziert,
-- andere datierte Estimates als `Quartal`,
-- normale Ansicht zeigt standardmäßig nur Jahresschätzungen,
-- Quartale und historische Estimate-Historie sind optional einblendbar,
-- spätere DCF-/Forecast-Logik darf nur die Jahresschätzungen automatisch als Jahresinput verwenden.
-
-Beispiel Microsoft:
-- Geschäftsjahresende 30.06.,
-- 2026-09-30 / 2026-12-31 = Quartal,
-- 2027-06-30 / 2028-06-30 = Jahr.
-
-## Universelle Datenarchitektur
-
-### Alpha Vantage
-
-- `SYMBOL_SEARCH` für Unternehmenssuche,
-- providerbezogene Fundamentals-Symbole werden persistiert,
-- 20+ Jahre Abschlusshistorie möglich,
-- Estimates separat speicherbar.
-
-### Offizielle Primärquellen
-
-Nicht notwendiger manueller Standardschritt, sondern Qualitäts-/Fallback-Schicht:
-
-- SEC Company Facts/XBRL für SEC-reporting Unternehmen,
-- ESEF/iXBRL für europäische IFRS-Berichte,
-- ASML-spezifischer Parser bleibt ausschließlich Referenz-/Testadapter.
-
-Zentrale Source Resolution bewahrt Providerdaten und bevorzugt vorhandene Primärquellenfakten.
+- Geschäftsjahresende wird aus den FY-Abschlussdaten abgeleitet,
+- Standardansicht zeigt nur Jahresschätzungen,
+- Quartale und historische Historie sind optional einblendbar,
+- spätere DCF-Logik verwendet Jahresschätzungen als Jahresinput.
 
 ## Lokaler Abnahmetest jetzt
 
@@ -84,20 +96,24 @@ Zentrale Source Resolution bewahrt Providerdaten und bevorzugt vorhandene Primä
 2. `pip install -e ".[dev]"`
 3. `pytest -q`
 4. `streamlit run app.py`
-5. Microsoft-Analyse unter `Datenimport` öffnen.
-6. Prüfen, dass prominent nur `Daten laden / aktualisieren` angeboten wird.
-7. Abschnitt `Erweitert / Diagnose` bleibt standardmäßig geschlossen.
-8. Bei Analystenschätzungen müssen standardmäßig nur volle Geschäftsjahre erscheinen; Quartale sind optional einblendbar.
-9. Sidebar darf die technischen Seiten `Offizielle Daten`, `Datenqualität` und `Importqualität` nicht mehr anzeigen.
+5. Sidebar prüfen: nur `Übersicht`, `Unternehmen`, `Finanzdaten`, `Manuelle Daten`, `Kennzahlen`.
+6. `Übersicht`: ASML **und** Microsoft bzw. alle gespeicherten Analysen müssen sichtbar sein.
+7. Microsoft unter `Finanzdaten` öffnen.
+8. Bestehende 740 Datenpunkte müssen ohne Neuimport sichtbar bleiben.
+9. Plausibilitätsprüfung öffnen; Checks müssen ohne API-Requests laufen.
+10. `KI-Prüfprompt erstellen` testen; es darf kein API-Request ausgelöst werden.
+11. Optional einen unwichtigen Testwert manuell überschreiben und prüfen, dass der Originalwert in Rohdaten erhalten bleibt; danach Override wieder entfernen.
 
-## Noch offene Importthemen
+## Noch offene Import-/Prüfthemen
 
+- direkte optionale KI-Ausführung mit Web-/Quellenzugriff hinter Provider-Interface,
+- KI-Ergebnis als strukturierte Review-Tabelle statt Freitext,
+- bestätigte KI-Korrekturen über dieselbe `manual_override`-Logik übernehmen,
 - aktueller Marktpreis automatisch laden und korrekt nach Listing/Währung trennen,
 - automatische Primärquellen-Discovery dort ergänzen, wo zuverlässig möglich,
 - SEC-/ESEF-Mappings erweitern,
 - ISIN/LEI-Anreicherung verbessern,
-- optional zweiter breiter Fundamentals-Provider als Fallback prüfen,
-- UI-Hauptseite `app` später in einen fachlichen Namen/Analysebereich überführen.
+- optional zweiter breiter Fundamentals-Provider als Fallback prüfen.
 
 ## Noch offene Kapitel-2-Methodik
 
@@ -111,14 +127,3 @@ Weiterhin Buchverifikation erforderlich:
 - Umsatzverdienstrate — Kindle S. 114
 
 Keine dieser Formeln eigenmächtig festlegen.
-
-## Definition of Done Universal-Import
-
-- neue Aktie ohne Codeänderung online auffindbar,
-- Analyse direkt aus Provider-Treffer anlegbar,
-- providerbezogene Identifikatoren persistiert,
-- normaler Import ist ein 1-Klick-Workflow,
-- Estimate-Quartale und -Jahre werden getrennt,
-- technische Diagnoseseiten sind aus dem normalen Anwenderworkflow entfernt,
-- fehlende Estimates oder einzelne Primärquellen blockieren den historischen Standardimport nicht,
-- kein hart codierter Unternehmensparser ist Voraussetzung für normale Analysen.
