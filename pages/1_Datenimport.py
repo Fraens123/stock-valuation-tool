@@ -7,6 +7,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from sqlalchemy import select
 
+from stock_valuation.analyses.estimate_service import relevant_estimates
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
@@ -14,6 +15,7 @@ from stock_valuation.data.providers.eodhd import EODHDProvider
 from stock_valuation.data.snapshot_service import sync_alphavantage_snapshot, sync_eodhd_snapshot
 from stock_valuation.database.models import AnalysisStatus, EstimateSnapshot, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
+from stock_valuation.validation.service import validate_asml_primary_source, validation_summary
 
 
 load_dotenv()
@@ -25,6 +27,12 @@ STATUS_LABELS = {
     AnalysisStatus.IN_PROGRESS: "In Bearbeitung",
     AnalysisStatus.COMPLETED: "Abgeschlossen",
     AnalysisStatus.ARCHIVED: "Archiviert",
+}
+VALIDATION_STATUS = {
+    "pass": "✅ PASS",
+    "warn": "⚠️ WARN",
+    "fail": "❌ FAIL",
+    "missing": "⬜ MISSING",
 }
 
 
@@ -38,8 +46,8 @@ def _analysis_label(analysis) -> str:
 def _default_alpha_symbol(analysis) -> str:
     # For fundamentals, Alpha Vantage can expose statement data under a different
     # symbol than the local market-price listing. ASML.AMS is known for market data,
-    # but the first fundamentals probe returned an empty statement payload. Therefore
-    # the ASML reference case uses the NASDAQ/ADR symbol ASML for statement testing.
+    # but the fundamentals endpoint returned an empty statement payload. The NASDAQ/
+    # ADR symbol ASML returns the consolidated ASML Holding statements in EUR.
     if analysis.company.ticker.upper() == "ASML":
         return "ASML"
     return analysis.company.ticker
@@ -76,6 +84,8 @@ with get_session() as session:
     cols[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
 
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    analysis_as_of_date = analysis.as_of_date
+    analysis_ticker = analysis.company.ticker
 
 st.divider()
 st.subheader("Automatischer Fundamentaldaten-Import")
@@ -85,9 +95,8 @@ provider_choice = st.radio(
     ["Alpha Vantage", "EODHD"],
     horizontal=True,
     help=(
-        "Alpha Vantage wird zuerst getestet, weil der Free-Tier laut Anbieter viele "
-        "Fundamental-Endpunkte umfasst. EODHD Fundamentals erfordern beim getesteten Free-Key "
-        "für ASML einen kostenpflichtigen Tarif."
+        "Alpha Vantage wird als V1-Kandidat validiert. EODHD Fundamentals erfordern beim "
+        "getesteten Free-Key für ASML einen kostenpflichtigen Tarif."
     ),
 )
 
@@ -110,10 +119,9 @@ if provider_choice == "Alpha Vantage":
         "Alpha-Vantage-Fundamentals-Symbol",
         value=_default_alpha_symbol(analysis),
         help=(
-            "Für ASML testen wir Fundamentals mit `ASML` (NASDAQ/ADR). `ASML.AMS` kann für "
+            "Für ASML verwenden wir Fundamentals mit `ASML` (NASDAQ/ADR). `ASML.AMS` kann für "
             "Kursdaten funktionieren, lieferte beim Fundamentals-Test aber 0 Reports. "
-            "Marktpreis und Fundamentaldaten dürfen deshalb providerseitig unterschiedliche "
-            "Symbole verwenden."
+            "Marktpreis und Fundamentaldaten dürfen providerseitig unterschiedliche Symbole haben."
         ),
     )
 
@@ -123,10 +131,7 @@ if provider_choice == "Alpha Vantage":
         "noch keine Daten. Erst wenn Jahresberichte vorhanden sind, sollte der vollständige "
         "4-Request-Import gestartet werden."
     )
-    if st.button(
-        "Alpha Vantage testen (1 Request)",
-        disabled=not api_key_available,
-    ):
+    if st.button("Alpha Vantage testen (1 Request)", disabled=not api_key_available):
         try:
             provider = AlphaVantageProvider()
             with st.spinner(f"Teste INCOME_STATEMENT für {alpha_symbol} …"):
@@ -214,7 +219,7 @@ if provider_choice == "Alpha Vantage":
 else:
     st.warning(
         "Der getestete kostenlose EODHD-Key liefert für `ASML.AS` bei Fundamentals HTTP 403. "
-        "Das bedeutet: Der Key ist vorhanden, aber der Free-Tarif schaltet diese Daten nicht frei. "
+        "Der Key ist gültig, aber der Free-Tarif schaltet diese Daten nicht frei. "
         "Wir kaufen vorerst keinen EODHD-Fundamentals-Tarif."
     )
     api_key_available = bool(os.getenv("EODHD_API_KEY"))
@@ -230,10 +235,7 @@ else:
         )
     elif not analysis.company.provider_symbol:
         st.error("Für dieses Unternehmen ist noch kein EODHD-Provider-Symbol hinterlegt.")
-    elif st.button(
-        "EODHD erneut testen",
-        disabled=not api_key_available,
-    ):
+    elif st.button("EODHD erneut testen", disabled=not api_key_available):
         try:
             provider = EODHDProvider()
             with get_session() as session:
@@ -302,10 +304,114 @@ else:
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+    if analysis_ticker.upper() == "ASML" and any(fact.provider == "alphavantage" for fact in facts):
+        st.divider()
+        st.subheader("ASML Primärquellen-Validierung")
+        st.caption(
+            "Die gespeicherten Alpha-Vantage-Rohdaten für 2025 und 2024 werden gegen "
+            "veröffentlichte ASML-US-GAAP-Kontrollwerte verglichen. Diese Referenzwerte dienen "
+            "nur der Qualitätsprüfung und überschreiben niemals Providerdaten. Toleranz: bis "
+            "0,5 % PASS, bis 2 % WARN, darüber FAIL."
+        )
+
+        with get_session() as session:
+            current = get_analysis(session, analysis_id)
+            validation = (
+                validate_asml_primary_source(session, current)
+                if current is not None
+                else []
+            )
+
+        if validation:
+            check = validation_summary(validation)
+            check_cols = st.columns(5)
+            check_cols[0].metric("PASS", check["pass"])
+            check_cols[1].metric("WARN", check["warn"])
+            check_cols[2].metric("FAIL", check["fail"])
+            check_cols[3].metric("MISSING", check["missing"])
+            check_cols[4].metric(
+                "Provider-Gate",
+                "BESTANDEN" if check["provider_gate_passed"] else "OFFEN",
+            )
+
+            if check["provider_gate_passed"]:
+                st.success(
+                    "Alle kritischen ASML-Kontrollfelder liegen innerhalb der definierten "
+                    "Toleranz. Alpha Vantage kann für diese Felder freigegeben werden."
+                )
+            else:
+                st.warning(
+                    "Alpha Vantage ist noch **nicht vollständig freigegeben**. "
+                    f"Kritische FAILs: {check['critical_fail']}; "
+                    f"kritische Missing-Felder: {check['critical_missing']}. "
+                    "Abweichende Felder werden zuerst semantisch geprüft und ggf. neu gemappt."
+                )
+
+            validation_rows = []
+            for item in validation:
+                validation_rows.append(
+                    {
+                        "Status": VALIDATION_STATUS[item.status],
+                        "Jahr": item.period,
+                        "Interner Schlüssel": item.metric,
+                        "ASML-Bezeichnung": item.label,
+                        "Alpha Vantage Mio. €": (
+                            float(item.provider_value / 1_000_000)
+                            if item.provider_value is not None
+                            else None
+                        ),
+                        "ASML offiziell Mio. €": float(item.reference_value / 1_000_000),
+                        "Abweichung %": (
+                            float(item.relative_difference * 100)
+                            if item.relative_difference is not None
+                            else None
+                        ),
+                        "Provider-Feld": item.provider_field,
+                        "Kritisch": item.critical,
+                        "Hinweis": item.note,
+                        "Quelle": item.source_url,
+                    }
+                )
+            st.dataframe(
+                pd.DataFrame(validation_rows),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Quelle": st.column_config.LinkColumn("Quelle"),
+                    "Abweichung %": st.column_config.NumberColumn("Abweichung %", format="%.3f"),
+                    "Alpha Vantage Mio. €": st.column_config.NumberColumn(
+                        "Alpha Vantage Mio. €", format="%.1f"
+                    ),
+                    "ASML offiziell Mio. €": st.column_config.NumberColumn(
+                        "ASML offiziell Mio. €", format="%.1f"
+                    ),
+                },
+            )
+
 st.subheader("Analystenschätzungen")
 if not estimates:
     st.caption("Noch keine Analystenschätzungen gespeichert oder vom Provider geliefert.")
 else:
+    show_history = st.checkbox(
+        "Historische Estimate-Historie anzeigen",
+        value=False,
+        help=(
+            "Alpha Vantage liefert auch ältere Schätz-/Revisionsdaten. Sie bleiben im Snapshot "
+            "erhalten, werden in der normalen Analyseansicht aber standardmäßig ausgeblendet."
+        ),
+    )
+    visible_estimates = (
+        estimates
+        if show_history
+        else relevant_estimates(estimates, as_of_date=analysis_as_of_date)
+    )
+    if not show_history:
+        hidden = len(estimates) - len(visible_estimates)
+        st.caption(
+            f"{len(visible_estimates)} relevante Datensätze ab Analysestichtag "
+            f"{analysis_as_of_date}; {hidden} historische Datensätze ausgeblendet."
+        )
+
     rows = [
         {
             "Periode": item.period,
@@ -317,12 +423,11 @@ else:
             "Quelle": item.provider,
             "Abruf": item.retrieved_at,
         }
-        for item in estimates
+        for item in visible_estimates
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 st.info(
-    "Nach dem ersten erfolgreichen ASML-Import vergleichen wir Umsatz, EBIT, Gewinn, Bilanz "
-    "und Cashflow stichprobenartig mit der offiziellen ASML-Berichterstattung. Erst danach "
-    "wird ein Provider als Primärquelle freigegeben."
+    "Erst wenn die kritischen ASML-Kontrollfelder fachlich sauber gemappt sind, beginnt Phase 3 "
+    "mit der Kennzahlenengine. Providerabweichungen werden nicht durch stille Ersatzwerte kaschiert."
 )
