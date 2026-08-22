@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 
-CALCULATION_VERSION = "3a-0.1"
+CALCULATION_VERSION = "3a-0.2"
 
 
 @dataclass(frozen=True)
@@ -30,11 +30,16 @@ def calculate_ebit_margin(
     operating_income: Decimal | None,
     revenue: Decimal | None,
 ) -> Decimal | None:
-    """Calculate EBIT/operating margin as a decimal fraction.
-
-    For the ASML reference case the validated provider input `operating_income` maps to
-    ASML's `Income from operations`. The generic target definition remains EBIT / Revenue.
-    Provider-specific semantics must be validated before this function is used for another
-    company/provider combination.
-    """
+    """Calculate EBIT/operating margin as a decimal fraction."""
     return safe_ratio(operating_income, revenue)
+
+
+def calculate_ebitda_margin(
+    operating_income: Decimal | None,
+    depreciation_amortization: Decimal | None,
+    revenue: Decimal | None,
+) -> Decimal | None:
+    """Calculate EBITDA margin as (operating income + D&A) / revenue."""
+    if operating_income is None or depreciation_amortization is None:
+        return None
+    return safe_ratio(operating_income + depreciation_amortization, revenue)
