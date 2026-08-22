@@ -2,93 +2,109 @@
 
 ## Phase 2/3 Übergang – Universellen Unternehmensimport fertigstellen
 
-ASML bleibt der Referenzfall für Datenqualitätsprüfungen, darf aber **keine Voraussetzung** für den normalen Import sein. Das Tool muss neue Aktien ohne Codeänderung suchen, anlegen und importieren können.
+ASML bleibt der Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import oder Speicherung neuer Aktien.
 
-## Bereits funktionierend
+## Bereits generalisiert
 
-- Alpha Vantage liefert für unterstützte Symbole GuV, Bilanz, Cashflow und Analystenschätzungen.
-- der Import schreibt reproduzierbar in den Analyse-Snapshot.
-- ASML ist als Referenzunternehmen primärquellenvalidiert.
-- offizielle ASML-Fakten stehen separat neben Providerdaten.
-- zentrale Source Resolution bevorzugt Primärquelle vor API-Provider.
-- EBIT-/EBITDA-Marge funktionieren für den Referenzfall.
-
-## Neu generalisiert
-
-### Universelle Unternehmenssuche
+### 1. Universelle Unternehmenssuche
 
 `pages/0_Unternehmen.py`
 
-- explizite Alpha-Vantage-Online-Suche über `SYMBOL_SEARCH` (1 Request),
-- Treffer werden nicht im Code hinterlegt,
-- aus einem Treffer kann direkt eine neue Analyse angelegt werden,
-- das gewählte Alpha-Vantage-Symbol wird dauerhaft gespeichert.
+- Alpha-Vantage-`SYMBOL_SEARCH` auf bewussten Klick (1 Request),
+- neue Unternehmen werden nicht im Code hinterlegt,
+- aus einem Provider-Treffer kann direkt eine Analyse angelegt werden,
+- ausgewählter Fundamentals-Ticker wird gespeichert.
 
-### Provider-spezifische Symbole
+### 2. Provider-spezifische Identifikatoren
 
 Neue Tabelle `company_provider_symbols`.
 
-Ein Unternehmen kann getrennte Identifikatoren besitzen für:
+Ein Unternehmen kann unterschiedliche Symbole/IDs besitzen für:
 
-- Provider,
-- Zweck (`fundamentals`, später `market_price`, `estimates`),
-- Börse/Region,
-- Währung.
+- Alpha Vantage Fundamentals,
+- später Marktpreis,
+- SEC CIK,
+- weitere Provider.
 
-Damit wird `Company.ticker` nicht mehr fälschlich als universeller Provider-Identifier verwendet.
+Unternehmensidentität bevorzugt ISIN, sonst Ticker + Börse/Region.
 
-### Generischer Datenimport
+### 3. Generischer Alpha-Vantage-Import
 
 `pages/1_Datenimport.py`
 
-- funktioniert für jede gespeicherte Analyse,
-- nimmt bevorzugt das gespeicherte Alpha-Vantage-Fundamentals-Symbol,
-- 1-Request-Probe prüft, ob Jahresabschlüsse vorhanden sind,
-- erfolgreicher Ticker wird dauerhaft gespeichert,
-- vollständiger Import verwendet 4 Requests,
-- ASML-Sonderlogik ist keine Voraussetzung mehr für den Import.
+- 1 Request: Fundamentals-Verfügbarkeit prüfen,
+- 3 Requests: GuV + Bilanz + Cashflow,
+- 1 Request separat: Analystenschätzungen,
+- fehlende Estimates blockieren die Finanzabschlüsse nicht mehr,
+- erfolgreiche Provider-Symbole werden dauerhaft gespeichert.
 
-### Generische Importqualität
+### 4. Generische Importqualität
 
 `pages/3_Importqualitaet.py`
 
-- funktioniert für alle Unternehmen,
-- zeigt bevorzugte Fakten, Quellenmix und Kernfelder der letzten zwei Geschäftsjahre,
-- unterscheidet `PRIMÄRQUELLE`, `API – NICHT PRIMÄRVALIDIERT` und `FEHLT`,
-- importierte Daten werden nicht fälschlich als offiziell validiert dargestellt.
+Für alle Unternehmen:
 
-### Unternehmensidentität
+- Geschäftsjahre,
+- bevorzugte Fakten,
+- Quellenmix,
+- Kernfelder der letzten zwei Jahre,
+- Status `PRIMÄRQUELLE`, `API – NICHT PRIMÄRVALIDIERT`, `FEHLT`.
 
-- bevorzugt ISIN, wenn vorhanden,
-- sonst Ticker + Börse/Region,
-- gleiche Ticker auf unterschiedlichen Börsen werden nicht mehr automatisch zusammengeführt.
+### 5. Generischer offizieller SEC-Fallback
 
-## Nächster technischer Block
+`src/stock_valuation/data/providers/sec.py`
+`pages/1_Offizielle_Daten.py`
 
-Der Import muss anschließend auch bei schwacher/fehlender Alpha-Vantage-Coverage einen sauberen Fallback haben.
+Für SEC-reporting Unternehmen:
 
-Priorität:
+- SEC-Ticker -> CIK auflösen,
+- offizieller `companyfacts`-XBRL-Abruf,
+- kein API-Key,
+- `SEC_USER_AGENT` lokal erforderlich,
+- standardisierte US-GAAP- und IFRS-Konzepte werden auf interne Rohdatenschlüssel normalisiert,
+- offizielle Fakten werden als `provider=sec_companyfacts`, `source_type=primary_source` gespeichert,
+- Source Resolution priorisiert `sec_companyfacts` vor Alpha Vantage,
+- Alpha-Vantage-Werte bleiben parallel auditierbar.
 
-1. SEC Company Facts / XBRL als generischer Primärquellenadapter für SEC-reporting Unternehmen,
-2. generischer offizieller XLSX/CSV/XBRL-Import für Investor-Relations-Dokumente,
-3. europäische ESEF/XBRL-Strategie,
-4. zweiter automatischer Fundamentals-Provider nur wenn technisch/finanziell sinnvoll.
+Die SEC dokumentiert Company Facts für 10-K, 20-F, 40-F u. a. sowie US-GAAP-/IFRS-XBRL ohne API-Key.
 
-Ziel ist **breite Unternehmensabdeckung**, nicht ein eigener hart codierter Parser je Aktie.
-
-## Lokaler Abnahmetest jetzt
+## Lokaler Abnahmetest
 
 1. `git pull`
 2. `pip install -e ".[dev]"`
 3. `pytest -q`
 4. `streamlit run app.py`
 5. Seite `Unternehmen` öffnen.
-6. Eine andere Aktie als ASML suchen, z. B. Microsoft.
-7. Provider-Treffer auswählen und Analyse anlegen.
-8. `Datenimport` öffnen.
-9. `Fundamentals testen (1 Request)`.
-10. Wenn Jahresberichte gefunden werden, `Finanzdaten und Schätzungen importieren (4 Requests)`.
-11. `Importqualität` öffnen und prüfen, ob historische Daten und Kernfelder sichtbar sind.
+6. Eine andere Aktie als ASML suchen, idealerweise zuerst `Microsoft`.
+7. Analyse anlegen.
+8. `Datenimport`:
+   - `Fundamentals testen (1 Request)`,
+   - `Finanzabschlüsse importieren (3 Requests)`,
+   - Estimates optional separat (1 Request).
+9. `Importqualität` prüfen.
+10. Für SEC-Test lokal `.env` ergänzen:
+    `SEC_USER_AGENT=Dein Name deine@email.at`
+11. `Offizielle Daten` öffnen.
+12. `SEC-Registrierung prüfen (1 Request)`.
+13. Falls gefunden: `SEC Company Facts in Snapshot importieren (1 SEC Request)`.
+14. Danach `Importqualität` erneut öffnen: SEC-Fakten müssen als Primärquelle vor Alpha Vantage erscheinen.
+
+## Nächster generischer Fallback
+
+### Europa / ESEF
+
+ESEF/iXBRL ist der nächste Baustein. Wichtig für den aktuellen Stand 2026:
+
+- IFRS-Konzernabschlüsse europäischer Emittenten sind im ESEF-Format maschinenlesbar getaggt.
+- das zentrale ESAP sammelt seit Juli 2026 Daten, ist für die Öffentlichkeit aber erst spätestens Juli 2027 vorgesehen.
+- deshalb wird V1 nicht auf eine heute noch nicht öffentliche ESAP-Daten-API angewiesen.
+
+Nächste Implementierung:
+
+1. generischer ESEF/iXBRL-Datei-/URL-Parser,
+2. Zuordnung standardisierter `ifrs-full`-Tags auf interne Rohdatenfelder,
+3. IR-/OAM-Dokument als Quelle speichern,
+4. später öffentliche ESAP-Discovery ergänzen, sobald verfügbar.
 
 ## Noch offene Kapitel-2-Methodik
 
@@ -103,11 +119,13 @@ Weiterhin Buchverifikation erforderlich:
 
 Keine dieser Formeln eigenmächtig festlegen.
 
-## Definition of Done des Universal-Import-Blocks
+## Definition of Done Universal-Import
 
-- eine neue Aktie kann ohne Codeänderung online gefunden werden,
-- Analyse kann direkt aus Provider-Treffer angelegt werden,
-- Fundamentals-Symbol ist providerbezogen persistiert,
-- Import funktioniert ohne ASML-Sonderfall,
-- Datenqualität für nicht-ASML-Unternehmen ist sichtbar,
-- fehlende Provider-Coverage führt zu einem klaren Fallback-Pfad statt zu einem toten Ende.
+- neue Aktie ohne Codeänderung online auffindbar,
+- Analyse direkt aus Treffer anlegbar,
+- providerbezogene Identifikatoren persistiert,
+- Alpha-Vantage-Finanzabschlüsse unabhängig von Estimates importierbar,
+- SEC-offizielle Daten für SEC-reporting Unternehmen importierbar,
+- Datenqualität für jede Aktie sichtbar,
+- Europa-Fallback über generisches ESEF/iXBRL vorbereitet,
+- kein hart codierter Unternehmensparser als Voraussetzung für den normalen Workflow.
