@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 import streamlit as st
@@ -12,6 +13,7 @@ from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.snapshot_service import sync_alphavantage_depreciation_amortization
 from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
+from stock_valuation.validation.asml_reference import ASML_US_GAAP_REFERENCES
 from stock_valuation.validation.service import (
     metric_validation_gates,
     phase_3a_data_readiness,
@@ -28,6 +30,48 @@ GATE_LABELS = {
     "review": "⚠️ PRÜFEN",
     "blocked": "❌ GESPERRT",
 }
+
+
+def _decimal(value) -> Decimal | None:
+    if value in (None, "", "None", "null"):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _enrich_candidate_rows(rows: list[dict]) -> list[dict]:
+    references = {
+        (item.metric, item.period_end.year): item.value for item in ASML_US_GAAP_REFERENCES
+    }
+    enriched: list[dict] = []
+    for row in rows:
+        candidate = str(row.get("candidate_for") or "")
+        fiscal_date = str(row.get("fiscal_date") or "")
+        try:
+            year = int(fiscal_date[:4])
+        except ValueError:
+            year = 0
+        raw = _decimal(row.get("value"))
+        reference = references.get((candidate, year))
+        relative = None
+        if raw is not None and reference not in (None, Decimal("0")):
+            relative = abs(raw - reference) / abs(reference) * Decimal("100")
+        enriched.append(
+            {
+                "Kandidat für": candidate,
+                "Statement": row.get("statement"),
+                "Jahr": year or None,
+                "Provider-Feld": row.get("field"),
+                "Alpha Vantage Mio. €": float(raw / Decimal("1000000")) if raw is not None else None,
+                "ASML offiziell Mio. €": (
+                    float(reference / Decimal("1000000")) if reference is not None else None
+                ),
+                "Abweichung %": float(relative) if relative is not None else None,
+            }
+        )
+    return enriched
 
 
 st.title("Datenqualität")
@@ -168,7 +212,7 @@ with button_cols[1]:
         disabled=not api_key_available or not editable,
         help=(
             "Lädt nur INCOME_STATEMENT und ersetzt ausschließlich die D&A-Serie im bestehenden "
-            "Snapshot. Alle anderen 720 Rohdaten bleiben unverändert."
+            "Snapshot. Alle anderen Rohdaten bleiben unverändert."
         ),
     ):
         try:
@@ -199,3 +243,59 @@ if not editable:
         "Die ausgewählte Analyse ist abgeschlossen/archiviert. Das D&A-Mapping kann nur in einer "
         "offenen Revision geändert werden."
     )
+
+st.divider()
+st.subheader("Nächste gesperrte Rohfelder diagnostizieren")
+st.caption(
+    "Dieser Diagnoseabruf verbraucht genau **2 Alpha-Vantage-Requests**: einmal `BALANCE_SHEET` "
+    "und einmal `CASH_FLOW`. Er verändert den Snapshot nicht. Angezeigt werden nur plausible "
+    "Rohfeld-Kandidaten für die noch gesperrten Felder; daneben steht direkt der offizielle "
+    "ASML-Kontrollwert 2024/2025 und die rechnerische Abweichung. Eine kleine Abweichung allein "
+    "reicht noch nicht für ein Mapping — die Semantik des Feldes muss ebenfalls passen."
+)
+
+if st.button(
+    "Gesperrte Felder prüfen (2 Requests)",
+    disabled=not api_key_available,
+    help=(
+        "Diagnose für Forderungen, Vorräte, PP&E, kurzfristige Schulden, Cash/Investments, "
+        "Operating Cash Flow, CAPEX und Dividenden. Keine Persistenz."
+    ),
+):
+    try:
+        provider = AlphaVantageProvider()
+        with st.spinner("Prüfe Balance-Sheet- und Cashflow-Rohfelder für ASML …"):
+            rows = provider.probe_blocked_field_candidates("ASML")
+        if not rows:
+            st.warning("Keine passenden Rohfeld-Kandidaten gefunden.")
+        else:
+            enriched = _enrich_candidate_rows(rows)
+            st.success(
+                f"Diagnose abgeschlossen: {len(enriched)} Kandidatenzeilen gefunden. "
+                "Der Snapshot wurde nicht verändert."
+            )
+            st.dataframe(
+                pd.DataFrame(enriched),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Alpha Vantage Mio. €": st.column_config.NumberColumn(
+                        "Alpha Vantage Mio. €", format="%.1f"
+                    ),
+                    "ASML offiziell Mio. €": st.column_config.NumberColumn(
+                        "ASML offiziell Mio. €", format="%.1f"
+                    ),
+                    "Abweichung %": st.column_config.NumberColumn(
+                        "Abweichung %", format="%.3f"
+                    ),
+                },
+            )
+            st.info(
+                "Für die nächste Mapping-Entscheidung sind vor allem Kandidaten interessant, die "
+                "in **beiden** Jahren eng am offiziellen Wert liegen und fachlich dieselbe "
+                "Bilanz-/Cashflow-Zeile darstellen."
+            )
+    except ProviderError as exc:
+        st.error(str(exc))
+    except Exception as exc:
+        st.exception(exc)
