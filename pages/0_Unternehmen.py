@@ -24,7 +24,6 @@ from stock_valuation.companies.service import (
     get_or_create_from_candidate,
     list_companies,
 )
-from stock_valuation.data.offline_replay import OfflineReplayError, replay_review_files
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.database.session import get_session, init_database
@@ -56,44 +55,6 @@ st.caption(
 api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 if not api_key_available:
     st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
-
-with st.expander("Offline-Entwicklung – vorhandenes ChatGPT-Prüfpaket wiederherstellen", expanded=False):
-    st.write(
-        "Damit kann ein zuvor exportiertes **Prüfpaket zusammen mit der zugehörigen JSON-Ergebnisdatei** "
-        "ohne Alpha-Vantage-Request als Entwicklungs-Snapshot wiederhergestellt werden. "
-        "Es werden nur die im Prüfpaket enthaltenen Jahre/Fakten rekonstruiert; vollständige 20-Jahres-Historie "
-        "und Analystenschätzungen lassen sich daraus nicht zurückholen."
-    )
-    replay_package = st.file_uploader(
-        "ChatGPT-Prüfpaket (.md)",
-        type=["md"],
-        key="offline-replay-package",
-    )
-    replay_result = st.file_uploader(
-        "Zugehöriges ChatGPT-Prüfergebnis (.json)",
-        type=["json"],
-        key="offline-replay-result",
-    )
-    if st.button(
-        "Offline-Snapshot wiederherstellen",
-        disabled=replay_package is None or replay_result is None,
-        key="offline-replay-button",
-    ):
-        try:
-            with get_session() as session:
-                summary = replay_review_files(
-                    session,
-                    replay_package.getvalue(),
-                    replay_result.getvalue(),
-                )
-            st.session_state.pop("company_search_candidates", None)
-            st.success(
-                f"{summary.ticker} offline wiederhergestellt: {summary.fact_count} Finanzfakten und "
-                f"{summary.review_finding_count} Prüfergebnisse. Kein Alpha-Vantage-Request verwendet."
-            )
-            st.rerun()
-        except OfflineReplayError as exc:
-            st.error(str(exc))
 
 query = st.text_input(
     "Unternehmen oder Ticker",
