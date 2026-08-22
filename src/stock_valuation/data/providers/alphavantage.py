@@ -27,26 +27,21 @@ def extract_matching_annual_fields(
     keywords: tuple[str, ...],
     max_reports: int = 2,
 ) -> list[dict[str, Any]]:
-    """Return matching raw fields from the latest annual reports without interpreting them.
-
-    This helper is deliberately semantic-free. It is used for provider diagnostics so we can
-    inspect candidate raw fields before changing the normalisation mapping.
-    """
-    reports = payload.get("annualReports") or []
-    if not isinstance(reports, list):
+    rows = payload.get("annualReports") or []
+    if not isinstance(rows, list):
         return []
-
-    lowered_keywords = tuple(keyword.lower() for keyword in keywords)
-    rows: list[dict[str, Any]] = []
-    for report in reports[:max_reports]:
-        if not isinstance(report, dict):
+    output: list[dict[str, Any]] = []
+    for row in rows[:max_reports]:
+        if not isinstance(row, dict):
             continue
-        fiscal_date = report.get("fiscalDateEnding")
-        currency = report.get("reportedCurrency")
-        for field, value in report.items():
-            lowered_field = str(field).lower()
-            if any(keyword in lowered_field for keyword in lowered_keywords):
-                rows.append(
+        fiscal_date = row.get("fiscalDateEnding")
+        currency = row.get("reportedCurrency")
+        for field, value in row.items():
+            if field in {"fiscalDateEnding", "reportedCurrency"}:
+                continue
+            lowered = field.lower()
+            if any(keyword in lowered for keyword in keywords):
+                output.append(
                     {
                         "statement": statement,
                         "fiscal_date": fiscal_date,
@@ -55,19 +50,11 @@ def extract_matching_annual_fields(
                         "value": value,
                     }
                 )
-    return rows
+    return output
 
 
 class AlphaVantageProvider(FinancialDataProvider):
-    """Alpha Vantage adapter for fundamentals testing.
-
-    Financial statements are fetched from the documented INCOME_STATEMENT,
-    BALANCE_SHEET and CASH_FLOW endpoints. Estimates use EARNINGS_ESTIMATES.
-
-    The free tier currently has a daily quota and also asks users to spread requests
-    out. Full imports therefore pace calls. Diagnostic probes are exposed separately
-    so access/symbol/mapping problems can be inspected without modifying snapshots.
-    """
+    """Alpha Vantage adapter for fundamentals testing."""
 
     BASE_URL = "https://www.alphavantage.co/query"
 
@@ -85,7 +72,6 @@ class AlphaVantageProvider(FinancialDataProvider):
             raise ValueError("ALPHA_VANTAGE_API_KEY fehlt.")
 
     def _wait_for_request_slot(self) -> None:
-        """Space consecutive requests conservatively for the free tier."""
         if self._last_request_started_at is None or self.min_request_interval_seconds <= 0:
             return
         elapsed = time.monotonic() - self._last_request_started_at
@@ -105,8 +91,7 @@ class AlphaVantageProvider(FinancialDataProvider):
             )
         if response.status_code == 429:
             raise ProviderRateLimitError(
-                f"Alpha Vantage: {function} — HTTP 429. API-Limit erreicht; "
-                "bitte später erneut versuchen."
+                f"Alpha Vantage: {function} — HTTP 429. API-Limit erreicht; bitte später erneut versuchen."
             )
         response.raise_for_status()
         try:
@@ -121,8 +106,6 @@ class AlphaVantageProvider(FinancialDataProvider):
                 f"Alpha Vantage: {function} lieferte ein unerwartetes Antwortformat."
             )
 
-        # Alpha Vantage can report throttling and entitlement messages inside JSON
-        # while still returning HTTP 200, so those messages must be handled explicitly.
         message = str(data.get("Information") or data.get("Note") or data.get("Error Message") or "")
         lowered = message.lower()
         if message:
@@ -143,13 +126,11 @@ class AlphaVantageProvider(FinancialDataProvider):
         return data
 
     def probe_income_statement(self, symbol: str) -> dict[str, Any]:
-        """Perform exactly one API request for diagnostics without persisting data."""
         data = self._request("INCOME_STATEMENT", symbol=symbol)
         annual = data.get("annualReports") or []
         quarterly = data.get("quarterlyReports") or []
         annual_count = len(annual) if isinstance(annual, list) else 0
         quarterly_count = len(quarterly) if isinstance(quarterly, list) else 0
-
         latest = annual[0] if annual_count and isinstance(annual[0], dict) else {}
         return {
             "function": "INCOME_STATEMENT",
@@ -163,13 +144,6 @@ class AlphaVantageProvider(FinancialDataProvider):
         }
 
     def probe_depreciation_fields(self, symbol: str) -> list[dict[str, Any]]:
-        """Inspect D&A-like raw fields using exactly two requests and no persistence.
-
-        Both INCOME_STATEMENT and CASH_FLOW are inspected because normalized provider
-        taxonomies may expose depreciation/amortisation concepts in more than one statement.
-        Returned values remain raw strings; this method makes no decision about which field
-        should be used by the metrics engine.
-        """
         keywords = ("depreci", "amorti", "depletion")
         income = self._request("INCOME_STATEMENT", symbol=symbol)
         cash_flow = self._request("CASH_FLOW", symbol=symbol)
@@ -187,6 +161,10 @@ class AlphaVantageProvider(FinancialDataProvider):
                 max_reports=2,
             ),
         ]
+
+    def get_income_statement(self, symbol: str) -> dict[str, Any]:
+        """Fetch only the income statement; one API request."""
+        return self._request("INCOME_STATEMENT", symbol=symbol)
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
         data = self._request("SYMBOL_SEARCH", keywords=query)
