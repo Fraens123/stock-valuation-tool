@@ -85,12 +85,15 @@ Beim Aktualisieren wird eine neue Revision erzeugt. Die Vergleichsfunktion muss 
 
 Siehe `docs/DATA_SOURCES.md`.
 
-V1-Ziel:
-- EODHD: historische Fundamentaldaten + ggf. Estimates
-- ASML Investor Relations: Validierung und Guidance
-- ECB Data API: EUR-Risikofreizins
-- Aktienfinder.de: manuelle Ergänzungen
-- weitere Provider nur hinter Provider-Interfaces
+Aktueller V1-Stand:
+- ASML Investor Relations / Annual Reports: Primärquelle und Referenz für veröffentlichte historische Zahlen sowie Guidance.
+- Alpha Vantage: automatischer V1-Kandidat; **nur feldweise nach Primärquellen-Gate freigegeben**, niemals pauschal vertrauen.
+- EODHD: Adapter vorhanden; Fundamentals beim getesteten Free-Key nicht freigeschaltet, daher derzeit nur optionaler späterer Fallback/Cross-Check.
+- ECB Data API: EUR-Risikofreizins.
+- Aktienfinder.de: manuelle Ergänzungen/Overrides.
+- weitere Provider nur hinter Provider-Interfaces.
+
+Für ASML dürfen Downstream-Kennzahlen nur Felder verwenden, die der 2024/2025-Primärquellencheck freigegeben hat. FAIL/MISSING-Felder werden nicht still durch offizielle Kontrollwerte ersetzt.
 
 ## 8. Engineering-Regeln
 
