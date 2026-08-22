@@ -28,6 +28,22 @@ Der lokale Import lieferte für ASML:
 - 2025 Revenue `32,667.3 Mio. EUR`, exakt im Einklang mit ASML US GAAP
 - insgesamt 720 normalisierte jährliche Datenpunkte im ersten Snapshot
 
+## Freigegebene D&A-Definition
+
+Die gezielte Rohfelddiagnose am 22.08.2026 zeigte:
+
+- `INCOME_STATEMENT.depreciationAndAmortization`
+  - 2025: `1,025.9 Mio. EUR`
+  - 2024: `918.6 Mio. EUR`
+  - beide Werte stimmen exakt mit den ASML-US-GAAP-Kontrollwerten überein.
+
+- `CASH_FLOW.depreciationDepletionAndAmortization`
+  - 2025: `1,025.9 Mio. EUR`
+  - 2024: ca. `1,030.8 Mio. EUR`
+  - 2024 weicht deutlich ab und wird deshalb nur als Cross-Check-Feld geführt.
+
+**Entscheidung:** `depreciation_amortization` wird bei Alpha Vantage aus `INCOME_STATEMENT.depreciationAndAmortization` normalisiert. Das Cashflow-Feld wird als `depreciation_amortization_cashflow_crosscheck` getrennt gespeichert. Damit kann die EBITDA-Marge nach Aktualisierung der D&A-Serie feldweise freigegeben werden.
+
 ## Problematische Felder
 
 ### `accounts_receivable`
@@ -64,10 +80,6 @@ Bewertung: **blocked**.
 
 Die Abweichung ist zu groß für Rundung und tritt in beiden Jahren mit wechselnder Richtung auf. Für DCF/FCF darf dieser Providerwert bei ASML vorerst nicht verwendet werden.
 
-### `depreciation_amortization`
-
-2024 zeigte eine zweistellige relative Abweichung zur offiziellen ASML-US-GAAP-Zahl. Bewertung: **blocked**, bis Felddefinition und Primärquellenzeile eindeutig übereinstimmen.
-
 ### `inventory`
 
 2024 zeigte eine deutliche Abweichung, obwohl 2025 plausibler sein kann. Bewertung: **blocked**, weil der Feld-Gate beide Jahre berücksichtigt.
@@ -90,11 +102,9 @@ Phase 3 darf **feldweise** beginnen.
 
 Zulässig sind Kennzahlen nur dann, wenn alle dafür benötigten Rohdatenfelder den Feld-Gate `approved` besitzen und die jeweilige Formel fachlich bereits festgelegt ist.
 
-Beispiele:
-- ROE kann starten, wenn `net_income` und `shareholders_equity` approved sind.
-- Umsatzrendite kann starten, wenn `revenue` und `net_income` approved sind.
-- EBIT-Marge kann starten, wenn `revenue` und `operating_income` approved sind.
-- EBITDA-Marge bleibt blockiert, solange D&A nicht approved ist.
+- EBIT-Marge ist aktiv.
+- EBITDA-Marge ist methodisch freigegeben und wird nach Aktualisierung der D&A-Serie aus dem validierten Income-Statement-Feld aktiv.
+- ROE, Umsatzrendite, Kapitalumschlag, Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten weiterhin auf die jeweilige Buchdefinition.
 - Working-Capital-Kennzahlen bleiben blockiert, solange Accounts Receivable / Inventory nicht sauber validiert sind.
 - DCF/FCF bleibt blockiert, solange OCF und CAPEX nicht sauber aus Primärquellen oder einem besser passenden Provider stammen.
 
