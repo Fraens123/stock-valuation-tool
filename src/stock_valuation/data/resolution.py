@@ -10,6 +10,7 @@ from stock_valuation.database.models import FinancialFactSnapshot
 
 DEFAULT_PROVIDER_PRIORITY: tuple[str, ...] = (
     "asml_primary",
+    "esef_ixbrl",
     "sec_companyfacts",
     "alphavantage",
     "eodhd",
