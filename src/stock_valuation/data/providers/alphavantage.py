@@ -28,8 +28,8 @@ class AlphaVantageProvider(FinancialDataProvider):
 
     The free tier currently has a daily quota and also asks users to spread requests
     out. Full imports therefore pace calls. A one-request diagnostic probe is exposed
-    separately so rate-limit/access problems can be distinguished without repeatedly
-    spending four calls on a full import.
+    separately so rate-limit/access/symbol problems can be distinguished without
+    repeatedly spending four calls on a full import.
     """
 
     BASE_URL = "https://www.alphavantage.co/query"
@@ -106,20 +106,23 @@ class AlphaVantageProvider(FinancialDataProvider):
         return data
 
     def probe_income_statement(self, symbol: str) -> dict[str, Any]:
-        """Perform exactly one API request for diagnostics.
-
-        This intentionally does not persist anything. It is used by the UI to determine
-        whether a free key can currently access one fundamental endpoint before a full
-        four-request import is attempted.
-        """
+        """Perform exactly one API request for diagnostics without persisting data."""
         data = self._request("INCOME_STATEMENT", symbol=symbol)
         annual = data.get("annualReports") or []
         quarterly = data.get("quarterlyReports") or []
+        annual_count = len(annual) if isinstance(annual, list) else 0
+        quarterly_count = len(quarterly) if isinstance(quarterly, list) else 0
+
+        latest = annual[0] if annual_count and isinstance(annual[0], dict) else {}
         return {
             "function": "INCOME_STATEMENT",
-            "symbol": data.get("symbol") or symbol,
-            "annual_report_count": len(annual) if isinstance(annual, list) else 0,
-            "quarterly_report_count": len(quarterly) if isinstance(quarterly, list) else 0,
+            "requested_symbol": symbol,
+            "returned_symbol": data.get("symbol") or symbol,
+            "annual_report_count": annual_count,
+            "quarterly_report_count": quarterly_count,
+            "latest_fiscal_date": latest.get("fiscalDateEnding"),
+            "reported_currency": latest.get("reportedCurrency"),
+            "latest_revenue": latest.get("totalRevenue"),
         }
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
