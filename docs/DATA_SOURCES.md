@@ -20,28 +20,44 @@ Offizielle Unternehmensangaben haben bei historischen veröffentlichten Zahlen V
 
 ### 2. Alpha Vantage — aktueller automatisierter V1-Testkandidat
 
-Referenzsymbol für ASML Amsterdam: `ASML.AMS`.
+Für ASML muss zwischen Kurs- und Fundamentals-Symbol unterschieden werden:
 
-Geplante Verwendung:
+- lokales Amsterdam-Listing / Marktpreis: später separat auf Euronext-Basis behandeln
+- Alpha-Vantage-Fundamentals: `ASML`
+
+Der lokale Live-Test zeigte:
+
+- `ASML.AMS` liefert beim `INCOME_STATEMENT`-Fundamentals-Endpunkt 0 Reports.
+- `ASML` liefert die konsolidierten ASML-Holding-Abschlüsse in EUR.
+- 20 Jahresberichte und 81 Quartalsberichte wurden erkannt.
+- 2025 Revenue wurde mit 32,6673 Mrd. EUR geliefert und stimmt mit ASML US GAAP überein.
+- Ein vollständiger Snapshot-Import wurde lokal erfolgreich durchgeführt: 720 Financial-Fact-Datenpunkte über 20 Geschäftsjahre.
+
+Verwendung:
 - historische GuV über `INCOME_STATEMENT`
 - Bilanz über `BALANCE_SHEET`
 - Cashflow über `CASH_FLOW`
 - Analystenschätzungen über `EARNINGS_ESTIMATES`
 - Unternehmenssuche über `SYMBOL_SEARCH`
 
-Warum jetzt zuerst Alpha Vantage getestet wird:
-- der Anbieter stellt für den Free-Tier aktuell 25 Requests pro Tag bereit
-- laut Anbieter ist der Großteil der API-Endpunkte im Free-Tier nutzbar
-- Fundamentaldaten-Endpunkte sind öffentlich dokumentiert
-- globale Ticker werden unterstützt; `ASML.AMS` wird als Amsterdam-Listing verwendet
+Free-Tier:
+- 25 Requests pro Tag
+- Requests werden im Adapter konservativ zeitlich gestaffelt
+- vollständiger Import benötigt derzeit vier Requests
+- geeignet für Entwicklung und Einzelanalysen, nicht für Massen-Screening
 
-Ein ASML-Import benötigt mehrere Requests (GuV, Bilanz, Cashflow, Estimates). Der Free-Tier ist daher für Entwicklung, Tests und wenige Analysen pro Tag geeignet, nicht für Massen-Screening.
+**Qualitäts-Gate:** Alpha Vantage wird erst für konkrete Rohdatenfelder freigegeben, wenn diese gegen offizielle ASML-US-GAAP-Kontrollwerte geprüft wurden. Der Gate ist in `stock_valuation.validation.service` implementiert.
 
-**Qualitäts-Gate:** Alpha Vantage wird erst als produktiver Primärprovider freigegeben, wenn die ASML-Daten gegen offizielle ASML-Berichte plausibilisiert wurden.
+Bekannte erste Prüfpunkte:
+- `accounts_receivable`: sichtbare semantische Abweichung
+- `capital_expenditures`: sichtbare Abweichung zur offiziellen PP&E-Cash-Purchase-Zahl
+- `cash_and_short_term_investments`: nur Cross-Check; Komponenten werden später separat aufgebaut
+
+Siehe `docs/ASML_PROVIDER_VALIDATION.md`.
 
 Dokumentation:
 - `https://www.alphavantage.co/documentation/`
-- `https://www.alphavantage.co/support/`
+- `https://documentation.alphavantage.co/FundamentalDataDocs/index.html`
 
 ### 3. EODHD — integrierter Fallback, Fundamentals im Free-Tier nicht verfügbar
 
@@ -52,8 +68,6 @@ Der lokale Test am 22.08.2026 mit einem gültigen kostenlosen EODHD-Key ergab be
 - HTTP `403 Forbidden`
 - API-Key wurde erkannt
 - der kostenlose Tarif schaltet Fundamentals für diesen Abruf nicht frei
-
-EODHD dokumentiert, dass Fundamentals-Abfragen 10 API Calls kosten und bestimmte Datentypen im Free-Tier nicht zugänglich sind. Der Fundamentals Data Feed ist kostenpflichtig.
 
 **Entscheidung:** Vorläufig keinen EODHD-Fundamentals-Tarif kaufen. Adapter bleibt im Projekt, damit EODHD später optional als bezahlter Provider/Cross-Check genutzt werden kann.
 
@@ -111,6 +125,8 @@ Zielschema:
 - Abrufdatum
 - Geschäftsjahr
 
+Alpha Vantage liefert zusätzlich lange historische Estimate-/Revisionsreihen. Diese bleiben im Snapshot auditierbar, werden in der normalen UI aber standardmäßig ausgeblendet, wenn ihre Periode vor dem Analysestichtag liegt.
+
 ### DCF-Priorität
 
 **Jahr 1**
@@ -143,9 +159,19 @@ Analystenwerte sind Input-Evidenz, keine automatische Wahrheit.
 
 Priorität:
 1. offizieller Geschäftsbericht / Filing
-2. freigegebener automatischer Provider
+2. für das konkrete Rohdatenfeld freigegebener automatischer Provider
 3. optionaler Cross-Check-Provider
 4. manuelle Ergänzung
+
+### Primärquellen-Gate
+
+Für ASML 2025/2024:
+- <= 0,5 % relative Abweichung: PASS
+- > 0,5 % bis 2 %: WARN
+- > 2 %: FAIL
+- fehlend: MISSING
+
+Ein Providerwert wird bei FAIL/MISSING nicht still durch den Kontrollwert ersetzt. Stattdessen muss Mapping/Definition geklärt werden.
 
 ### Keine stillen Ersatzwerte
 
@@ -167,9 +193,9 @@ Andere Provider werden nur hinter dem gemeinsamen Provider-Interface integriert.
 
 ---
 
-## ASML-Referenzwerte für ersten Importtest
+## ASML-Referenzwerte
 
-Die offizielle ASML-2025-Berichterstattung dient als Plausibilitätsanker für Umsatz, Margen, Gewinn, Bilanz und Cashflow. Diese Werte werden nicht hart in die Bewertungsengine codiert, sondern als referenzierte Test-/Guidance-Daten verwendet.
+Die offizielle ASML-US-GAAP-Berichterstattung 2025/2024 dient als Primärquellen-Gate für Umsatz, Ergebnis, Bilanz und Cashflow. Die Kontrollwerte stehen in `src/stock_valuation/validation/asml_reference.py` und werden ausschließlich zur Validierung verwendet, nicht als automatische Ersatzdaten.
 
 ---
 
@@ -177,5 +203,6 @@ Die offizielle ASML-2025-Berichterstattung dient als Plausibilitätsanker für U
 
 - `docs/RAW_DATA_SCHEMA.md`
 - `docs/ASML_DATA_MAPPING.md`
+- `docs/ASML_PROVIDER_VALIDATION.md`
 - `docs/NORMALIZATION_POLICY.md`
 - `docs/DCF_METHOD.md`
