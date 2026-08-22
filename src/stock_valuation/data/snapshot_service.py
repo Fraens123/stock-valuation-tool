@@ -212,6 +212,29 @@ def sync_alphavantage_snapshot(
     )
 
 
+def sync_sec_companyfacts(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    cik: str,
+) -> int:
+    """Import standardized official SEC XBRL facts for one SEC-reporting company."""
+    ensure_editable(analysis)
+    normalized_cik = str(cik).strip().replace("CIK", "").zfill(10)
+    facts = provider.get_normalized_financials(normalized_cik)
+    if not facts:
+        raise ValueError("SEC Company Facts lieferte keine unterstützten standardisierten Finanzfakten.")
+    return replace_financial_facts(
+        session,
+        analysis,
+        facts,
+        provider="sec_companyfacts",
+        source_url=f"https://data.sec.gov/api/xbrl/companyfacts/CIK{normalized_cik}.json",
+        source_type="primary_source",
+    )
+
+
 def sync_alphavantage_depreciation_amortization(
     session: Session,
     analysis: Analysis,
