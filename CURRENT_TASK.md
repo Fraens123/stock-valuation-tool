@@ -1,6 +1,6 @@
 # Current Task
 
-## Phase 2/3 Übergang – Import, Prüfung und Bedienung vereinfachen
+## Phase 2/3 Übergang – Import, KI-Prüfung und Bedienung vereinfachen
 
 ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import oder Speicherung neuer Aktien.
 
@@ -10,115 +10,115 @@ ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** f
 - Microsoft wurde als zweite, nicht hart codierte Aktie erfolgreich importiert.
 - Microsoft-Snapshot: 740 Finanzdatenpunkte über 20 Geschäftsjahre; 32/32 definierte Core-Felder der letzten zwei Geschäftsjahre vorhanden.
 - Analystenschätzungen wurden ebenfalls erfolgreich geladen.
-
-Damit ist bestätigt: Der automatische Fundamentals-Import funktioniert unternehmensunabhängig für von Alpha Vantage unterstützte Symbole.
+- Alpha-Vantage-Import ist damit für unterstützte Symbole unternehmensunabhängig bestätigt.
 
 ## Sichtbarer Standardablauf
 
-1. **Übersicht**
-   - alle Unternehmen und Analyse-Revisionen sehen,
-   - Analyse verwalten / abschließen / neue Revision anlegen,
-   - Revisionen vergleichen.
-2. **Unternehmen**
-   - Aktie suchen,
-   - Haupt-/Provider-Treffer auswählen,
-   - Analyse anlegen.
+1. **Übersicht** – alle Unternehmen/Revisionen verwalten und vergleichen.
+2. **Unternehmen** – Aktie suchen und Analyse anlegen.
 3. **Finanzdaten**
-   - ein Button `Daten laden / aktualisieren`,
-   - intern GuV + Bilanz + Cashflow + Estimates,
-   - gespeicherten Datenstand sehen,
-   - automatische Plausibilitätsprüfung,
-   - KI-Prüfpaket erzeugen,
-   - einzelne Werte nachvollziehbar korrigieren.
-4. **Manuelle Daten**
-   - Aktienfinder/zusätzliche Inputs,
-   - Management Guidance,
-   - risikofreier Zins.
-5. **Kennzahlen**
-   - ausschließlich Snapshot-Daten verwenden.
+   - `Daten laden / aktualisieren` (Alpha Vantage, normalerweise 4 Requests),
+   - kostenlose interne Plausibilitätschecks,
+   - `KI-Prüfung starten` gegen offizielle Webquellen,
+   - WARN/FAIL/UNKLAR prüfen,
+   - pro sicherer Abweichung `Übernehmen` oder `Verwerfen`,
+   - optional manuell korrigieren.
+4. **Manuelle Daten** – Aktienfinder, Management Guidance, risikofreier Zins.
+5. **Kennzahlen** – nur gespeicherte Snapshot-Daten verwenden.
 
 Später folgen Geschäftsmodell, Bewertung, Investmentthese und Report.
 
-## Navigation / UI
+## Direkte KI-Prüfung
 
-- Streamlits automatische Dateinavigation wird ausgeblendet.
-- eigene fachliche Sidebar: `Übersicht`, `Unternehmen`, `Finanzdaten`, `Manuelle Daten`, `Kennzahlen`.
-- technische Diagnosewerkzeuge bleiben im Repository, sind aber kein normaler Arbeitsschritt.
-- die frühere `app`-Startseite wurde zu einer echten Übersicht über **alle** Unternehmen und Analysen umgebaut; keine ASML-only-Startlogik mehr.
+Implementiert in:
+- `src/stock_valuation/analyses/ai_review_service.py`
+- `src/stock_valuation/database/ai_review_models.py`
+- `pages/1_Datenimport.py`
 
-## Datenprüfung
+### Technischer Ablauf
 
-### Deterministische Prüfung
+- OpenAI Responses API mit eingebautem `web_search`.
+- Konfiguration lokal über:
+  - `OPENAI_API_KEY`
+  - optional `OPENAI_REVIEW_MODEL` (Default `gpt-5.4`).
+- Standardprüfung: letzte 3 Geschäftsjahre; UI erlaubt 2 / 3 / 5 Jahre.
+- Nur nicht als Cross-Check markierte FY-Fakten aus GuV, Bilanz und Cashflow werden eingereicht.
+- Web-Recherche priorisiert Annual Report, 10-K/20-F, regulatorische Filings und offizielle Investor-Relations-Unterlagen.
+- Structured Outputs erzwingen pro eingereichtem `fact_id` ein Ergebnis.
+- Status: `PASS`, `WARN`, `FAIL`, `UNKLAR`.
+- API-Response wird mit `store=False` angefordert; der benötigte Review-Output wird lokal in SQLite gespeichert.
 
-`src/stock_valuation/data/audit.py`
+### Review-Persistenz
 
-Prüft ohne Netzwerkzugriff u. a.:
-- Gross Profit = Revenue - Cost of Revenue,
-- Bilanzsumme ungefähr Liabilities + Equity,
-- Current Assets <= Total Assets,
-- Current Liabilities <= Total Liabilities,
-- Cash <= Current Assets.
+`ai_review_runs`
+- Modell, geprüfte Jahre, Response-ID, Summary, Zeitstempel.
 
-Diese Checks erkennen Inkonsistenzen, ersetzen aber keine Primärquellenprüfung.
+`ai_review_findings`
+- Jahr/Periode, interner Schlüssel, importierter Wert, offizieller Wert,
+- Abweichung, Verdict, offizielle Bezeichnung, Quellen-URL, Begründung,
+- Entscheidung `pending / accepted / rejected`.
 
-### KI-Prüfung
+### Sicherheitsregel
 
-Die Anwendung kann aus dem Snapshot einen ausführlichen, reproduzierbaren Prüf-Prompt erzeugen. Dieser fordert eine web-/quellenbasierte Prüfung gegen Annual Reports, 10-K/20-F bzw. IR-Unterlagen und verlangt strukturierte PASS/WARN/FAIL/UNKLAR-Ergebnisse plus Quellen.
+Die KI ändert **niemals selbst Finanzdaten**.
 
-Aktuell wird das Prüf-Paket erzeugt, aber **nicht automatisch an einen kostenpflichtigen KI-API-Provider gesendet**. Direkte Ausführung wird später als optionaler Provider angebunden. Es darf nie still eine kostenpflichtige Abhängigkeit vorausgesetzt werden.
+`Übernehmen`:
+- erzeugt einen separaten `manual_override`,
+- Original-Providerwert bleibt erhalten,
+- Quellen-URL und Begründung werden gespeichert,
+- Source Resolution verwendet danach den bestätigten Override.
 
-KI-Ergebnisse dürfen nur Korrekturvorschläge liefern. Kein Wert wird automatisch überschrieben.
+`Verwerfen`:
+- ändert keinen Finanzwert,
+- speichert nur die Entscheidung im Review-Finding.
 
-## Manuelle Korrekturen importierter Finanzwerte
+## UI / Navigation
 
-Finanzdaten können direkt auf der Seite **Finanzdaten** korrigiert werden.
-
-Regeln:
-- Originalwert von Alpha Vantage/Primärquelle bleibt erhalten.
-- Korrektur wird separat als `provider=manual_override` gespeichert.
-- Quelle und Begründung sind erforderlich bzw. sichtbar.
-- Source Resolution priorisiert `manual_override` vor Primärquelle/API.
-- Override kann wieder entfernt werden; dann greift automatisch wieder die darunterliegende Quelle.
-- abgeschlossene Snapshots bleiben unveränderlich.
+- eigene Sidebar: `Übersicht`, `Unternehmen`, `Finanzdaten`, `Manuelle Daten`, `Kennzahlen`.
+- technische Diagnosewerkzeuge sind kein normaler Arbeitsschritt.
+- `app.py` ist die Übersicht über alle Unternehmen und Analyse-Snapshots, keine ASML-Sonderseite.
 
 ## Estimate-Logik
 
 Alpha Vantage `EARNINGS_ESTIMATES` enthält Jahres- und Quartalsschätzungen im selben Endpoint.
-
-- Geschäftsjahresende wird aus den FY-Abschlussdaten abgeleitet,
+- Geschäftsjahresende wird aus FY-Daten abgeleitet,
 - Standardansicht zeigt nur Jahresschätzungen,
-- Quartale und historische Historie sind optional einblendbar,
-- spätere DCF-Logik verwendet Jahresschätzungen als Jahresinput.
+- Quartale/Historie optional,
+- spätere DCF-Logik nutzt Jahreswerte.
 
 ## Lokaler Abnahmetest jetzt
 
 1. `git pull`
 2. `pip install -e ".[dev]"`
 3. `pytest -q`
-4. `streamlit run app.py`
-5. Sidebar prüfen: nur `Übersicht`, `Unternehmen`, `Finanzdaten`, `Manuelle Daten`, `Kennzahlen`.
-6. `Übersicht`: ASML **und** Microsoft bzw. alle gespeicherten Analysen müssen sichtbar sein.
-7. Microsoft unter `Finanzdaten` öffnen.
-8. Bestehende 740 Datenpunkte müssen ohne Neuimport sichtbar bleiben.
-9. Plausibilitätsprüfung öffnen; Checks müssen ohne API-Requests laufen.
-10. `KI-Prüfprompt erstellen` testen; es darf kein API-Request ausgelöst werden.
-11. Optional einen unwichtigen Testwert manuell überschreiben und prüfen, dass der Originalwert in Rohdaten erhalten bleibt; danach Override wieder entfernen.
+4. `.env` ergänzen:
+   - `OPENAI_API_KEY=<dein API-Key>`
+   - optional `OPENAI_REVIEW_MODEL=gpt-5.4`
+5. `streamlit run app.py`
+6. Microsoft unter `Finanzdaten` öffnen; kein neuer Alpha-Vantage-Import nötig.
+7. Unter `Daten prüfen` zunächst 2 oder 3 Geschäftsjahre auswählen.
+8. `KI-Prüfung starten` drücken.
+9. Prüfen: Summary + PASS/WARN/FAIL/UNKLAR erscheinen; Standardansicht blendet PASS aus.
+10. Bei einem sicheren WARN/FAIL:
+    - offizielle Quelle öffnen,
+    - einmal `Übernehmen` testen,
+    - prüfen, dass ein bestätigter Override erscheint und der Alpha-Vantage-Originalwert erhalten bleibt.
+11. Einen anderen Vorschlag `Verwerfen`; Finanzwert darf sich nicht ändern.
 
 ## Noch offene Import-/Prüfthemen
 
-- direkte optionale KI-Ausführung mit Web-/Quellenzugriff hinter Provider-Interface,
-- KI-Ergebnis als strukturierte Review-Tabelle statt Freitext,
-- bestätigte KI-Korrekturen über dieselbe `manual_override`-Logik übernehmen,
-- aktueller Marktpreis automatisch laden und korrekt nach Listing/Währung trennen,
+- realen Microsoft-KI-Lauf testen und Prompt/Schema anhand der Ergebnisse nachschärfen,
+- Kosten-/Tokenanzeige aus API-Usage später ergänzen,
+- Review ggf. in kleinere Batches teilen, falls große 5-Jahres-Prüfungen zu langsam/teuer werden,
+- aktuellen Marktpreis automatisch laden und Listing/Währung sauber trennen,
 - automatische Primärquellen-Discovery dort ergänzen, wo zuverlässig möglich,
 - SEC-/ESEF-Mappings erweitern,
 - ISIN/LEI-Anreicherung verbessern,
-- optional zweiter breiter Fundamentals-Provider als Fallback prüfen.
+- optional zweiten breiten Fundamentals-Provider als Fallback prüfen.
 
 ## Noch offene Kapitel-2-Methodik
 
 Weiterhin Buchverifikation erforderlich:
-
 - ROE — Kindle S. 94
 - Umsatzrendite — Kindle S. 101
 - Kapitalumschlag — Kindle S. 107
