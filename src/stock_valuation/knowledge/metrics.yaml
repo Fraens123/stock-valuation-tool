@@ -1,0 +1,52 @@
+metrics:
+  roe:
+    title_de: "Eigenkapitalrendite"
+    title_en: "Return on Equity (ROE)"
+    chapter: "2.1"
+    kindle_page: 94
+    definition: "Verhältnis des den Eigenkapitalgebern zurechenbaren Jahresergebnisses zum durchschnittlich eingesetzten Eigenkapital."
+    formula: "Net Income / durchschnittliches Eigenkapital"
+    meaning: "Zeigt, wie rentabel das Unternehmen das Eigenkapital der Eigentümer einsetzt."
+    interpretation: "Eine hohe und über mehrere Jahre stabile Eigenkapitalrendite kann auf ein wirtschaftlich starkes Geschäftsmodell hindeuten. Sie muss gemeinsam mit Verschuldung, Eigenkapitalquote und Kapitalintensität beurteilt werden."
+    pitfalls:
+      - "Hohe Verschuldung kann die Eigenkapitalrendite über den Leverage-Effekt erhöhen."
+      - "Einmaleffekte im Jahresergebnis verzerren die Kennzahl."
+      - "Aktienrückkäufe können das ausgewiesene Eigenkapital reduzieren und dadurch die Kennzahl erhöhen."
+    related:
+      - "Eigenkapitalquote"
+      - "Gearing"
+      - "ROCE"
+
+  equity_ratio:
+    title_de: "Eigenkapitalquote"
+    title_en: "Equity Ratio"
+    chapter: "3.1"
+    kindle_page: 118
+    definition: "Anteil des Eigenkapitals an der Bilanzsumme."
+    formula: "Eigenkapital / Bilanzsumme"
+    meaning: "Beschreibt, in welchem Umfang Vermögenswerte durch Eigenkapital finanziert sind."
+    interpretation: "Eine höhere Eigenkapitalquote kann finanzielle Widerstandsfähigkeit erhöhen, ist aber immer im Branchen- und Geschäftsmodellkontext zu beurteilen."
+    pitfalls:
+      - "Banken und andere stark regulierte Finanzunternehmen benötigen andere Maßstäbe."
+      - "Bilanzierungsunterschiede und Goodwill können Vergleiche beeinflussen."
+    related:
+      - "Gearing"
+      - "Eigenkapitalrendite"
+
+  pe:
+    title_de: "Kurs-Gewinn-Verhältnis"
+    title_en: "Price/Earnings Ratio (P/E)"
+    chapter: "7.1"
+    kindle_page: 226
+    definition: "Verhältnis des Aktienkurses zum Gewinn je Aktie bzw. der Marktkapitalisierung zum den Aktionären zurechenbaren Gewinn."
+    formula: "Aktienkurs / EPS"
+    meaning: "Zeigt, mit welchem Vielfachen des aktuellen oder erwarteten Gewinns der Markt das Eigenkapital bewertet."
+    interpretation: "Ein hohes KGV ist nicht automatisch teuer und ein niedriges KGV nicht automatisch günstig. Wachstum, Qualität, Zyklik, Bilanz und Nachhaltigkeit des Gewinns müssen einbezogen werden."
+    pitfalls:
+      - "Zyklische Spitzengewinne können ein künstlich niedriges KGV erzeugen."
+      - "Sondereffekte im Gewinn verfälschen den Vergleich."
+      - "Unterschiedliche Kapitalstrukturen sind im KGV nur indirekt sichtbar."
+    related:
+      - "Faires KGV"
+      - "EV/EBIT"
+      - "Jahresabschlussbereinigung"
