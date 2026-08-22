@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from statistics import median
+
+import pandas as pd
+import streamlit as st
+
+from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
+from stock_valuation.database.models import AnalysisStatus
+from stock_valuation.database.session import get_session, init_database
+from stock_valuation.knowledge.catalog import get_metric_info
+from stock_valuation.metrics.service import (
+    MetricDataQualityError,
+    calculate_and_store_phase_3a,
+    load_metric_series,
+    phase_3a_method_states,
+)
+from stock_valuation.ui.components import metric_heading
+
+
+init_database()
+st.set_page_config(page_title="Kennzahlen", layout="wide")
+
+STATUS_LABELS = {
+    AnalysisStatus.DRAFT: "Entwurf",
+    AnalysisStatus.IN_PROGRESS: "In Bearbeitung",
+    AnalysisStatus.COMPLETED: "Abgeschlossen",
+    AnalysisStatus.ARCHIVED: "Archiviert",
+}
+METHOD_STATUS = {
+    "implemented": "✅ AKTIV",
+    "methodology_blocked": "🟡 METHODIK OFFEN",
+    "data_blocked": "❌ DATEN BLOCKIERT",
+}
+
+
+def _analysis_label(analysis) -> str:
+    return (
+        f"{analysis.company.name} · {analysis.as_of_date} · "
+        f"R{analysis.revision_number} · {STATUS_LABELS.get(analysis.status, analysis.status.value)}"
+    )
+
+
+def _metric_title(metric_id: str) -> str:
+    info = get_metric_info(metric_id) or {}
+    title_de = info.get("title_de", metric_id)
+    title_en = info.get("title_en")
+    return f"{title_de} ({title_en})" if title_en else title_de
+
+
+st.title("Kennzahlenanalyse")
+st.caption(
+    "Kennzahlen werden ausschließlich aus dem gespeicherten Analyse-Snapshot berechnet. "
+    "Diese Seite verursacht keine API-Requests. Methodisch offene Kennzahlen bleiben bewusst blockiert."
+)
+
+with get_session() as session:
+    analyses = list_analyses(session, include_archived=True)
+    options = {_analysis_label(a): a.id for a in analyses}
+
+if not options:
+    st.info("Zuerst eine Analyse anlegen und Fundamentaldaten importieren.")
+    st.stop()
+
+selected_label = st.selectbox("Analyse", list(options))
+analysis_id = options[selected_label]
+
+with get_session() as session:
+    analysis = get_analysis(session, analysis_id)
+    if analysis is None:
+        st.error("Analyse nicht gefunden.")
+        st.stop()
+    editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    header = st.columns(4)
+    header[0].metric("Unternehmen", analysis.company.name)
+    header[1].metric("Stichtag", str(analysis.as_of_date))
+    header[2].metric("Revision", f"R{analysis.revision_number}")
+    header[3].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
+
+st.divider()
+st.subheader("Kapitel 2 – Ertrag und Rentabilität")
+
+method_rows = [
+    {
+        "Kennzahl": _metric_title(state.metric_id),
+        "Status": METHOD_STATUS[state.status],
+        "Warum": state.reason,
+    }
+    for state in phase_3a_method_states()
+]
+st.dataframe(pd.DataFrame(method_rows), use_container_width=True, hide_index=True)
+
+st.info(
+    "Ein grüner Datenstatus allein entscheidet keine Methodikfrage. ROE, Umsatzrendite, "
+    "Kapitalumschlag, Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die "
+    "verifizierte Buchdefinition. Die EBITDA-Marge wartet zusätzlich auf ein freigegebenes D&A-Feld."
+)
+
+st.divider()
+metric_heading("ebit_margin")
+st.caption(
+    "ASML-V1: `Income from operations / Total net sales`. Revenue und Operating Income haben "
+    "den 2024/2025-Primärquellen-Gate bestanden. Historische Werte verwenden dasselbe "
+    "Alpha-Vantage-Feldmapping; die Validierungsevidenz bezieht sich derzeit auf 2024/2025."
+)
+
+if editable:
+    if st.button("Kennzahlen aus Snapshot berechnen", type="primary"):
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse nicht gefunden.")
+                counts = calculate_and_store_phase_3a(session, current)
+            st.success(
+                f"Berechnung gespeichert: {counts.get('ebit_margin', 0)} Jahreswerte EBIT-Marge. "
+                "Es wurden keine API-Requests verwendet."
+            )
+            st.rerun()
+        except (MetricDataQualityError, AnalysisFrozenError, ValueError) as exc:
+            st.error(str(exc))
+else:
+    st.caption(
+        "Diese Analyse ist eingefroren. Gespeicherte Kennzahlen können angezeigt, aber nicht "
+        "mit einer neueren Berechnungsversion überschrieben werden."
+    )
+
+with get_session() as session:
+    series = load_metric_series(session, analysis_id, "ebit_margin")
+
+if not series:
+    st.warning(
+        "Für diese Analyse ist noch keine EBIT-Margen-Serie gespeichert. Bei einer offenen Analyse "
+        "oben `Kennzahlen aus Snapshot berechnen` wählen."
+    )
+else:
+    values = [float(row.value * 100) for row in series if row.value is not None]
+    years = [int(row.period) for row in series if row.value is not None]
+    data = pd.DataFrame({"Jahr": years, "EBIT-Marge %": values})
+    visible = data.tail(10).copy()
+
+    latest = visible.iloc[-1]["EBIT-Marge %"]
+    last_five = visible.tail(5)["EBIT-Marge %"].tolist()
+    ten_values = visible["EBIT-Marge %"].tolist()
+
+    summary = st.columns(4)
+    summary[0].metric("Aktuell", f"{latest:.2f} %")
+    summary[1].metric("5J Ø", f"{sum(last_five) / len(last_five):.2f} %")
+    summary[2].metric("5J Median", f"{median(last_five):.2f} %")
+    summary[3].metric("10J Median", f"{median(ten_values):.2f} %")
+
+    st.line_chart(visible.set_index("Jahr")["EBIT-Marge %"])
+    st.dataframe(
+        visible.sort_values("Jahr", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "EBIT-Marge %": st.column_config.NumberColumn("EBIT-Marge %", format="%.2f %%")
+        },
+    )
+
+    calculation_versions = sorted({row.calculation_version for row in series})
+    st.caption(
+        "Berechnungsbasis: reported · Berechnungsversion: "
+        + ", ".join(calculation_versions)
+        + " · Standardanzeige: letzte 10 Geschäftsjahre"
+    )
+
+st.divider()
+st.subheader("Noch offene Kennzahlen dieses Kapitels")
+for state in phase_3a_method_states():
+    if state.status == "implemented":
+        continue
+    info = get_metric_info(state.metric_id) or {}
+    chapter = info.get("chapter", "—")
+    kindle = info.get("kindle_page", "—")
+    st.markdown(
+        f"**{_metric_title(state.metric_id)}** — {METHOD_STATUS[state.status]}  "
+        f"\nKapitel {chapter}, Kindle-Seite {kindle}: {state.reason}"
+    )
