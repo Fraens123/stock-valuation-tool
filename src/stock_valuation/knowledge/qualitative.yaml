@@ -1,0 +1,220 @@
+sections:
+  competence:
+    title: "Kompetenzbereich"
+    chapter: "5.1"
+    kindle_page: 182
+    mode: narrative
+    meaning: "Der Nutzer soll erklären können, womit das Unternehmen Geld verdient, welche Produkte und Kundengruppen wirklich wesentlich sind und welche Faktoren das Geschäft treiben."
+    prompts:
+      - id: business_model_summary
+        question: "Wie verdient das Unternehmen sein Geld?"
+        help: "Geschäftsmodell in wenigen eigenen Sätzen beschreiben. Nicht nur die offizielle Unternehmensbeschreibung übernehmen."
+      - id: key_products_services
+        question: "Welche Produkte, Dienstleistungen oder Segmente sind wirtschaftlich entscheidend?"
+        help: "Umsatz-, Ergebnis- und strategische Bedeutung unterscheiden."
+      - id: competence_boundary
+        question: "Liegt das Unternehmen innerhalb des eigenen Kompetenzbereichs?"
+        help: "Nur bewerten, was ausreichend verstanden wird. Unklare technische, regulatorische oder finanzielle Mechanismen ausdrücklich markieren."
+
+  characteristics:
+    title: "Charakteristika"
+    chapter: "5.2"
+    kindle_page: 183
+    mode: narrative
+    meaning: "Strukturelle Eigenschaften des Geschäftsmodells festhalten: Zyklik, Kapitalintensität, Skalierbarkeit, Wiederkehr der Umsätze, Kundenkonzentration und ähnliche Merkmale."
+    prompts:
+      - id: cyclicality
+        question: "Wie zyklisch ist das Geschäft?"
+        help: "Nachfrageabhängigkeit von Konjunktur, Investitionszyklen und Kundenbudgets beschreiben."
+      - id: recurring_revenue
+        question: "Wie planbar und wiederkehrend sind Umsätze und Cashflows?"
+        help: "Service, Abonnements, Verbrauchsmaterial, installierte Basis und langfristige Verträge berücksichtigen."
+      - id: capital_intensity
+        question: "Wie kapitalintensiv ist das Geschäftsmodell?"
+        help: "CAPEX, Working Capital und notwendige Kapazitätserweiterungen mit Wachstum verbinden."
+      - id: customer_concentration
+        question: "Wie stark ist die Abhängigkeit von wenigen Kunden?"
+        help: "Großkunden können Skalenvorteile bringen, aber auch Verhandlungsmacht und Klumpenrisiken erhöhen."
+
+  framework_conditions:
+    title: "Rahmenbedingungen"
+    chapter: "5.3"
+    kindle_page: 189
+    mode: narrative
+    meaning: "Externe Rahmenbedingungen erfassen, die Ertragskraft oder Kapitalbedarf wesentlich verändern können."
+    prompts:
+      - id: regulation
+        question: "Welche regulatorischen Faktoren sind für das Unternehmen wesentlich?"
+        help: "Exportkontrollen, Genehmigungen, Umweltauflagen, Produkthaftung, Subventionen und andere relevante Regeln berücksichtigen."
+      - id: geography
+        question: "Welche geografischen oder geopolitischen Abhängigkeiten bestehen?"
+        help: "Umsatzmärkte, Produktion, Lieferkette und politische Risiken getrennt betrachten."
+      - id: technology_change
+        question: "Welche technologischen Veränderungen können das Geschäftsmodell stärken oder bedrohen?"
+        help: "Nicht nur aktuelle Produkte, sondern mögliche Substitution und Innovationszyklen berücksichtigen."
+
+  information_sources:
+    title: "Informationsbeschaffung"
+    chapter: "5.4"
+    kindle_page: 190
+    mode: sources
+    meaning: "Eine Analyse muss nachvollziehbar auf Primär- und Sekundärquellen gestützt sein. Quellen werden pro Analyse-Snapshot gespeichert."
+    prompts:
+      - id: annual_reports
+        question: "Welche Geschäftsberichte und Quartalsberichte wurden geprüft?"
+        help: "Primärquellen bevorzugen und Berichtsjahr festhalten."
+      - id: investor_material
+        question: "Welche Guidance, Investor-Day-Unterlagen und Präsentationen wurden verwendet?"
+        help: "Management-Ziele getrennt von Analystenschätzungen speichern."
+      - id: external_sources
+        question: "Welche externen Quellen wurden zur Plausibilisierung verwendet?"
+        help: "Datenprovider, Branchenberichte und Aktienfinder klar kennzeichnen."
+
+  industry_structure:
+    title: "Branchenstrukturanalyse"
+    chapter: "5.5"
+    kindle_page: 192
+    mode: analysis
+    meaning: "Wettbewerbsstruktur und ökonomische Kräfte der Branche systematisch analysieren. Die fünf Porter-Kräfte werden zusätzlich im Fair-KGV-Block als begründete Bewertung verwendet."
+    prompts:
+      - id: industry_growth
+        question: "Wie wächst der relevante Markt langfristig?"
+        help: "TAM-Prognosen nicht unkritisch übernehmen; tatsächlichen adressierbaren Markt und Wettbewerb berücksichtigen."
+      - id: industry_profitability
+        question: "Wie attraktiv ist die Branchenökonomie?"
+        help: "Margen, Kapitalrenditen und Preissetzungsmacht der Branche betrachten."
+
+  swot:
+    title: "SWOT-Analyse"
+    chapter: "5.6"
+    kindle_page: 195
+    mode: swot
+    meaning: "Stärken und Schwächen des Unternehmens sowie externe Chancen und Risiken strukturiert dokumentieren."
+    prompts:
+      - id: strengths
+        question: "Stärken"
+        help: "Interne nachhaltige Vorteile und besondere Ressourcen."
+      - id: weaknesses
+        question: "Schwächen"
+        help: "Interne strukturelle Nachteile oder Abhängigkeiten."
+      - id: opportunities
+        question: "Chancen"
+        help: "Externe Entwicklungen, die Wertschöpfung verbessern können."
+      - id: threats
+        question: "Risiken"
+        help: "Externe Entwicklungen, die die Investmentthese gefährden können."
+
+  bcg:
+    title: "BCG-Analyse"
+    chapter: "5.7"
+    kindle_page: 197
+    mode: optional
+    meaning: "Optionale Portfolioanalyse für Unternehmen mit mehreren deutlich unterschiedlichen Geschäftsbereichen."
+    prompts:
+      - id: portfolio_relevance
+        question: "Ist eine BCG-/Portfolioanalyse für dieses Unternehmen sinnvoll?"
+        help: "Bei einem fokussierten Einproduktunternehmen kann dieser Abschnitt bewusst als nicht anwendbar markiert werden."
+
+  competitive_strategy:
+    title: "Wettbewerbsstrategie"
+    chapter: "5.8"
+    kindle_page: 205
+    mode: narrative
+    meaning: "Beschreibt, wodurch das Unternehmen gegenüber Wettbewerbern dauerhaft Wert schaffen will."
+    prompts:
+      - id: differentiation
+        question: "Wodurch differenziert sich das Unternehmen?"
+        help: "Technologie, Marke, Service, Netzwerkeffekte, Kosten, Qualität, Switching Costs oder andere Faktoren."
+      - id: moat_durability
+        question: "Wie dauerhaft sind die Wettbewerbsvorteile?"
+        help: "Nicht nur aktuelle Marktanteile bewerten, sondern Replizierbarkeit und Veränderungsrisiko."
+      - id: pricing_power
+        question: "Wie stark ist die Preissetzungsmacht?"
+        help: "Margenstabilität, Preiserhöhungen und Kundennutzen als Evidenz verwenden."
+
+  management:
+    title: "Management"
+    chapter: "5.9"
+    kindle_page: 206
+    mode: assessment
+    meaning: "Managementqualität anhand Kapitalallokation, Kommunikation, Anreizsystemen und langfristiger Wertorientierung beurteilen."
+    prompts:
+      - id: capital_allocation
+        question: "Wie gut ist die Kapitalallokation?"
+        help: "Investitionen, Akquisitionen, Dividenden, Rückkäufe und Bilanzpolitik über mehrere Jahre betrachten."
+      - id: communication
+        question: "Wie transparent und verlässlich kommuniziert das Management?"
+        help: "Vergleichen, ob frühere Ziele und Guidance eingehalten oder nachvollziehbar angepasst wurden."
+      - id: incentives
+        question: "Sind Managementanreize mit langfristigem Aktionärswert vereinbar?"
+        help: "Vergütung, Aktienbesitz und Zielgrößen prüfen."
+
+fair_pe_criteria:
+  financial_stability:
+    title: "Finanzielle Stabilität"
+    book_context: "8.2.1"
+    kindle_page: 351
+    source_excel: "Krones!A585:B594"
+    evidence_metrics: [gearing, dynamic_debt_ratio, equity_ratio, free_cash_flow]
+    scoring_status: "validate_against_book"
+    meaning: "Bewertet, wie robust Bilanz und Cashflows sind und wie viel finanzieller Spielraum bei schwächerer Geschäftsentwicklung besteht."
+
+  market_position:
+    title: "Marktposition"
+    book_context: "8.2.1"
+    kindle_page: 351
+    source_excel: "Krones!A596:B627"
+    scoring_status: "validate_against_book"
+    meaning: "Die Marktposition wird im bestehenden Excel über Porters fünf Kräfte strukturiert. Jede Punktevergabe benötigt künftig Begründung und Quelle."
+    porter_forces:
+      - id: rivalry
+        title: "Rivalität unter bestehenden Wettbewerbern"
+        excel_cell: "B605"
+        evidence_metrics: [ebit_margin, return_on_sales, roa]
+        help: "Wettbewerbsintensität, Preisdisziplin, Produktdifferenzierung und Marktstruktur beurteilen."
+      - id: new_entrants
+        title: "Bedrohung durch neue Anbieter"
+        excel_cell: "B610"
+        help: "Markteintrittsbarrieren wie Know-how, Skaleneffekte, Marke, Kundenbeziehung und Kapitalbedarf prüfen."
+      - id: supplier_power
+        title: "Verhandlungsstärke der Lieferanten"
+        excel_cell: "B615"
+        help: "Abhängigkeit von knappen oder einzigartigen Zulieferern und mögliche Alternativen bewerten."
+      - id: customer_power
+        title: "Verhandlungsstärke der Abnehmer"
+        excel_cell: "B620"
+        help: "Kundenkonzentration, Switching Costs und Produktdifferenzierung beurteilen."
+      - id: substitutes
+        title: "Bedrohung durch Ersatzprodukte"
+        excel_cell: "B624"
+        help: "Technologische oder wirtschaftliche Alternativen untersuchen, die Preissetzungsmacht begrenzen können."
+
+  profitability:
+    title: "Rentabilität"
+    book_context: "8.2.1"
+    kindle_page: 351
+    source_excel: "Krones!A629:B647"
+    evidence_metrics: [roe, equity_ratio, capex_ratio, asset_coverage_i]
+    scoring_status: "validate_unlevered_equity_logic"
+    meaning: "Bewertet die nachhaltige Kapitalrentabilität unter Berücksichtigung der für das Geschäftsmodell notwendigen Kapitalbasis."
+
+  growth:
+    title: "Wachstum"
+    book_context: "8.2.1"
+    kindle_page: 351
+    source_excel: "Krones!A649:B669"
+    evidence_metrics: [revenue_growth, net_income_growth, eps_growth, free_cash_flow, capex_ratio]
+    scoring_status: "validate_against_book"
+    meaning: "Wachstum erhöht Wert nur, wenn es wirtschaftlich rentabel und finanzierbar ist. Deshalb werden Umsatz, Gewinn, EPS, Cashflow, Working Capital und Investitionsbedarf gemeinsam betrachtet."
+
+  individuality:
+    title: "Individualität"
+    book_context: "8.2.1"
+    kindle_page: 351
+    source_excel: "Krones!A671:B676"
+    scoring_status: "validate_against_book"
+    meaning: "Erfasst besondere unternehmensspezifische Eigenschaften, die von den übrigen Kategorien nicht ausreichend abgebildet werden."
+    examples:
+      - "besonders gut planbare Gewinnentwicklung / langfristige Verträge"
+      - "operativ nicht benötigte überschüssige Cashreserven"
+      - "andere klar begründete, nicht doppelt gezählte Besonderheiten"
