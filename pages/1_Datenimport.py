@@ -92,9 +92,8 @@ provider_choice = st.radio(
 if provider_choice == "Alpha Vantage":
     st.write(
         "Ein vollständiger Import verwendet vier getrennte Requests: GuV, Bilanz, Cashflow "
-        "und Analystenschätzungen. Der Provider wartet im Free-Tier automatisch mindestens "
-        "1,1 Sekunden zwischen Requests, damit das 1-Request-pro-Sekunde-Burst-Limit nicht "
-        "überschritten wird. Das Tageslimit von 25 Requests bleibt davon unabhängig."
+        "und Analystenschätzungen. Der Provider wartet im Free-Tier konservativ mindestens "
+        "2 Sekunden zwischen Requests. Das Tageslimit von 25 Requests bleibt davon unabhängig."
     )
     api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
     if api_key_available:
@@ -111,6 +110,39 @@ if provider_choice == "Alpha Vantage":
         help="Für die ASML-Aktie in Amsterdam verwenden wir beim Test `ASML.AMS`.",
     )
 
+    st.markdown("#### Verbindungstest")
+    st.caption(
+        "Dieser Test verwendet genau **einen** API-Request (`INCOME_STATEMENT`) und speichert "
+        "noch keine Daten. Erst wenn dieser Test erfolgreich ist, sollte der vollständige "
+        "4-Request-Import gestartet werden."
+    )
+    if st.button(
+        "Alpha Vantage testen (1 Request)",
+        disabled=not api_key_available,
+    ):
+        try:
+            provider = AlphaVantageProvider()
+            with st.spinner(f"Teste INCOME_STATEMENT für {alpha_symbol} …"):
+                result = provider.probe_income_statement(alpha_symbol)
+            st.success(
+                "Einzeltest erfolgreich: "
+                f"{result['annual_report_count']} Jahresberichte und "
+                f"{result['quarterly_report_count']} Quartalsberichte wurden vom Endpoint erkannt."
+            )
+            st.session_state["alpha_probe_ok"] = True
+        except ProviderError as exc:
+            st.session_state["alpha_probe_ok"] = False
+            st.error(str(exc))
+            st.info(
+                "Wenn bereits dieser einzelne Request dieselbe Limitmeldung liefert, liegt das "
+                "Problem nicht an den Abständen innerhalb unseres 4-Request-Imports. Dann heute "
+                "keine weiteren Alpha-Vantage-Requests verbrauchen und den Einzeltest später bzw. "
+                "nach Rücksetzung des Tageslimits erneut ausführen."
+            )
+        except Exception as exc:
+            st.session_state["alpha_probe_ok"] = False
+            st.exception(exc)
+
     if not editable:
         st.info(
             "Diese Analyse ist abgeschlossen/archiviert und eingefroren. "
@@ -120,6 +152,10 @@ if provider_choice == "Alpha Vantage":
         "Alpha-Vantage-Finanzdaten und Schätzungen aktualisieren",
         type="primary",
         disabled=not api_key_available,
+        help=(
+            "Bitte zuerst den 1-Request-Verbindungstest ausführen. Der vollständige Import "
+            "benötigt vier API-Requests."
+        ),
     ):
         try:
             provider = AlphaVantageProvider()
@@ -145,9 +181,8 @@ if provider_choice == "Alpha Vantage":
         except (ValueError, AnalysisFrozenError, ProviderError) as exc:
             st.error(str(exc))
             st.caption(
-                "Wenn Alpha Vantage weiterhin die Free-Tier-Limitmeldung zeigt, "
-                "ist möglicherweise das Tageskontingent bereits aufgebraucht. Dann nicht "
-                "weiter klicken, sondern am nächsten Kalendertag erneut testen."
+                "Bei einer Limitmeldung nicht mehrfach erneut klicken. Zuerst den einzelnen "
+                "Verbindungstest verwenden, damit wir das Tageskontingent nicht unnötig verbrauchen."
             )
         except Exception as exc:
             st.exception(exc)
