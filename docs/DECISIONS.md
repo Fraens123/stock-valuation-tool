@@ -63,16 +63,9 @@ Offizielle Primärquellenwerte dürfen als **eigene, separat gespeicherte Quelle
 Für die erste Phase-3A-Kennzahl wird bei ASML das gegen die Primärquelle validierte Feld `operating_income` (`Income from operations`) als operative EBIT-Basis verwendet und durch `revenue` dividiert. Diese provider-/unternehmensspezifische Zuordnung ist keine universelle Definition für andere Unternehmen; dort muss die EBIT-Semantik erneut geprüft werden.
 
 ## D-013 — Hybride Quellenstrategie für Fundamentaldaten
-**Status:** Accepted
+**Status:** Accepted; Prioritätsdetails durch D-016 präzisiert
 
 V1 verwendet keine Annahme, dass ein einzelner Drittanbieter sämtliche Finanzzeilen korrekt normalisiert.
-
-Quellenpriorität für einen konkreten Rohdatenwert:
-
-1. offizielle Unternehmens-/Primärquelle, wenn deterministisch importiert und fachlich eindeutig zugeordnet;
-2. feldweise validierter API-Provider, aktuell Alpha Vantage;
-3. weitere API-/Cross-Check-Quelle;
-4. expliziter manueller Override, wenn die Anwendung dies für den jeweiligen Datentyp vorsieht.
 
 Für ASML werden die offiziellen 2025-US-GAAP-Financial-Statements als eigene Quelle `asml_primary` gespeichert. Alpha-Vantage-Werte bleiben parallel im Snapshot. Der Daten-Gate bevorzugt für dasselbe Feld/Jahr `asml_primary`, ohne den Fallback-Wert zu löschen.
 
@@ -100,3 +93,35 @@ Der ASML-XLSX-Parser bleibt ein Referenzadapter. Für breite Abdeckung werden ge
 3. generischer IR-Dokumentimport als Fallback.
 
 `sec_companyfacts` ist als offizielle Primärquelle in der zentralen Source-Resolution höher priorisiert als Alpha Vantage. Alpha-Vantage-Daten bleiben parallel gespeichert und auditierbar.
+
+## D-016 — Preferred Data ist die einzige Berechnungsbasis
+**Status:** Accepted
+
+Die Anwendung trennt ab sofort zwei Ebenen:
+
+1. **Source Resolution:** Welcher gespeicherte Wert ist für ein Feld/Jahr der bevorzugte Wert?
+2. **Calculation Readiness:** Darf dieser bevorzugte Wert tatsächlich in Kennzahlen und später in Bewertungen eingehen?
+
+Quellenpriorität bei identischem Feld/Jahr:
+
+1. vom Nutzer bestätigter `manual_override`,
+2. eindeutig gemappte offizielle Primärquelle (`asml_primary`, `sec_companyfacts`, ESEF/iXBRL),
+3. Alpha Vantage als Provider-Fallback,
+4. weitere Provider-Fallbacks.
+
+Ein Provider-Fallback wird **nicht allein durch seine Position in der Quellenpriorität berechnungsbereit**. Berechnungsbereit sind nur:
+
+- bestätigte Overrides,
+- eindeutig gemappte Primärquellenwerte,
+- Providerwerte mit explizitem Primärquellen-PASS aus der ChatGPT-Dateiprüfung,
+- der bestehende ASML-Referenzgate als Legacy-Primärquellenvalidierung.
+
+`WARN`, `FAIL`, `UNKLAR`, veraltete Reviews und ungeprüfte Providerwerte bleiben gespeichert, sind aber für Downstream-Berechnungen gesperrt.
+
+Fertiges Provider-EBITDA ist kein autoritativer Raw Input. EBITDA wird für Kennzahlen aus freigegebenem EBIT und sauber definiertem D&A selbst berechnet. Bei Unternehmen außerhalb des ASML-Referenzfalls wird `operating_income` nicht still mit EBIT gleichgesetzt; dort ist das freigegebene interne `ebit` die EBIT-Basis.
+
+Interne Feldsemantik wird zentral dokumentiert. Insbesondere:
+
+- `ppe_net` schließt separat ausgewiesene Operating-Lease-ROU-Assets aus,
+- `short_term_debt` umfasst zinstragende Schulden mit Fälligkeit <= 12 Monate einschließlich Current Portion of Long-Term Debt,
+- `depreciation_amortization` umfasst reine Abschreibung + Amortisation und nicht automatisch zusätzliche `and other`-Posten.
