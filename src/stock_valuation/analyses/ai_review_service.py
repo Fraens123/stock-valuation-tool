@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 from stock_valuation.analyses.input_service import upsert_manual_financial_override
 from stock_valuation.analyses.service import ensure_editable
 from stock_valuation.data.audit import run_deterministic_audit
+from stock_valuation.data.preferred_data import FIELD_DEFINITIONS
 from stock_valuation.data.resolution import load_preferred_financial_facts
 from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot
@@ -70,6 +71,8 @@ def _review_facts(
 
 
 def _package_payload(analysis: Analysis, facts: list[FinancialFactSnapshot], years: int) -> dict[str, Any]:
+    # Keep this payload limited to snapshot identity/data. The package_id therefore remains stable
+    # when explanatory review instructions improve, while still changing whenever snapshot facts do.
     return {
         "schema_version": REVIEW_SCHEMA_VERSION,
         "analysis": {
@@ -115,7 +118,8 @@ def build_chatgpt_review_package(
     """Build a self-contained Markdown package for review in the normal ChatGPT product.
 
     No external API call is performed. The package contains the selected stored facts, internal
-    consistency checks, a strict research brief and the exact JSON schema to return to the app.
+    consistency checks, internal field semantics, a strict research brief and the exact JSON schema
+    to return to the app.
     """
     years = max(1, int(years))
     facts = _review_facts(session, analysis, years)
@@ -137,6 +141,12 @@ def build_chatgpt_review_package(
     )
 
     fact_json = json.dumps(payload["facts"], ensure_ascii=False, indent=2)
+    relevant_definitions = {
+        metric: FIELD_DEFINITIONS[metric]
+        for metric in sorted({fact.metric for fact in facts})
+        if metric in FIELD_DEFINITIONS
+    }
+    definition_json = json.dumps(relevant_definitions, ensure_ascii=False, indent=2)
     check_json = json.dumps(
         [
             {
@@ -182,7 +192,7 @@ Die JSON-Datei wird anschließend in das lokale Aktienanalyse-Tool zurückgelade
 3. Sekundärquellen dürfen nur zur Orientierung dienen und niemals allein eine Korrektur begründen.
 4. Prüfe Geschäftsjahr, Berichtswährung, Einheit, Rechnungslegungsstandard und Konsolidierungskreis.
 5. Verwechsle keine Quartalswerte mit Jahreswerten.
-6. Providerfelder können semantisch breiter oder enger sein als die offizielle Abschlusszeile. Wenn die Definition nicht identisch ist: `UNKLAR` oder `FAIL` mit Erklärung, nicht gewaltsam gleichsetzen.
+6. Providerfelder können semantisch breiter oder enger sein als die offizielle Abschlusszeile. Die unten angegebenen **internen Felddefinitionen sind verbindlich**. Wenn die Definition nicht identisch ist: `UNKLAR` oder `FAIL` mit Erklärung, nicht gewaltsam gleichsetzen.
 7. Beachte Restatements. Verwende die am Analyse-Stichtag maßgebliche veröffentlichte Zahl, soweit eindeutig feststellbar.
 8. `official_value` muss immer in derselben Basiseinheit wie der importierte Wert stehen. Beispiel: 281724000000 statt 281724 Mio.
 9. Wenn keine belastbare Primärquelle gefunden wird: `official_value=null`, `status=UNKLAR`.
@@ -196,6 +206,14 @@ Die JSON-Datei wird anschließend in das lokale Aktienanalyse-Tool zurückgelade
 13. Gib **genau einen Finding-Eintrag für jeden `fact_id`** zurück und erfinde keine zusätzlichen IDs.
 14. Die Felder `package_id`, `schema_version`, `years_requested` und die Unternehmensidentität müssen unverändert übernommen werden.
 15. Erstelle am Ende die JSON-Datei zum Herunterladen. Kein Markdown in der JSON-Datei.
+
+## Verbindliche interne Felddefinitionen
+
+Diese Definitionen legen fest, welchen wirtschaftlichen Sachverhalt unser internes Feld meint. Ein Providerwert darf nur `PASS` sein, wenn er **dieselbe Semantik** besitzt.
+
+```json
+{definition_json}
+```
 
 ## Erwartetes Ergebnisformat
 
