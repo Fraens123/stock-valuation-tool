@@ -79,11 +79,14 @@ def validate_asml_primary_source(
     provider: str = "alphavantage",
     references: tuple[PrimarySourceReference, ...] = ASML_US_GAAP_REFERENCES,
 ) -> list[ValidationResult]:
-    """Compare persisted ASML provider facts with official historical US-GAAP controls.
+    """Validate the best available ASML snapshot source against official controls.
 
-    The reference values are validation-only. They never fill, overwrite, or normalize
-    provider facts. A mismatch therefore remains visible and must be resolved in the
-    provider mapping before downstream metrics rely on that field.
+    Source priority for each metric/year is deliberately explicit:
+    1. `asml_primary` facts imported from ASML's official workbook;
+    2. the supplied fallback provider, currently Alpha Vantage.
+
+    The fallback fact is never deleted when a primary-source fact exists. This keeps the
+    original provider result auditable while downstream gates use the authoritative source.
     """
     if analysis.company.ticker.upper() != "ASML":
         return []
@@ -91,23 +94,37 @@ def validate_asml_primary_source(
     facts = session.scalars(
         select(FinancialFactSnapshot).where(
             FinancialFactSnapshot.analysis_id == analysis.id,
-            FinancialFactSnapshot.provider == provider,
+            FinancialFactSnapshot.provider.in_(("asml_primary", provider)),
             FinancialFactSnapshot.period_type == "FY",
         )
     ).all()
-    indexed = {(fact.metric, fact.period_end): fact for fact in facts}
+
+    fallback_index: dict[tuple[str, object], FinancialFactSnapshot] = {}
+    primary_index: dict[tuple[str, object], FinancialFactSnapshot] = {}
+    for fact in facts:
+        key = (fact.metric, fact.period_end)
+        if fact.provider == "asml_primary":
+            primary_index[key] = fact
+        elif fact.provider == provider:
+            fallback_index[key] = fact
 
     results: list[ValidationResult] = []
     for reference in references:
-        fact = indexed.get((reference.metric, reference.period_end))
+        key = (reference.metric, reference.period_end)
+        fact = primary_index.get(key) or fallback_index.get(key)
+        selected_provider = fact.provider if fact is not None else provider
         provider_value = fact.value if fact is not None else None
         status, relative = _status(provider_value, reference.value)
+        source_note = reference.note
+        if fact is not None and fact.provider == "asml_primary":
+            priority_note = "Authoritative ASML primary-source fact selected over fallback provider."
+            source_note = f"{source_note} {priority_note}" if source_note else priority_note
         results.append(
             ValidationResult(
                 metric=reference.metric,
                 period=str(reference.period_end.year),
                 label=reference.label,
-                provider=provider,
+                provider=selected_provider,
                 provider_value=provider_value,
                 reference_value=reference.value,
                 relative_difference=relative,
@@ -115,7 +132,7 @@ def validate_asml_primary_source(
                 critical=reference.critical,
                 provider_field=fact.provider_field if fact is not None else None,
                 source_url=reference.source_url,
-                note=reference.note,
+                note=source_note,
             )
         )
     return results
@@ -140,12 +157,6 @@ def validation_summary(results: list[ValidationResult]) -> dict[str, int | bool]
 
 
 def metric_validation_gates(results: list[ValidationResult]) -> list[MetricValidationGate]:
-    """Create a field-level trust decision from the available primary-source checks.
-
-    A metric is only `approved` if every checked reference row is a PASS. WARN keeps the
-    field in review. Any FAIL or MISSING blocks the field. This prevents one good year
-    from masking an inconsistent provider mapping in another year.
-    """
     grouped: dict[str, list[ValidationResult]] = defaultdict(list)
     for row in results:
         grouped[row.metric].append(row)
@@ -169,7 +180,9 @@ def metric_validation_gates(results: list[ValidationResult]) -> list[MetricValid
             reason = f"{warn_count} WARN in {len(rows)} Primärquellen-Checks"
         elif rows and pass_count == len(rows):
             status = "approved"
-            reason = f"{pass_count}/{len(rows)} Primärquellen-Checks PASS"
+            primary_count = sum(row.provider == "asml_primary" for row in rows)
+            suffix = f"; davon {primary_count} direkt aus ASML" if primary_count else ""
+            reason = f"{pass_count}/{len(rows)} Primärquellen-Checks PASS{suffix}"
         else:
             status = "review"
             reason = "Zu wenig Evidenz für eine Freigabe"
@@ -193,11 +206,6 @@ def metric_validation_gates(results: list[ValidationResult]) -> list[MetricValid
 def phase_3a_data_readiness(
     gates: list[MetricValidationGate],
 ) -> list[dict[str, str | bool]]:
-    """Show whether the validated raw-data basis is ready for Phase 3A metrics.
-
-    This is only a data-quality gate. It does not approve formulas that are still marked
-    as methodology questions in the project documentation.
-    """
     by_metric = {gate.metric: gate for gate in gates}
     rows: list[dict[str, str | bool]] = []
     for label, required_metrics in PHASE_3A_DATA_REQUIREMENTS.items():
