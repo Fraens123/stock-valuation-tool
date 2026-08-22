@@ -2,51 +2,71 @@
 
 Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur klar abgegrenzte Blöcke daraus bearbeiten.
 
-## Phase 0 — Application Foundation
+## Phase 0 — Application Foundation ✅
 
 ### 0.1 Projektgrundlage
 - [x] Repository anlegen
 - [x] `AGENTS.md` anlegen
 - [x] Gesamt-Roadmap definieren
-- [ ] Python-Projektstruktur anlegen
-- [ ] `.gitignore`, `.env.example`, `pyproject.toml`
-- [ ] Basistests / Ruff-Konfiguration
+- [x] Python-Projektstruktur anlegen
+- [x] `.gitignore`, `.env.example`, `pyproject.toml`
+- [x] Basistests / Ruff-Konfiguration
 
 ### 0.2 Unternehmen
-- [ ] Company-Domainmodell
-- [ ] Felder: Name, Ticker, ISIN, Börse, Land, Währung, Sektor, Provider-Symbol
-- [ ] Unternehmenssuche als Provider-Interface
-- [ ] ASML als Referenzunternehmen
-- [ ] spätere Unterstützung mehrerer Listings berücksichtigen
+- [x] Company-Domainmodell
+- [x] Felder: Name, Ticker, ISIN, Börse, Land, Währung, Sektor, Provider-Symbol
+- [x] Unternehmenssuche als Provider-Interface vorbereiten
+- [x] lokale Phase-0-Suche implementieren
+- [x] ASML als Referenzunternehmen
+- [x] spätere Unterstützung mehrerer Listings in der Provider-Architektur berücksichtigen
+- [ ] produktive externe Unternehmenssuche anbinden → **Phase 2**
 
 ### 0.3 Analyse-Lifecycle
-- [ ] Analyse erstellen
-- [ ] Analyse öffnen
-- [ ] Status: Draft / In Progress / Completed / Archived
-- [ ] Revisionsnummer
-- [ ] vorherige Revision verknüpfen
-- [ ] abgeschlossene Revision einfrieren
-- [ ] neue Revision aus älterer Analyse erzeugen
-- [ ] persönliche Kommentare und qualitative Einschätzungen bewusst übernehmen
-- [ ] aktuelle Markt-/API-Daten neu laden
+- [x] Analyse erstellen
+- [x] Analyse öffnen
+- [x] Status: Draft / In Progress / Completed / Archived im Domainmodell
+- [x] Revisionsnummer
+- [x] vorherige Revision verknüpfen
+- [x] abgeschlossene Revision einfrieren
+- [x] neue Revision aus älterer Analyse erzeugen
+- [x] qualitative Einschätzungen optional als Ausgangspunkt übernehmen
+- [x] Bewertungsannahmen optional als Ausgangspunkt übernehmen
+- [x] Markt-/Finanzdaten bewusst **nicht** in neue Revision kopieren
+- [ ] aktuelle Markt-/API-Daten neu laden → **Phase 2**
 
 ### 0.4 Persistenz
-- [ ] SQLite V1
-- [ ] SQLAlchemy Models
-- [ ] Repository/Service Layer
-- [ ] Datenbankdatei in `.gitignore`
-- [ ] Schema so gestalten, dass PostgreSQL später möglich ist
+- [x] SQLite V1
+- [x] SQLAlchemy Models
+- [x] Service Layer
+- [x] Datenbankdatei in `.gitignore`
+- [x] private Excel-Referenzdateien in `.gitignore`
+- [x] Schema so gestalten, dass PostgreSQL später möglich ist
 
 ### 0.5 Vergleichssystem
-- [ ] zwei Analysen eines Unternehmens auswählen
-- [ ] Fundamentaldaten-Diff
-- [ ] Estimates-/Guidance-Diff
-- [ ] Bewertungsannahmen-Diff
-- [ ] qualitative Einschätzungen-Diff
-- [ ] Fair-Value-/DCF-Diff
-- [ ] Änderungen nach Kategorien hervorheben
+- [x] zwei Analysen eines Unternehmens auswählen
+- [x] Fundamentaldaten-Diff vorbereiten/implementieren
+- [x] Estimates-/Guidance-Diff
+- [x] Bewertungsannahmen-Diff
+- [x] qualitative Einschätzungen-Diff
+- [x] Fair-Value-/Bewertungsergebnis-Diff
+- [x] Änderungen nach Kategorien darstellen
 
-**Definition of Done Phase 0:** ASML kann als Unternehmen angelegt werden; mehrere Analyse-Revisionen können lokal gespeichert, geöffnet und miteinander verglichen werden.
+### 0.6 PDF-Snapshot-Prototyp
+- [x] PDF aus gewähltem Snapshot erzeugen
+- [x] PDF-Download in Streamlit
+- [x] Dateiname mit Ticker, Stichtag und Revision
+- [x] keine Live-Daten beim erneuten Export alter Analysen
+- [ ] vollständiger Kurz-/Vollreport → **Phase 13**
+
+### 0.7 Phase-0-Qualität
+- [x] Lifecycle-/Freeze-Tests
+- [x] Revisionstest
+- [x] Vergleichstest
+- [x] Company-Suchtest
+- [x] PDF-Test
+- [x] manueller Acceptance-Test dokumentiert (`docs/PHASE_0_ACCEPTANCE.md`)
+
+**Definition of Done Phase 0:** ASML kann als Unternehmen angelegt werden; mehrere Analyse-Revisionen können lokal gespeichert, geöffnet, eingefroren, revisioniert, miteinander verglichen und als einfacher reproduzierbarer PDF-Snapshot exportiert werden.
 
 ---
 
@@ -322,16 +342,17 @@ Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur
 
 ## Phase 12 — Streamlit UX
 
-- [ ] Startseite mit Aktiensuche
-- [ ] Neue Analyse / Analyse öffnen / Vergleich
-- [ ] zuletzt bearbeitete Analysen
+- [x] Startseite mit lokaler ASML-Suche als Phase-0-Basis
+- [x] Neue Analyse / Analyse öffnen / Vergleich als Phase-0-Basis
+- [x] zuletzt bearbeitete Analysen als Phase-0-Basis
+- [ ] produktive Unternehmenssuche
 - [ ] Kapitel-Navigation
 - [ ] `ⓘ` Popover überall
 - [ ] Historiencharts
 - [ ] manuelle Eingabezentrale
 - [ ] Szenarioeditor
-- [ ] Investmentthese und Risiken
-- [ ] Änderungsansicht zwischen Revisionen
+- [ ] Investmentthese und Risiken als strukturierte Formulare
+- [ ] erweiterte Änderungsansicht zwischen Revisionen
 - [ ] Datenquellenanzeige
 
 ---
@@ -360,9 +381,10 @@ Diese Roadmap ist die verbindliche Entwicklungsreihenfolge. Codex soll immer nur
 - [ ] Quellen / Methodik
 
 ### Reproduzierbarkeit
-- [ ] Report ausschließlich aus gewähltem Analyse-Snapshot erzeugen
-- [ ] alte Analyse darf nie mit heutigen Daten vermischt werden
-- [ ] PDF-Dateiname enthält Unternehmen, Stichtag und Revision
+- [x] Report-Grundprinzip: ausschließlich aus gewähltem Analyse-Snapshot
+- [x] alte Analyse darf im Prototyp nicht mit heutigen Daten vermischt werden
+- [x] PDF-Dateiname enthält Unternehmen/Ticker, Stichtag und Revision
+- [ ] vollständige Report-Inhalte
 
 ---
 
