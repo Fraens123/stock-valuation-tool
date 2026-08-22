@@ -1,52 +1,1088 @@
 metrics:
   roe:
+    group: profitability
     title_de: "Eigenkapitalrendite"
     title_en: "Return on Equity (ROE)"
     chapter: "2.1"
     kindle_page: 94
-    definition: "Verhältnis des den Eigenkapitalgebern zurechenbaren Jahresergebnisses zum durchschnittlich eingesetzten Eigenkapital."
-    formula: "Net Income / durchschnittliches Eigenkapital"
-    meaning: "Zeigt, wie rentabel das Unternehmen das Eigenkapital der Eigentümer einsetzt."
-    interpretation: "Eine hohe und über mehrere Jahre stabile Eigenkapitalrendite kann auf ein wirtschaftlich starkes Geschäftsmodell hindeuten. Sie muss gemeinsam mit Verschuldung, Eigenkapitalquote und Kapitalintensität beurteilt werden."
-    pitfalls:
-      - "Hohe Verschuldung kann die Eigenkapitalrendite über den Leverage-Effekt erhöhen."
-      - "Einmaleffekte im Jahresergebnis verzerren die Kennzahl."
-      - "Aktienrückkäufe können das ausgewiesene Eigenkapital reduzieren und dadurch die Kennzahl erhöhen."
-    related:
-      - "Eigenkapitalquote"
-      - "Gearing"
-      - "ROCE"
+    status: adjust_verify_book
+    excel_location: "Krones!I3:M8"
+    excel_formula: "Net Income / year-end Equity (Excel: B17/B63)"
+    target_formula: "Net Income / durchschnittliches Eigenkapital; genaue Buchdefinition gegen S. 94 verifizieren"
+    raw_data: [net_income, total_equity]
+    definition: "Rendite, die das Unternehmen auf das den Eigentümern zurechenbare Eigenkapital erwirtschaftet."
+    meaning: "Die Eigenkapitalrendite verbindet den Gewinn mit dem Kapital, das den Aktionären bilanziell zuzurechnen ist. Sie ist besonders nützlich, um die Ertragskraft des Eigenkapitals über mehrere Jahre zu beurteilen."
+    interpretation: "Hohe und stabile Werte können auf ein starkes Geschäftsmodell hindeuten. Eine hohe ROE allein ist jedoch kein Qualitätsbeweis, weil Fremdkapital und ein stark reduziertes Eigenkapital die Kennzahl nach oben treiben können."
+    pitfalls: ["Leverage kann ROE künstlich erhöhen.", "Sondereffekte im Gewinn verzerren.", "Aktienrückkäufe können das Eigenkapital reduzieren."]
+    related: [equity_ratio, gearing, roce]
+
+  return_on_sales:
+    group: profitability
+    title_de: "Umsatzrendite"
+    title_en: "Return on Sales"
+    chapter: "2.2"
+    kindle_page: 101
+    status: keep_verify_book
+    excel_location: "Krones!I15:M20"
+    excel_formula: "Net Income attributable to shareholders / Revenue (Excel: B18/B2)"
+    target_formula: "Jahresüberschuss / Umsatz; Zählerdefinition gegen Buch verifizieren"
+    raw_data: [revenue, net_income_attributable]
+    definition: "Anteil des Umsatzes, der nach den berücksichtigten Aufwendungen als Ergebnis verbleibt."
+    meaning: "Zeigt, wie viel Ergebnis pro Einheit Umsatz erwirtschaftet wird und gibt Hinweise auf Preissetzungsmacht, Kostenstruktur und Wettbewerbsintensität."
+    interpretation: "Eine über lange Zeit hohe oder steigende Umsatzrendite ist häufig ein positives Signal. Entscheidend sind Stabilität, Branchenvergleich und die Ursache der Margenentwicklung."
+    pitfalls: ["Branchen haben strukturell sehr unterschiedliche Margen.", "Einmalige Erträge/Aufwendungen verzerren."]
+    related: [ebit_margin, roa, fair_pe]
+
+  ebit_margin:
+    group: profitability
+    title_de: "EBIT-Marge"
+    title_en: "EBIT Margin"
+    chapter: "2.3"
+    kindle_page: 105
+    status: keep
+    excel_location: "Krones!I27:M32"
+    excel_formula: "EBIT / Revenue (Excel: B12/B2)"
+    target_formula: "EBIT / Umsatz"
+    raw_data: [revenue, ebit]
+    definition: "Operatives Ergebnis vor Zinsen und Steuern im Verhältnis zum Umsatz."
+    meaning: "Misst die operative Profitabilität weitgehend unabhängig von Kapitalstruktur und Steuerumfeld."
+    interpretation: "Stabile oder steigende EBIT-Margen sprechen für belastbare operative Ertragskraft; Margendruck kann auf Wettbewerb, Kostenprobleme oder Zyklik hinweisen."
+    pitfalls: ["Sondereffekte im EBIT normalisieren.", "Bilanzierungsunterschiede können Vergleiche beeinflussen."]
+    related: [ebitda_margin, return_on_sales, ev_ebit]
+
+  ebitda_margin:
+    group: profitability
+    title_de: "EBITDA-Marge"
+    title_en: "EBITDA Margin"
+    chapter: "2.3"
+    kindle_page: 105
+    status: keep
+    excel_location: "Krones!I27:M37"
+    excel_formula: "(EBIT + Depreciation/Amortization) / Revenue (Excel: (B12+B70)/B2)"
+    target_formula: "EBITDA / Umsatz"
+    raw_data: [revenue, ebit, depreciation_amortization]
+    definition: "Operatives Ergebnis vor Zinsen, Steuern und Abschreibungen im Verhältnis zum Umsatz."
+    meaning: "Erlaubt einen Blick auf die operative Ertragskraft vor Abschreibungen und ist vor allem für EV/EBITDA-Vergleiche relevant."
+    interpretation: "Eine hohe EBITDA-Marge ist positiv, darf bei kapitalintensiven Unternehmen aber nicht mit freiem Cashflow verwechselt werden."
+    pitfalls: ["Ignoriert Ersatz- und Wachstumsinvestitionen.", "Kann kapitalintensive Geschäftsmodelle zu attraktiv erscheinen lassen."]
+    related: [ebit_margin, ev_ebitda, capex_ratio]
+
+  capital_turnover:
+    group: profitability
+    title_de: "Kapitalumschlag"
+    title_en: "Capital Turnover"
+    chapter: "2.4"
+    kindle_page: 107
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "Umsatz / durchschnittlich eingesetztes Gesamtkapital; genaue Buchdefinition verifizieren"
+    raw_data: [revenue, total_assets]
+    definition: "Misst, wie viel Umsatz mit einer Einheit eingesetzten Kapitals erwirtschaftet wird."
+    meaning: "Ergänzt Margenkennzahlen um die Kapitalintensität. Ein Unternehmen kann mit niedriger Marge attraktiv sein, wenn das Kapital sehr effizient umgeschlagen wird."
+    interpretation: "Ein hoher und stabiler Kapitalumschlag spricht für effizienten Kapitaleinsatz, muss aber im Geschäftsmodellkontext interpretiert werden."
+    pitfalls: ["Asset-light und kapitalintensive Branchen nicht unkritisch vergleichen."]
+    related: [roa, roce, asset_intensity]
+
+  roa:
+    group: profitability
+    title_de: "Gesamtkapitalrendite"
+    title_en: "Return on Assets (ROA)"
+    chapter: "2.5"
+    kindle_page: 109
+    status: keep_verify_book
+    excel_location: "Krones!I39:M43"
+    excel_formula: "(Net Income + interest expense) / Total capital (Excel: (B17+I183)/B64)"
+    target_formula: "Genaue Zähler-/Nennerdefinition gegen S. 109 verifizieren"
+    raw_data: [net_income, interest_expense, total_assets]
+    definition: "Rendite auf das gesamte im Unternehmen gebundene Kapital beziehungsweise Vermögen."
+    meaning: "Zeigt, wie effizient das Unternehmen unabhängig von der reinen Eigenkapitalperspektive wirtschaftet."
+    interpretation: "Für die Qualitätsbeurteilung ist vor allem die Entwicklung über mehrere Jahre und im Branchenvergleich relevant."
+    pitfalls: ["Zinsaufwand muss konsistent behandelt werden.", "Hoher Goodwill kann die Kennzahl drücken."]
+    related: [roe, capital_turnover, roce]
+
+  roce:
+    group: profitability
+    title_de: "Return on Capital Employed"
+    title_en: "Return on Capital Employed (ROCE)"
+    chapter: "2.6"
+    kindle_page: 111
+    status: keep_verify_book
+    excel_location: "Krones!I45:M50"
+    excel_formula: "EBIT / (Total capital - current liabilities) (Excel: B12/(B64-B50))"
+    target_formula: "EBIT / Capital Employed; Bestandteile des Capital Employed gegen Buch verifizieren"
+    raw_data: [ebit, total_assets, current_liabilities]
+    definition: "Operative Rendite auf das langfristig im operativen Geschäft eingesetzte Kapital."
+    meaning: "ROCE verbindet operative Profitabilität und Kapitalbedarf und ist deshalb eine zentrale Qualitätskennzahl für kapitalgebundene Unternehmen."
+    interpretation: "Dauerhaft hohe Werte sind besonders interessant, wenn sie ohne übermäßige Verschuldung erzielt werden."
+    pitfalls: ["Definition von Capital Employed muss über alle Unternehmen konsistent sein.", "Sondereffekte im EBIT normalisieren."]
+    related: [roe, roa, capital_turnover]
+
+  sales_earning_rate:
+    group: profitability
+    title_de: "Umsatzverdienstrate"
+    title_en: null
+    chapter: "2.7"
+    kindle_page: 114
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch S. 114 festlegen"
+    raw_data: []
+    definition: "Buchkennzahl, die im bestehenden Excel noch nicht separat umgesetzt ist."
+    meaning: "Wird erst nach Prüfung der konkreten Schmidlin-Definition implementiert."
+    interpretation: "Noch offen."
+    pitfalls: ["Nicht aus einer ähnlich benannten Standardkennzahl ableiten; Buchdefinition zuerst prüfen."]
+    related: [return_on_sales]
 
   equity_ratio:
+    group: financial_stability
     title_de: "Eigenkapitalquote"
     title_en: "Equity Ratio"
     chapter: "3.1"
     kindle_page: 118
+    status: keep
+    excel_location: "Krones!I59:M65"
+    excel_formula: "Equity / Total capital (Excel: B63/B64)"
+    target_formula: "Eigenkapital / Bilanzsumme"
+    raw_data: [total_equity, total_assets]
     definition: "Anteil des Eigenkapitals an der Bilanzsumme."
-    formula: "Eigenkapital / Bilanzsumme"
-    meaning: "Beschreibt, in welchem Umfang Vermögenswerte durch Eigenkapital finanziert sind."
-    interpretation: "Eine höhere Eigenkapitalquote kann finanzielle Widerstandsfähigkeit erhöhen, ist aber immer im Branchen- und Geschäftsmodellkontext zu beurteilen."
-    pitfalls:
-      - "Banken und andere stark regulierte Finanzunternehmen benötigen andere Maßstäbe."
-      - "Bilanzierungsunterschiede und Goodwill können Vergleiche beeinflussen."
-    related:
-      - "Gearing"
-      - "Eigenkapitalrendite"
+    meaning: "Beschreibt die finanzielle Pufferwirkung des Eigenkapitals und die Abhängigkeit von Fremdfinanzierung."
+    interpretation: "Eine höhere Quote kann Widerstandsfähigkeit erhöhen, ist aber immer mit Kapitalintensität, Planbarkeit und Branche zu beurteilen."
+    pitfalls: ["Finanzunternehmen benötigen andere Maßstäbe.", "Goodwill und Bilanzierungsregeln beeinflussen die Quote."]
+    related: [gearing, dynamic_debt_ratio, asset_coverage_i]
+
+  gearing:
+    group: financial_stability
+    title_de: "Gearing"
+    title_en: "Gearing"
+    chapter: "3.2"
+    kindle_page: 124
+    status: keep_verify_book
+    excel_location: "Krones!I70:M76"
+    excel_formula: "(interest-bearing debt - cash) / Equity (Excel: (manual interest-bearing debt - cash)/equity)"
+    target_formula: "Nettofinanzverschuldung / Eigenkapital"
+    raw_data: [interest_bearing_debt, cash_and_short_term_investments, total_equity]
+    definition: "Verhältnis der Nettofinanzverschuldung zum Eigenkapital."
+    meaning: "Zeigt, wie stark das Eigenkapital durch verzinsliche Nettoschulden gehebelt wird."
+    interpretation: "Niedrige oder negative Werte sind meist komfortabler; zulässige Werte hängen von Cashflow-Stabilität und Geschäftsmodell ab."
+    pitfalls: ["Nur zinstragende Schulden sauber definieren.", "Leasingverbindlichkeiten konsistent behandeln."]
+    related: [equity_ratio, dynamic_debt_ratio, net_debt_ebitda]
+
+  dynamic_debt_ratio:
+    group: financial_stability
+    title_de: "Dynamischer Verschuldungsgrad"
+    title_en: "Dynamic Debt Ratio"
+    chapter: "3.3"
+    kindle_page: 129
+    status: keep_verify_book
+    excel_location: "Krones!I85:M90"
+    excel_formula: "Net debt / Free Cash Flow (Excel uses row97 as FCF)"
+    target_formula: "Nettofinanzverschuldung / nachhaltiger Free Cash Flow; Buchdefinition verifizieren"
+    raw_data: [interest_bearing_debt, cash_and_short_term_investments, free_cash_flow]
+    definition: "Nähert an, wie viele Jahre der freie Cashflow zur Tilgung der Nettofinanzverschuldung benötigen würde."
+    meaning: "Verbindet Schuldenhöhe mit tatsächlich verfügbarer Tilgungskraft und ist dadurch aussagekräftiger als reine Bilanzquoten."
+    interpretation: "Je niedriger, desto höher typischerweise der finanzielle Spielraum. Negative Nettoverschuldung muss separat dargestellt werden."
+    pitfalls: ["Zyklisch hoher FCF kann die Kennzahl zu gut aussehen lassen.", "Negative Nettofinanzverschuldung nicht als normale Quote interpretieren."]
+    related: [gearing, net_debt_ebitda, free_cash_flow]
+
+  net_debt_ebitda:
+    group: financial_stability
+    title_de: "Net Debt/EBITDA"
+    title_en: "Net Debt / EBITDA"
+    chapter: "3.4"
+    kindle_page: 135
+    status: keep
+    excel_location: "Krones!I96:M99"
+    excel_formula: "Net debt / (EBIT + D&A) (Excel: (interest-bearing debt-cash)/(EBIT+D&A))"
+    target_formula: "Nettofinanzverschuldung / EBITDA"
+    raw_data: [interest_bearing_debt, cash_and_short_term_investments, ebit, depreciation_amortization]
+    definition: "Nettofinanzverschuldung im Verhältnis zum EBITDA."
+    meaning: "Gibt eine grobe Vorstellung davon, wie groß die Finanzverschuldung im Verhältnis zur operativen Ergebniskraft ist."
+    interpretation: "Niedrige Werte stehen meist für mehr finanziellen Spielraum; die Aussagekraft sinkt bei stark schwankendem EBITDA."
+    pitfalls: ["EBITDA ignoriert Investitionsbedarf.", "Leasing und Pensionsverpflichtungen konsistent behandeln."]
+    related: [dynamic_debt_ratio, gearing, ev_ebitda]
+
+  capex_ratio:
+    group: financial_stability
+    title_de: "Sachinvestitionsquote"
+    title_en: "Capital Expenditure Ratio"
+    chapter: "3.5"
+    kindle_page: 136
+    status: keep_verify_book
+    excel_location: "Krones!I104:M109"
+    excel_formula: "PPE Capex / Operating Cash Flow (Excel: -B79/B95)"
+    target_formula: "Sachinvestitionen / operativer Cashflow; genaue Cashflow-Zeile gegen Buch verifizieren"
+    raw_data: [capex_ppe, operating_cash_flow]
+    definition: "Anteil des operativen Cashflows, der für Sachinvestitionen benötigt wird."
+    meaning: "Zeigt, wie kapitalintensiv das Geschäftsmodell ist und wie viel operativ erwirtschafteter Cashflow wieder gebunden wird."
+    interpretation: "Niedrige Werte können attraktiv sein, solange nicht auf notwendige Ersatzinvestitionen verzichtet wird."
+    pitfalls: ["Wachstums-CAPEX und Erhaltungs-CAPEX werden meist nicht getrennt ausgewiesen.", "Ein einzelnes Investitionsjahr ist wenig aussagekräftig."]
+    related: [growth_ratio, asset_wear, free_cash_flow]
+
+  asset_wear:
+    group: financial_stability
+    title_de: "Anlagenabnutzungsgrad"
+    title_en: null
+    chapter: "3.6"
+    kindle_page: 141
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch S. 141 festlegen"
+    raw_data: []
+    definition: "Buchkennzahl zur Beurteilung des Alters beziehungsweise der bilanziellen Abnutzung des Anlagevermögens."
+    meaning: "Kann Hinweise auf künftig steigenden Ersatzinvestitionsbedarf geben."
+    interpretation: "Hohe Abnutzung kann ein Warnsignal sein, wenn gleichzeitig zu wenig investiert wird."
+    pitfalls: ["Benötigt geeignete Brutto-/Netto-Anlagenwerte; Providerdaten reichen nicht immer aus."]
+    related: [capex_ratio, growth_ratio]
+
+  growth_ratio:
+    group: financial_stability
+    title_de: "Wachstumsquote"
+    title_en: "Growth Ratio"
+    chapter: "3.7"
+    kindle_page: 144
+    status: keep_verify_book
+    excel_location: "Krones!I115:M120"
+    excel_formula: "Capex / D&A (Excel: -B96/B70)"
+    target_formula: "Investitionen / Abschreibungen; genaue CAPEX-Zeile gegen Buch verifizieren"
+    raw_data: [capex, depreciation_amortization]
+    definition: "Setzt Investitionen in Relation zu Abschreibungen."
+    meaning: "Hilft einzuschätzen, ob das Unternehmen seine bestehende Substanz lediglich ersetzt oder darüber hinaus investiert."
+    interpretation: "Werte über 100 % können auf Expansion hindeuten; Werte unter 100 % sind nicht automatisch negativ und müssen über mehrere Jahre erklärt werden."
+    pitfalls: ["Akquisitionen und immaterielle Investitionen können außerhalb der einfachen Kennzahl liegen."]
+    related: [capex_ratio, asset_wear]
+
+  cash_burn_rate:
+    group: financial_stability
+    title_de: "Cash-Burn-Rate"
+    title_en: "Cash Burn Rate"
+    chapter: "3.8"
+    kindle_page: 145
+    status: add_special_case
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch S. 145 festlegen; nur bei negativen Cashflows sinnvoll"
+    raw_data: [cash_and_short_term_investments, free_cash_flow]
+    definition: "Kennzahl zur Abschätzung, wie lange vorhandene Liquidität bei negativem Mittelabfluss reicht."
+    meaning: "Vor allem für junge, verlustreiche oder in einer Sanierung befindliche Unternehmen relevant."
+    interpretation: "Für profitable Unternehmen ohne Cash-Burn soll die Kennzahl als nicht anwendbar erscheinen."
+    pitfalls: ["Nicht mechanisch auf profitable Unternehmen anwenden."]
+    related: [cash_ratio, free_cash_flow]
+
+  current_asset_intensity:
+    group: financial_stability
+    title_de: "Umlaufintensität"
+    title_en: "Current Asset Intensity"
+    chapter: "3.9"
+    kindle_page: 148
+    status: keep
+    excel_location: "Krones!I127:M131"
+    excel_formula: "Current assets / Total assets (Excel: B34/B42)"
+    target_formula: "Umlaufvermögen / Bilanzsumme"
+    raw_data: [current_assets, total_assets]
+    definition: "Anteil des Umlaufvermögens an der Bilanzsumme."
+    meaning: "Zeigt, welcher Anteil des Vermögens kurzfristiger und typischerweise flexibler gebunden ist."
+    interpretation: "Die optimale Struktur hängt stark vom Geschäftsmodell ab."
+    pitfalls: ["Ein starker Anstieg kann auch auf Forderungs- oder Lagerprobleme hindeuten."]
+    related: [fixed_asset_intensity, current_ratio]
+
+  fixed_asset_intensity:
+    group: financial_stability
+    title_de: "Anlagenintensität"
+    title_en: "Fixed Asset Intensity"
+    chapter: "3.9"
+    kindle_page: 148
+    status: keep_verify_mapping
+    excel_location: "Krones!I137:M142"
+    excel_formula: "Long-term assets / Total capital (Excel: B41/B64)"
+    target_formula: "Anlagevermögen / Bilanzsumme; Excel-Zeile 41 gegen normalisierte API-Felder prüfen"
+    raw_data: [non_current_assets, total_assets]
+    definition: "Anteil langfristig gebundenen Vermögens an der Bilanzsumme."
+    meaning: "Hohe Anlagenintensität weist meist auf einen höheren langfristigen Kapitalbedarf und geringere kurzfristige Anpassungsfähigkeit hin."
+    interpretation: "Nicht isoliert bewerten; hohe Anlagenintensität kann bei planbaren Geschäftsmodellen völlig angemessen sein."
+    pitfalls: ["Provider-Definition von Non-current Assets prüfen."]
+    related: [current_asset_intensity, asset_coverage_i]
+
+  asset_coverage_i:
+    group: financial_stability
+    title_de: "Anlagendeckungsgrad I"
+    title_en: "Asset Coverage Ratio I"
+    chapter: "3.10"
+    kindle_page: 151
+    status: keep
+    excel_location: "Krones!I149:M154"
+    excel_formula: "Equity / Long-term assets (Excel: B63/B41)"
+    target_formula: "Eigenkapital / Anlagevermögen"
+    raw_data: [total_equity, non_current_assets]
+    definition: "Anteil des Anlagevermögens, der durch Eigenkapital finanziert ist."
+    meaning: "Prüft die langfristige Fristenkongruenz der Finanzierung."
+    interpretation: "Höhere Werte bedeuten mehr langfristige Eigenfinanzierung des Anlagevermögens."
+    pitfalls: ["Anlagevermögen muss konsistent abgegrenzt werden."]
+    related: [asset_coverage_ii, equity_ratio]
+
+  asset_coverage_ii:
+    group: financial_stability
+    title_de: "Anlagendeckungsgrad II"
+    title_en: "Asset Coverage Ratio II"
+    chapter: "3.10"
+    kindle_page: 151
+    status: keep
+    excel_location: "Krones!I162:M162"
+    excel_formula: "(Equity + long-term liabilities) / Long-term assets"
+    target_formula: "(Eigenkapital + langfristiges Fremdkapital) / Anlagevermögen"
+    raw_data: [total_equity, long_term_liabilities, non_current_assets]
+    definition: "Setzt langfristig verfügbares Kapital zum Anlagevermögen ins Verhältnis."
+    meaning: "Zeigt, ob langfristig gebundene Vermögenswerte auch langfristig finanziert sind."
+    interpretation: "Werte über 100 % sprechen grundsätzlich für eine bessere Fristenkongruenz."
+    pitfalls: ["Langfristige Rückstellungen und Leasing konsistent definieren."]
+    related: [asset_coverage_i, current_ratio]
+
+  goodwill_share:
+    group: financial_stability
+    title_de: "Goodwill-Anteil"
+    title_en: "Goodwill Share"
+    chapter: "3.11"
+    kindle_page: 153
+    status: keep_manual_to_api
+    excel_location: "Krones!I169:M174"
+    excel_formula: "Goodwill / Equity (Excel uses manually entered Goodwill / equity)"
+    target_formula: "Goodwill / Eigenkapital; Buchdefinition verifizieren"
+    raw_data: [goodwill, total_equity]
+    definition: "Setzt bilanzierten Goodwill in Relation zur Eigenkapitalbasis."
+    meaning: "Macht sichtbar, wie stark das bilanzielle Eigenkapital von Akquisitionsgoodwill geprägt ist."
+    interpretation: "Ein hoher Anteil erhöht die Bedeutung möglicher Impairments und sollte bei der Bilanzqualität berücksichtigt werden."
+    pitfalls: ["Goodwill ist nicht automatisch schlecht; entscheidend ist die Werthaltigkeit der erworbenen Geschäftsmodelle."]
+    related: [intangibles_to_assets, equity_ratio]
+
+  interest_coverage:
+    group: excel_extension
+    title_de: "Zinsdeckungsgrad"
+    title_en: "Interest Coverage"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I179:M184"
+    excel_formula: "EBIT / interest expense (Excel: B12/I183)"
+    target_formula: "EBIT / Zinsaufwand"
+    raw_data: [ebit, interest_expense]
+    definition: "Misst, wie oft das operative Ergebnis den Zinsaufwand deckt."
+    meaning: "Ergänzt die Schmidlin-Kennzahlen um einen direkten Blick auf den Schuldendienst."
+    interpretation: "Je höher, desto größer typischerweise der Puffer gegen Ergebnisrückgänge."
+    pitfalls: ["Zinsaufwand mit negativen Vorzeichen normalisieren."]
+    related: [gearing, net_debt_ebitda]
+
+  debt_to_equity:
+    group: excel_extension
+    title_de: "Debt-to-Equity Ratio"
+    title_en: "Debt to Equity"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I189:M192"
+    excel_formula: "Total liabilities / Equity (Excel: B56/B63)"
+    target_formula: "Gesamtverbindlichkeiten / Eigenkapital"
+    raw_data: [total_liabilities, total_equity]
+    definition: "Gesamtverbindlichkeiten im Verhältnis zum Eigenkapital."
+    meaning: "Ein zusätzlicher Verschuldungsindikator; weniger präzise als Gearing, weil auch nicht verzinsliche Verbindlichkeiten enthalten sind."
+    interpretation: "Nur ergänzend verwenden."
+    pitfalls: ["Nicht mit Nettofinanzverschuldung verwechseln."]
+    related: [gearing, equity_ratio]
+
+  long_term_debt_to_equity:
+    group: excel_extension
+    title_de: "Long-Term Debt-to-Equity Ratio"
+    title_en: "Long-Term Debt to Equity"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I197:M200"
+    excel_formula: "Long-term liabilities / Equity"
+    target_formula: "Langfristige Verbindlichkeiten / Eigenkapital"
+    raw_data: [long_term_liabilities, total_equity]
+    definition: "Langfristige Verbindlichkeiten relativ zum Eigenkapital."
+    meaning: "Zeigt die strukturelle langfristige Fremdfinanzierung."
+    interpretation: "Als Ergänzung zu Gearing und Fälligkeiten verwenden."
+    pitfalls: ["Nicht alle langfristigen Verbindlichkeiten sind zinstragend."]
+    related: [debt_to_equity, gearing]
+
+  short_term_debt_to_equity:
+    group: excel_extension
+    title_de: "Short-Term Debt-to-Equity Ratio"
+    title_en: "Short-Term Debt to Equity"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I205:M208"
+    excel_formula: "Current liabilities / Equity"
+    target_formula: "Kurzfristige Verbindlichkeiten / Eigenkapital"
+    raw_data: [current_liabilities, total_equity]
+    definition: "Kurzfristige Verbindlichkeiten relativ zum Eigenkapital."
+    meaning: "Kann auf kurzfristigen Refinanzierungs- und Liquiditätsdruck hinweisen."
+    interpretation: "Gemeinsam mit Liquiditätskennzahlen beurteilen."
+    pitfalls: ["Lieferantenverbindlichkeiten sind wirtschaftlich anders zu beurteilen als Bankkredite."]
+    related: [current_ratio, cash_ratio]
+
+  relative_debt:
+    group: excel_extension
+    title_de: "Relative Verschuldung"
+    title_en: "Liabilities / EBIT"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I213:M216"
+    excel_formula: "Total liabilities / EBIT"
+    target_formula: "Gesamtverbindlichkeiten / EBIT"
+    raw_data: [total_liabilities, ebit]
+    definition: "Gesamtverbindlichkeiten im Verhältnis zum EBIT."
+    meaning: "Grobe Ergebnisrelation der gesamten bilanziellen Verbindlichkeiten."
+    interpretation: "Nur ergänzend nutzen, weil nicht alle Verbindlichkeiten aus EBIT getilgt werden müssen."
+    pitfalls: ["Nicht mit Net Debt/EBITDA verwechseln."]
+    related: [net_debt_ebitda]
+
+  debt_per_share:
+    group: excel_extension
+    title_de: "Schulden je Aktie"
+    title_en: "Debt per Share"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I222:M226"
+    excel_formula: "Total liabilities / shares outstanding"
+    target_formula: "Gesamtverbindlichkeiten / verwässerte Aktienzahl"
+    raw_data: [total_liabilities, diluted_shares]
+    definition: "Bilanziell ausgewiesene Verbindlichkeiten je Aktie."
+    meaning: "Anschauliche Zusatzkennzahl, aber nicht primär für Bewertung verwenden."
+    interpretation: "In Verbindung mit Cash je Aktie und Buchwert je Aktie betrachten."
+    pitfalls: ["Negative Vorzeichen in Excel nur Darstellungsartefakt."]
+    related: [net_cash_per_share]
+
+  net_cash_per_share:
+    group: excel_extension
+    title_de: "Netto-Cash je Aktie"
+    title_en: "Net Cash per Share"
+    chapter: null
+    kindle_page: null
+    status: adjust_definition
+    excel_location: "Krones!I228:M231"
+    excel_formula: "(Cash - total liabilities) / shares"
+    target_formula: "Cash - zinstragende Schulden, je Aktie; Definition mit EV/Gearing harmonisieren"
+    raw_data: [cash_and_short_term_investments, interest_bearing_debt, diluted_shares]
+    definition: "Nettofinanzposition je Aktie."
+    meaning: "Zeigt überschüssige Liquidität oder Nettofinanzschulden auf Aktienbasis."
+    interpretation: "Für die Bewertung sollte dieselbe Schuldendefinition wie im Enterprise Value verwendet werden."
+    pitfalls: ["Das aktuelle Excel zieht alle Verbindlichkeiten ab; das ist für 'Net Cash' zu breit."]
+    related: [enterprise_value, gearing]
+
+  book_value_per_share:
+    group: excel_extension
+    title_de: "Buchwert je Aktie"
+    title_en: "Book Value per Share"
+    chapter: "7.2"
+    kindle_page: 240
+    status: keep
+    excel_location: "Krones!I233:M236"
+    excel_formula: "Equity / shares outstanding"
+    target_formula: "Eigenkapital / verwässerte Aktienzahl"
+    raw_data: [total_equity, diluted_shares]
+    definition: "Bilanzielles Eigenkapital je Aktie."
+    meaning: "Grundlage für das Kurs-Buchwert-Verhältnis."
+    interpretation: "Bei asset-light Unternehmen oft weniger aussagekräftig als bei kapitalintensiven Geschäftsmodellen."
+    pitfalls: ["Goodwill/Intangibles können den Buchwert stark prägen."]
+    related: [pb, tangible_book_value_per_share]
+
+  tangible_book_value_per_share:
+    group: excel_extension
+    title_de: "Materieller Buchwert je Aktie"
+    title_en: "Tangible Book Value per Share"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I238:M241"
+    excel_formula: "(Equity - intangible assets) / shares"
+    target_formula: "(Eigenkapital - immaterielle Vermögenswerte - Goodwill, falls nicht enthalten) / Aktienzahl"
+    raw_data: [total_equity, intangible_assets, goodwill, diluted_shares]
+    definition: "Buchwert nach Abzug immaterieller Vermögenswerte je Aktie."
+    meaning: "Konservativere Substanzsicht als der reine Buchwert."
+    interpretation: "Vor allem für substanzorientierte Analysen nützlich."
+    pitfalls: ["Prüfen, ob Goodwill bereits in 'intangible assets' enthalten ist."]
+    related: [book_value_per_share, goodwill_share]
+
+  intangibles_to_assets:
+    group: excel_extension
+    title_de: "Anteil immaterieller Vermögenswerte an der Bilanz"
+    title_en: "Intangibles to Assets"
+    chapter: null
+    kindle_page: null
+    status: keep_excel_extension
+    excel_location: "Krones!I243:M246"
+    excel_formula: "Intangible assets / Total assets (Excel B38/B42)"
+    target_formula: "(Intangibles + Goodwill, falls separat) / Bilanzsumme"
+    raw_data: [intangible_assets, goodwill, total_assets]
+    definition: "Anteil immaterieller Vermögenswerte an der Bilanzsumme."
+    meaning: "Macht sichtbar, wie stark die Aktivseite von immateriellen Positionen geprägt ist."
+    interpretation: "Hohe Werte verlangen eine genauere Prüfung der Werthaltigkeit."
+    pitfalls: ["Provider kann Goodwill separat oder bereits enthalten ausweisen."]
+    related: [goodwill_share, tangible_book_value_per_share]
+
+  free_cash_flow:
+    group: cashflow
+    title_de: "Free Cashflow"
+    title_en: "Free Cash Flow (FCF)"
+    chapter: null
+    kindle_page: null
+    status: keep_normalize
+    excel_location: "Krones!I251:M253; raw row 97"
+    excel_formula: "Excel references Morningstar available/free cash flow row 97"
+    target_formula: "Operating Cash Flow - Capex; exakte Definition zentral festlegen"
+    raw_data: [operating_cash_flow, capex]
+    definition: "Cashflow, der nach notwendigen Investitionen aus dem operativen Geschäft verbleibt."
+    meaning: "Zentrale Größe für Schuldentilgung, Ausschüttungen, Rückkäufe und Bewertung."
+    interpretation: "Über mehrere Jahre und relativ zu Gewinn/Umsatz betrachten."
+    pitfalls: ["Provider-Definitionen für FCF unterscheiden sich.", "Akquisitionen sind meist nicht im Standard-FCF enthalten."]
+    related: [dynamic_debt_ratio, ev_fcf, payout_fcf]
+
+  receivable_days:
+    group: working_capital
+    title_de: "Debitorenlaufzeit"
+    title_en: "Days Sales Outstanding (DSO)"
+    chapter: "4.1"
+    kindle_page: 158
+    status: keep_adjust_denominator
+    excel_location: "Krones!I302:M307"
+    excel_formula: "Average receivables * 360 / Revenue (Excel uses current-year Revenue with shifted years)"
+    target_formula: "durchschnittliche Forderungen / Umsatz * 365; 360 vs 365 als Konfiguration/Buchprüfung"
+    raw_data: [accounts_receivable, revenue]
+    definition: "Durchschnittliche Anzahl Tage, bis Kundenforderungen vereinnahmt werden."
+    meaning: "Zeigt die Kapitalbindung in Forderungen und mögliche Veränderungen der Zahlungsqualität."
+    interpretation: "Steigende Laufzeiten können Warnsignal sein, vor allem wenn Umsatz gleichzeitig stark wächst."
+    pitfalls: ["Saisonale Unternehmen besser mit Durchschnittsbeständen analysieren."]
+    related: [payable_days, cash_conversion_cycle]
+
+  payable_days:
+    group: working_capital
+    title_de: "Kreditorenlaufzeit"
+    title_en: "Days Payables Outstanding (DPO)"
+    chapter: "4.1"
+    kindle_page: 158
+    status: adjust_required
+    excel_location: "Krones!I313:M318"
+    excel_formula: "Average accounts payable * 360 / Operating costs (Excel uses row3 because material cost absent)"
+    target_formula: "durchschnittliche Lieferantenverbindlichkeiten / Materialaufwand bzw. COGS * 365"
+    raw_data: [accounts_payable, cost_of_goods_sold]
+    definition: "Durchschnittliche Zeit bis Lieferantenverbindlichkeiten bezahlt werden."
+    meaning: "Lieferantenkredite sind eine wichtige, oft zinsfreie Finanzierungsquelle des Working Capital."
+    interpretation: "Längere Laufzeiten können positiv sein, solange sie nicht aus Zahlungsproblemen resultieren."
+    pitfalls: ["Das alte Excel verwendet Betriebskosten als Ersatz für fehlenden Materialaufwand; das muss ersetzt werden."]
+    related: [receivable_days, cash_conversion_cycle]
+
+  cash_ratio:
+    group: working_capital
+    title_de: "Liquidität 1. Grades"
+    title_en: "Cash Ratio"
+    chapter: "4.2"
+    kindle_page: 162
+    status: keep
+    excel_location: "Krones!I331:M335"
+    excel_formula: "Cash and short-term investments / Current liabilities"
+    target_formula: "liquide Mittel / kurzfristige Verbindlichkeiten"
+    raw_data: [cash_and_short_term_investments, current_liabilities]
+    definition: "Liquideste Mittel relativ zu kurzfristigen Verbindlichkeiten."
+    meaning: "Misst die sofortige Liquiditätsdeckung ohne Forderungen oder Vorräte."
+    interpretation: "Ein sehr hoher Wert ist nicht zwingend optimal, weil überschüssige Liquidität die Kapitalrendite senken kann."
+    pitfalls: ["Branchenabhängigkeit beachten."]
+    related: [quick_ratio, current_ratio]
+
+  quick_ratio:
+    group: working_capital
+    title_de: "Liquidität 2. Grades"
+    title_en: "Quick Ratio"
+    chapter: "4.3"
+    kindle_page: 165
+    status: keep
+    excel_location: "Krones!I342:M346"
+    excel_formula: "(Cash + receivables) / Current liabilities"
+    target_formula: "(liquide Mittel + kurzfristige Forderungen) / kurzfristige Verbindlichkeiten"
+    raw_data: [cash_and_short_term_investments, accounts_receivable, current_liabilities]
+    definition: "Kurzfristig realisierbare Vermögenswerte ohne Vorräte relativ zu kurzfristigen Verbindlichkeiten."
+    meaning: "Zeigt die Liquiditätsdeckung ohne unterstellen zu müssen, dass Vorräte kurzfristig verkauft werden."
+    interpretation: "Stabilität über die Zeit ist meist wichtiger als ein starres Ziel."
+    pitfalls: ["Qualität und Einbringlichkeit von Forderungen berücksichtigen."]
+    related: [cash_ratio, current_ratio]
+
+  current_ratio:
+    group: working_capital
+    title_de: "Liquidität 3. Grades"
+    title_en: "Current Ratio"
+    chapter: "4.4"
+    kindle_page: 165
+    status: keep
+    excel_location: "Krones!I351:M355"
+    excel_formula: "Current assets / Current liabilities"
+    target_formula: "Umlaufvermögen / kurzfristige Verbindlichkeiten"
+    raw_data: [current_assets, current_liabilities]
+    definition: "Gesamtes Umlaufvermögen relativ zu kurzfristigen Verbindlichkeiten."
+    meaning: "Breiter Liquiditätsindikator, der auch Vorräte einbezieht."
+    interpretation: "Zu niedrige Werte können Liquiditätsrisiken zeigen; sehr hohe Werte können auf ineffiziente Kapitalbindung hinweisen."
+    pitfalls: ["Vorratsqualität und Forderungsqualität bleiben verborgen."]
+    related: [cash_ratio, quick_ratio]
+
+  inventory_intensity:
+    group: working_capital
+    title_de: "Vorratsintensität"
+    title_en: "Inventory Intensity"
+    chapter: "4.5"
+    kindle_page: 169
+    status: keep
+    excel_location: "Krones!I361:M367"
+    excel_formula: "Inventory / Total assets"
+    target_formula: "Vorräte / Bilanzsumme"
+    raw_data: [inventory, total_assets]
+    definition: "Anteil der Vorräte am Gesamtvermögen."
+    meaning: "Zeigt, wie viel Kapital in Lagerbeständen gebunden ist."
+    interpretation: "Ein Anstieg kann Wachstum widerspiegeln oder auf Absatz-/Bestandsprobleme hinweisen."
+    pitfalls: ["Branchenspezifische Lagerstrukturen beachten."]
+    related: [inventory_turnover, cash_conversion_cycle]
+
+  inventory_turnover:
+    group: working_capital
+    title_de: "Umschlagshäufigkeit der Vorräte"
+    title_en: "Inventory Turnover"
+    chapter: "4.6"
+    kindle_page: 171
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "COGS / durchschnittlicher Lagerbestand; Buchdefinition verifizieren"
+    raw_data: [cost_of_goods_sold, inventory]
+    definition: "Wie oft der durchschnittliche Lagerbestand innerhalb eines Jahres umgesetzt wird."
+    meaning: "Ergänzt die Vorratsintensität um eine Bewegungskennzahl."
+    interpretation: "Sinkender Umschlag kann auf langsamere Verkäufe oder wachsende Lagerbestände hindeuten."
+    pitfalls: ["Nur mit vergleichbaren Unternehmen/Perioden vergleichen."]
+    related: [inventory_days, inventory_intensity]
+
+  inventory_days:
+    group: working_capital
+    title_de: "Dauer der Lagerhaltung"
+    title_en: "Days Inventory Outstanding (DIO)"
+    chapter: "4.6"
+    kindle_page: 171
+    status: adjust_required
+    excel_location: "Krones!I379:M383"
+    excel_formula: "Average inventory / Revenue * 360 (current Excel)"
+    target_formula: "durchschnittlicher Lagerbestand / COGS * 365; Excel-Umsatznenner ersetzen"
+    raw_data: [inventory, cost_of_goods_sold]
+    definition: "Durchschnittliche Anzahl Tage, die Vorräte im Unternehmen gebunden sind."
+    meaning: "Direkte Zeitdimension der Lagerkapitalbindung."
+    interpretation: "Steigende DIO kann bei unverändertem Geschäftsmodell ein Warnsignal sein."
+    pitfalls: ["Das alte Excel verwendet Umsatz statt COGS; methodisch korrigieren."]
+    related: [inventory_turnover, cash_conversion_cycle]
+
+  cash_conversion_cycle:
+    group: working_capital
+    title_de: "Geldumschlag"
+    title_en: "Cash Conversion Cycle (CCC)"
+    chapter: "4.7"
+    kindle_page: 172
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "DSO + DIO - DPO"
+    raw_data: [accounts_receivable, inventory, accounts_payable, revenue, cost_of_goods_sold]
+    definition: "Zeit zwischen Auszahlung für betriebliche Inputs und Rückfluss des Geldes aus Kundenumsätzen."
+    meaning: "Verdichtet Forderungen, Vorräte und Lieferantenfinanzierung zu einer Working-Capital-Zeitkennzahl."
+    interpretation: "Ein kürzerer oder negativer CCC ist oft attraktiv, sofern er nicht durch Zahlungsprobleme entsteht."
+    pitfalls: ["Saisonale Geschäftsmodelle benötigen Durchschnittswerte/Quartalsdaten."]
+    related: [receivable_days, payable_days, inventory_days]
+
+  order_intake_backlog:
+    group: working_capital
+    title_de: "Auftragseingang und Auftragsbestand"
+    title_en: "Order Intake / Order Backlog"
+    chapter: "4.8"
+    kindle_page: 175
+    status: add_special_company_data
+    excel_location: null
+    excel_formula: null
+    target_formula: "unternehmensspezifische Kennzahlen; kein universelles Schema"
+    raw_data: [order_intake, order_backlog]
+    definition: "Unternehmensspezifische Frühindikatoren für zukünftige Umsätze."
+    meaning: "Für Unternehmen mit längeren Auftragszyklen oft sehr wertvoll, bei anderen Geschäftsmodellen nicht relevant."
+    interpretation: "Entwicklung und Verhältnis zum Umsatz analysieren; ASML-Guidance und Backlog sind hierfür besonders interessant."
+    pitfalls: ["Nicht für jedes Unternehmen verfügbar oder sinnvoll."]
+    related: [revenue_growth]
+
+  payout_net_income:
+    group: payout
+    title_de: "Ausschüttungsquote Dividende/Gewinn"
+    title_en: "Dividend Payout Ratio"
+    chapter: "6.1"
+    kindle_page: 209
+    status: keep
+    excel_location: "Krones!I283:M285"
+    excel_formula: "Dividends / Net Income"
+    target_formula: "Dividenden an Stammaktionäre / normalisierter Jahresüberschuss"
+    raw_data: [dividends_paid, net_income]
+    definition: "Anteil des Gewinns, der als Dividende ausgeschüttet wird."
+    meaning: "Zeigt, wie viel Gewinn im Unternehmen verbleibt beziehungsweise an Eigentümer ausgekehrt wird."
+    interpretation: "Hohe Quoten sind nur nachhaltig, wenn Cashflows und Investitionsbedarf dies erlauben."
+    pitfalls: ["Sondereffekte im Gewinn verzerren."]
+    related: [payout_fcf, buybacks]
+
+  payout_fcf:
+    group: payout
+    title_de: "Ausschüttungsquote Dividende/Free Cashflow"
+    title_en: "Dividend / Free Cash Flow"
+    chapter: "6.1"
+    kindle_page: 209
+    status: keep
+    excel_location: "Krones!I290:M292"
+    excel_formula: "Dividends / Free Cash Flow"
+    target_formula: "Dividenden / normalisierter Free Cashflow"
+    raw_data: [dividends_paid, free_cash_flow]
+    definition: "Dividendenzahlung relativ zum tatsächlich verfügbaren freien Cashflow."
+    meaning: "Prüft, ob Ausschüttungen aus dem operativ erwirtschafteten Cashflow finanzierbar sind."
+    interpretation: "Langfristig über 100 % ist ohne Sondereffekte nicht nachhaltig."
+    pitfalls: ["Einzeljahre können durch Investitionsspitzen verzerrt sein."]
+    related: [payout_net_income, free_cash_flow]
+
+  buybacks:
+    group: payout
+    title_de: "Aktienrückkäufe"
+    title_en: "Share Buybacks"
+    chapter: "6.2"
+    kindle_page: 213
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "Netto-Rückkäufe, Veränderung verwässerte Aktienzahl und Rückkaufpreis analysieren"
+    raw_data: [share_repurchases, share_issuance, diluted_shares]
+    definition: "Kapitalrückführung an Aktionäre durch Rückkauf eigener Aktien."
+    meaning: "Rückkäufe schaffen vor allem dann Wert, wenn Aktien unter ihrem inneren Wert erworben werden und nicht nur Verwässerung kompensiert wird."
+    interpretation: "Entwicklung der verwässerten Aktienzahl ist die wichtigste Kontrollgröße."
+    pitfalls: ["Bruttorückkäufe ohne Aktienvergütung/Neuemissionen können irreführend sein."]
+    related: [payout_net_income, fair_value_per_share]
 
   pe:
+    group: valuation_multiples
     title_de: "Kurs-Gewinn-Verhältnis"
     title_en: "Price/Earnings Ratio (P/E)"
     chapter: "7.1"
     kindle_page: 226
-    definition: "Verhältnis des Aktienkurses zum Gewinn je Aktie bzw. der Marktkapitalisierung zum den Aktionären zurechenbaren Gewinn."
-    formula: "Aktienkurs / EPS"
-    meaning: "Zeigt, mit welchem Vielfachen des aktuellen oder erwarteten Gewinns der Markt das Eigenkapital bewertet."
-    interpretation: "Ein hohes KGV ist nicht automatisch teuer und ein niedriges KGV nicht automatisch günstig. Wachstum, Qualität, Zyklik, Bilanz und Nachhaltigkeit des Gewinns müssen einbezogen werden."
-    pitfalls:
-      - "Zyklische Spitzengewinne können ein künstlich niedriges KGV erzeugen."
-      - "Sondereffekte im Gewinn verfälschen den Vergleich."
-      - "Unterschiedliche Kapitalstrukturen sind im KGV nur indirekt sichtbar."
-    related:
-      - "Faires KGV"
-      - "EV/EBIT"
-      - "Jahresabschlussbereinigung"
+    status: keep_normalize
+    excel_location: "Krones!A401:B405"
+    excel_formula: "Share price / EPS"
+    target_formula: "Aktienkurs / normalisiertes bzw. erwartetes EPS"
+    raw_data: [market_price, eps]
+    definition: "Aktienkurs im Verhältnis zum Gewinn je Aktie."
+    meaning: "Zeigt, welches Vielfache des Gewinns der Markt für das Eigenkapital bezahlt."
+    interpretation: "Nur zusammen mit Wachstum, Qualität, Zyklik und Nachhaltigkeit des Gewinns bewerten."
+    pitfalls: ["Spitzengewinne zyklischer Unternehmen erzeugen scheinbar niedrige KGVs.", "Sondereffekte normalisieren."]
+    related: [fair_pe, ev_ebit]
+
+  pb:
+    group: valuation_multiples
+    title_de: "Kurs-Buchwert-Verhältnis"
+    title_en: "Price/Book Ratio (P/B)"
+    chapter: "7.2"
+    kindle_page: 240
+    status: keep
+    excel_location: "Krones!A407:B411"
+    excel_formula: "Share price / Book value per share"
+    target_formula: "Marktkapitalisierung / Eigenkapital"
+    raw_data: [market_cap, total_equity]
+    definition: "Marktwert des Eigenkapitals relativ zum bilanziellen Eigenkapital."
+    meaning: "Substanzorientierter Multiplikator, dessen Aussagekraft stark vom Geschäftsmodell abhängt."
+    interpretation: "Bei hoher Kapitalrendite sind höhere KBVs wirtschaftlich plausibel."
+    pitfalls: ["Asset-light Unternehmen nicht mechanisch mit KBV bewerten."]
+    related: [book_value_per_share, fair_pb]
+
+  pcf:
+    group: valuation_multiples
+    title_de: "Kurs-Cashflow-Verhältnis"
+    title_en: "Price/Cash Flow Ratio"
+    chapter: "7.3"
+    kindle_page: 251
+    status: keep_define_cashflow
+    excel_location: "Krones!A413:B417"
+    excel_formula: "Share price / Cash flow per share"
+    target_formula: "Marktkapitalisierung / definierten Cashflow; Cashflow-Art festlegen"
+    raw_data: [market_cap, operating_cash_flow]
+    definition: "Marktbewertung des Eigenkapitals relativ zu einem Cashflow-Maß."
+    meaning: "Kann gegenüber dem KGV robuster gegen nicht zahlungswirksame Ergebnisbestandteile sein."
+    interpretation: "Nur mit konsistenter Cashflow-Definition verwenden."
+    pitfalls: ["Operating Cashflow und Free Cashflow nicht vermischen."]
+    related: [pe, ev_fcf]
+
+  ps:
+    group: valuation_multiples
+    title_de: "Kurs-Umsatz-Verhältnis"
+    title_en: "Price/Sales Ratio (P/S)"
+    chapter: "7.4"
+    kindle_page: 252
+    status: add_from_book
+    excel_location: null
+    excel_formula: null
+    target_formula: "Marktkapitalisierung / Umsatz"
+    raw_data: [market_cap, revenue]
+    definition: "Marktwert des Eigenkapitals relativ zum Umsatz."
+    meaning: "Nützlich bei Unternehmen mit noch instabilen Gewinnen, aber ohne Margenbeurteilung wenig aussagekräftig."
+    interpretation: "Hohe KUVs sind nur bei nachhaltig hohen oder künftig steigenden Margen plausibel."
+    pitfalls: ["Umsatz allein ist kein Wert; Profitabilität zwingend ergänzen."]
+    related: [ev_sales, return_on_sales, fair_ps]
+
+  enterprise_value:
+    group: valuation_multiples
+    title_de: "Enterprise Value"
+    title_en: "Enterprise Value (EV)"
+    chapter: "7.5"
+    kindle_page: 258
+    status: adjust_definition
+    excel_location: "Krones!L421:N428"
+    excel_formula: "Market Cap + Total liabilities - Cash (current Excel)"
+    target_formula: "Marktkapitalisierung + Nettofinanzschulden + weitere EV-Brückenpositionen; nicht alle Verbindlichkeiten pauschal"
+    raw_data: [market_cap, interest_bearing_debt, cash_and_short_term_investments]
+    definition: "Wert des operativen Unternehmens für Eigen- und Fremdkapitalgeber vor Abzug der Nettofinanzverschuldung."
+    meaning: "Erlaubt Vergleiche, die unterschiedliche Finanzierungsstrukturen besser berücksichtigen als reine Equity-Multiples."
+    interpretation: "EV-Brücke muss sauber und konsistent sein."
+    pitfalls: ["Das alte Excel setzt 'Marktwert FK' gleich Gesamtverbindlichkeiten; das sollte methodisch korrigiert werden."]
+    related: [ev_ebitda, ev_ebit, ev_fcf, ev_sales]
+
+  ev_ebitda:
+    group: valuation_multiples
+    title_de: "EV/EBITDA"
+    title_en: "EV / EBITDA"
+    chapter: "7.6"
+    kindle_page: 268
+    status: keep_after_ev_fix
+    excel_location: "Krones!A422:B427"
+    excel_formula: "Enterprise Value / (EBIT + D&A)"
+    target_formula: "Enterprise Value / EBITDA"
+    raw_data: [enterprise_value, ebit, depreciation_amortization]
+    definition: "Enterprise Value relativ zum EBITDA."
+    meaning: "Vergleicht Unternehmenswerte vor Kapitalstruktur, Steuern und Abschreibungen."
+    interpretation: "Vor allem innerhalb vergleichbarer Branchen sinnvoll."
+    pitfalls: ["Kapitalintensität wird ausgeblendet."]
+    related: [enterprise_value, ev_ebit]
+
+  ev_ebit:
+    group: valuation_multiples
+    title_de: "EV/EBIT"
+    title_en: "EV / EBIT"
+    chapter: "7.7"
+    kindle_page: 275
+    status: keep_after_ev_fix
+    excel_location: "Krones!A436:B441"
+    excel_formula: "Enterprise Value / EBIT"
+    target_formula: "Enterprise Value / normalisiertes EBIT"
+    raw_data: [enterprise_value, ebit]
+    definition: "Enterprise Value relativ zum operativen Ergebnis nach Abschreibungen."
+    meaning: "Bezieht Kapitalstruktur ein und berücksichtigt im Gegensatz zu EV/EBITDA die Abschreibung des Anlagevermögens."
+    interpretation: "Sehr nützlicher Cross-Check für operative Bewertung."
+    pitfalls: ["Sondereffekte im EBIT normalisieren."]
+    related: [pe, ev_ebitda, fair_ev_ebit]
+
+  ev_fcf:
+    group: valuation_multiples
+    title_de: "EV/FCF"
+    title_en: "EV / Free Cash Flow"
+    chapter: "7.8"
+    kindle_page: 280
+    status: keep_rebuild
+    excel_location: "Krones!A450:E454"
+    excel_formula: "EV / custom two-year cashflow expression"
+    target_formula: "Enterprise Value / konsistent definierten FCFF oder geeigneten FCF; Zähler/Nenner müssen kapitalstrukturkonsistent sein"
+    raw_data: [enterprise_value, operating_cash_flow, capex, interest_expense]
+    definition: "Enterprise Value im Verhältnis zu einem freien Cashflow-Maß."
+    meaning: "Kann Investitionsbedarf stärker berücksichtigen als EBITDA-/EBIT-Multiples."
+    interpretation: "Nur verwenden, wenn Cashflow-Zähler und EV ökonomisch zu denselben Kapitalgebern gehören."
+    pitfalls: ["Im bestehenden Excel ist die FCF-Formel speziell; in Phase 5 fachlich neu validieren."]
+    related: [enterprise_value, free_cash_flow]
+
+  ev_sales:
+    group: valuation_multiples
+    title_de: "EV/Sales"
+    title_en: "EV / Sales"
+    chapter: "7.9"
+    kindle_page: 284
+    status: keep_after_ev_fix
+    excel_location: "Krones!A462:B466"
+    excel_formula: "Enterprise Value / Revenue"
+    target_formula: "Enterprise Value / Umsatz"
+    raw_data: [enterprise_value, revenue]
+    definition: "Enterprise Value relativ zum Umsatz."
+    meaning: "Bewertet Umsatz unabhängig von Kapitalstruktur, ist aber ohne Margenkontext unvollständig."
+    interpretation: "Höhere EV/Sales können bei strukturell hohen Margen gerechtfertigt sein."
+    pitfalls: ["Margen und Kapitalrenditen zwingend daneben anzeigen."]
+    related: [ps, return_on_sales]
+
+  owner_earnings:
+    group: dcf
+    title_de: "Owner Earnings"
+    title_en: "Owner Earnings"
+    chapter: "8.1.1"
+    kindle_page: 295
+    status: keep_dcf_v1_then_improve
+    excel_location: "Krones!A480:P520"
+    excel_formula: "Net Income + D&A - Capex - ΔWorking Capital (Excel row 520)"
+    target_formula: "Equity-Cashflow/Owner-Earnings-Definition gegen Buch und DCF-Konsistenz abschließend validieren"
+    raw_data: [net_income, depreciation_amortization, capex, accounts_receivable, inventory, accounts_payable]
+    definition: "Dem Eigenkapital wirtschaftlich zurechenbarer Zahlungsstrom nach notwendigen Investitionen und zusätzlicher Working-Capital-Bindung."
+    meaning: "Kerncashflow des Equity-DCF und damit Grundlage des inneren Werts in der aktuellen Schmidlin-/Excel-Logik."
+    interpretation: "Muss aus wirtschaftlich zusammenhängenden Prognosen für Umsatz, Marge, Investitionen und Working Capital entstehen."
+    pitfalls: ["CAPEX darf nicht unabhängig vom Wachstum geschätzt werden.", "ΔWC muss als Veränderung, nicht WC-Bestand abgezogen werden."]
+    related: [cost_of_equity, terminal_value, fair_value_per_share]
+
+  cost_of_equity:
+    group: dcf
+    title_de: "Eigenkapitalkosten / Diskontierungsfaktor"
+    title_en: "Cost of Equity"
+    chapter: "8.1.1"
+    kindle_page: 295
+    status: open_methodology
+    excel_location: "Krones!A523:B535"
+    excel_formula: "Risk-free rate + 1/Fair P/E + additional minimum-cost adjustment"
+    target_formula: "Schmidlin-Risikoaufschlagslogik mit eigenem Risiko-KGV prüfen; Wachstum nicht doppelt berücksichtigen"
+    raw_data: [risk_free_rate, risk_rating]
+    definition: "Geforderte Rendite des Eigenkapitalgebers, mit der zukünftige Equity-Cashflows abgezinst werden."
+    meaning: "Der Diskontsatz bildet Zeitwert und Risiko ab und hat großen Einfluss auf den DCF-Wert."
+    interpretation: "Nicht als präzise Naturkonstante behandeln; Bandbreiten und Sensitivität zeigen."
+    pitfalls: ["Wachstum nicht doppelt im Cashflow und im Diskontsatz belohnen.", "Risikofreien Zins zum Bewertungszeitpunkt speichern."]
+    related: [fair_pe, terminal_value]
+
+  terminal_growth:
+    group: dcf
+    title_de: "Ewige Wachstumsrate"
+    title_en: "Terminal Growth Rate"
+    chapter: "8.1.1"
+    kindle_page: 295
+    status: keep_with_guardrails
+    excel_location: "Krones!A543:B552"
+    excel_formula: "manual assumption; Excel note suggests 0-4%"
+    target_formula: "konservative langfristige Wachstumsannahme, abhängig von Inflation, Markt und Reinvestitionen"
+    raw_data: []
+    definition: "Langfristige Wachstumsrate nach Ende der expliziten DCF-Planungsperiode."
+    meaning: "Bestimmt zusammen mit dem Diskontsatz den Terminal Value und darf nicht wie kurzfristiges Unternehmenswachstum behandelt werden."
+    interpretation: "Soll konservativ sein und dauerhaft unter den Eigenkapitalkosten liegen."
+    pitfalls: ["Kleine Änderungen haben große Bewertungswirkung.", "g muss kleiner als ke sein."]
+    related: [terminal_value, cost_of_equity]
+
+  terminal_value:
+    group: dcf
+    title_de: "Ewige Rente / Terminal Value"
+    title_en: "Terminal Value"
+    chapter: "8.1.1"
+    kindle_page: 295
+    status: keep_with_guardrails
+    excel_location: "Krones!A553:B554"
+    excel_formula: "OE_10*(1+g)/(ke-g), then discount 10 years"
+    target_formula: "Gordon Growth mit nachhaltigen Owner Earnings und konsistentem g/ke"
+    raw_data: [owner_earnings, cost_of_equity, terminal_growth]
+    definition: "Barwert aller Cashflows nach der expliziten Prognoseperiode."
+    meaning: "In vielen DCFs ist der Terminal Value der größte Wertanteil; seine Transparenz ist deshalb zentral."
+    interpretation: "Terminal-Value-Anteil am Gesamtwert immer separat ausweisen."
+    pitfalls: ["Extrem hohe Terminal-Abhängigkeit als Warnung markieren."]
+    related: [owner_earnings, cost_of_equity]
+
+  fair_value_per_share:
+    group: dcf
+    title_de: "Fairer Aktienkurs / Innerer Wert je Aktie"
+    title_en: "Intrinsic Value per Share"
+    chapter: "8.1.1"
+    kindle_page: 295
+    status: adjust_margin_of_safety
+    excel_location: "Krones!A557:B564"
+    excel_formula: "(PV forecast + PV terminal) / shares; Excel then reduces by Margin of Safety in B564"
+    target_formula: "Fair Value separat berechnen; Margin of Safety erst als Kaufgrenze anwenden"
+    raw_data: [owner_earnings, terminal_value, diluted_shares]
+    definition: "Innerer Eigenkapitalwert je Aktie aus dem DCF."
+    meaning: "Zentrale Bewertungsgröße, aber nur so belastbar wie die zugrunde liegenden Cashflow- und Risikoannahmen."
+    interpretation: "Als Bandbreite und in mehreren Szenarien anzeigen."
+    pitfalls: ["Margin of Safety nicht in die Definition des Fair Value hineinrechnen."]
+    related: [margin_of_safety, fair_pe]
+
+  fair_pe:
+    group: fair_multiples
+    title_de: "Faires Kurs-Gewinn-Verhältnis"
+    title_en: "Fair P/E"
+    chapter: "8.2.1"
+    kindle_page: 351
+    status: keep_validate_exact_scoring
+    excel_location: "Krones!A572:B701"
+    excel_formula: "Base P/E + financial stability + market position*profitability + growth + individuality"
+    target_formula: "Schmidlin-Punktelogik gegen Kapitel 8.2.1 vollständig verifizieren"
+    raw_data: [normalized_eps]
+    definition: "Fundamental abgeleiteter angemessener Gewinnmultiplikator auf Basis qualitativer und quantitativer Unternehmensmerkmale."
+    meaning: "Zwingt dazu, Bilanzqualität, Marktposition, Rentabilität und Wachstum vor der Bewertung explizit zu beurteilen."
+    interpretation: "Soll als zweite unabhängige Bewertungsmethode neben dem DCF dienen."
+    pitfalls: ["Scoring nicht ohne Begründung automatisieren.", "Normalisierten Gewinn verwenden."]
+    related: [pe, cost_of_equity, fair_value_per_share]
+
+  fair_pb:
+    group: fair_multiples
+    title_de: "Faires Kurs-Buchwert-Verhältnis"
+    title_en: "Fair P/B"
+    chapter: "8.2.2"
+    kindle_page: 380
+    status: add_later
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch Kapitel 8.2.2 spezifizieren"
+    raw_data: [total_equity]
+    definition: "Fundamental abgeleitetes angemessenes Kurs-Buchwert-Verhältnis."
+    meaning: "Optionale zusätzliche Bewertungsmethode für Geschäftsmodelle, bei denen Buchwerte wirtschaftlich aussagekräftig sind."
+    interpretation: "Nicht für alle Unternehmen gleich relevant."
+    pitfalls: ["Bei asset-light Unternehmen oft geringe Aussagekraft."]
+    related: [pb]
+
+  fair_ps:
+    group: fair_multiples
+    title_de: "Faires Kurs-Umsatz-Verhältnis"
+    title_en: "Fair P/S"
+    chapter: "8.2.3"
+    kindle_page: 405
+    status: add_later
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch Kapitel 8.2.3 spezifizieren"
+    raw_data: [revenue]
+    definition: "Fundamental abgeleitetes angemessenes Kurs-Umsatz-Verhältnis."
+    meaning: "Kann bei Unternehmen mit instabilen Gewinnen als zusätzliche Bewertung dienen, muss aber Margenpotenzial berücksichtigen."
+    interpretation: "Nur als Ergänzung verwenden."
+    pitfalls: ["Umsatz ohne Profitabilität ist kein Wertmaßstab."]
+    related: [ps, return_on_sales]
+
+  fair_ev_ebit:
+    group: fair_multiples
+    title_de: "Faires Enterprise Value-EBIT-Verhältnis"
+    title_en: "Fair EV/EBIT"
+    chapter: "8.2.4"
+    kindle_page: 409
+    status: add_later
+    excel_location: null
+    excel_formula: null
+    target_formula: "gegen Buch Kapitel 8.2.4 spezifizieren"
+    raw_data: [ebit, enterprise_value]
+    definition: "Fundamental abgeleiteter angemessener EV/EBIT-Multiplikator."
+    meaning: "Erweitert die Fair-Multiple-Logik um eine kapitalstrukturneutralere Perspektive."
+    interpretation: "Später als Cross-Check zum Fair-KGV und DCF implementieren."
+    pitfalls: ["EV-Brücke muss vorher sauber definiert sein."]
+    related: [ev_ebit, fair_pe]
+
+  margin_of_safety:
+    group: investment_decision
+    title_de: "Margin of Safety"
+    title_en: "Margin of Safety"
+    chapter: "9.1"
+    kindle_page: 438
+    status: keep_separate_from_fair_value
+    excel_location: "Krones!A563:B568"
+    excel_formula: "Excel currently multiplies Fair Value by (1-MoS)"
+    target_formula: "Kaufgrenze = Fair Value * (1 - Sicherheitsmarge); Fair Value selbst bleibt unverändert"
+    raw_data: [fair_value_per_share, market_price]
+    definition: "Bewusster Sicherheitsabschlag zwischen geschätztem inneren Wert und gewünschtem Kaufpreis."
+    meaning: "Berücksichtigt Modellunsicherheit, Analysefehler und unerwartete negative Entwicklungen."
+    interpretation: "Nicht als Teil des inneren Werts darstellen, sondern als separate Entscheidungsschwelle."
+    pitfalls: ["Eine höhere Margin of Safety repariert kein schlechtes Bewertungsmodell."]
+    related: [fair_value_per_share, fair_pe]
