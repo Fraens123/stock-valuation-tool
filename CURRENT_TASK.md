@@ -1,8 +1,10 @@
 # Current Task
 
-## Phase 1.2 – Buchvalidierung, Normalisierung und ASML-Datenbedarf
+## Phase 2.1 – ASML-Datenimport und Snapshot-Persistenz
 
-Phase 0 ist implementiert. Phase 1.1 hat das bestehende Excel fachlich inventarisiert und die maschinenlesbaren Kataloge angelegt.
+Phase 0 ist implementiert. Phase 1 hat das bestehende Excel fachlich inventarisiert, den Kennzahlen-/Qualitativkatalog aufgebaut, das Rohdatenschema definiert und offene Methodikfragen ausdrücklich markiert.
+
+Exakte Buchfragen, die ohne vollständigen Text nicht sicher auflösbar sind, bleiben in `docs/METHODOLOGY_OPEN_QUESTIONS.md` offen und dürfen die Datenpipeline nicht zu erfundenen Definitionen verleiten.
 
 ## Vor Beginn lesen
 
@@ -10,89 +12,87 @@ Phase 0 ist implementiert. Phase 1.1 hat das bestehende Excel fachlich inventari
 2. `ROADMAP.md`
 3. `docs/PHASE_1_METRIC_INVENTORY.md`
 4. `docs/RAW_DATA_SCHEMA.md`
-5. `docs/BOOK_MAPPING.md`
-6. `docs/QUALITATIVE_ANALYSIS_SPEC.md`
-7. `docs/METHODOLOGY_OPEN_QUESTIONS.md`
-8. `docs/DCF_METHOD.md`
-9. `src/stock_valuation/knowledge/metrics.yaml`
-10. `src/stock_valuation/knowledge/qualitative.yaml`
+5. `docs/ASML_DATA_MAPPING.md`
+6. `docs/NORMALIZATION_POLICY.md`
+7. `docs/DATA_SOURCES.md`
+8. `docs/METHODOLOGY_OPEN_QUESTIONS.md`
+9. `src/stock_valuation/data/mappings/eodhd.yaml`
 
-## Stand Phase 1.1
+## Bereits vorbereitet
 
-Erledigt:
+- EODHD Fundamentals v1.1 Adapter
+- maschinenlesbares EODHD-Feldmapping
+- Provider-unabhängige Datentypen
+- Normalisierung für GuV, Bilanz und Cashflow
+- Normalisierung für Annual Analyst Estimates
+- Snapshot-Service zum reproduzierbaren Import in eine offene Analyse
+- Provenienzfelder im Datenmodell
+- Tests mit lokalem Beispielpayload; keine Tests benötigen einen Live-API-Key
 
-- bestehendes Excel von Rohdaten über Kennzahlen, Multiples, DCF und Fair-KGV inventarisiert
-- aktuelle Excel-Formeln und relevante Zellbereiche dokumentiert
-- fehlende Buchkennzahlen identifiziert
-- Kennzahlen in `keep`, `add`, `adjust`, `special` bzw. `verify` klassifiziert
-- Kindle-Seiten aus der Nutzer-Ausgabe übernommen
-- umfangreiche eigene `ⓘ`-Erklärungen angelegt
-- qualitative Kapitel-5-Struktur und Porter-/Fair-KGV-Kriterien katalogisiert
-- normalisiertes Rohdatenwörterbuch als Entwurf angelegt
-- methodische Abweichungen des Alt-Excel explizit dokumentiert
+## Ziel dieses Blocks
 
-## Ziel Phase 1.2
+### A. EODHD Live-Import lokal validieren
 
-Vor Beginn der produktiven Datenprovider müssen die **Zieldefinitionen** ausreichend stabil sein.
+Mit lokalem `EODHD_API_KEY`:
 
-### A. Buchdefinitionen verifizieren
+1. `ASML.AS` Fundamentals v1.1 laden.
+2. tatsächlichen Payload gegen `eodhd.yaml` prüfen.
+3. mindestens zehn Jahresperioden, soweit Provider verfügbar, erfassen.
+4. fehlende Felder explizit protokollieren.
+5. keine stillen Ersatzfelder erfinden.
 
-Priorität:
+### B. ASML-Primärquellenvalidierung
 
-1. ROE – Kindle 94
-2. Gesamtkapitalrendite – 109
-3. ROCE – 111
-4. Gearing – 124
-5. Dynamischer Verschuldungsgrad – 129
-6. Sachinvestitionsquote – 136
-7. Anlagenabnutzungsgrad – 141
-8. Wachstumsquote – 144
-9. Debitoren/Kreditoren – 158
-10. Inventory Turnover / DIO – 171
-11. Equity-DCF – ab 295
-12. Faires KGV – ab 351
+- 2025 EODHD-Daten gegen offizielles ASML Financial-Statements-Excel / Annual Report prüfen.
+- Kernfelder: Revenue, EBIT/Operating Income, Net Income, Assets, Equity, Cash, Debt, OCF, Capex, D&A, Receivables, Inventory, Payables.
+- semantische Abweichungen dokumentieren.
 
-Wenn Buchtext nicht zuverlässig verfügbar ist, **nicht raten**. Offenen Punkt in `docs/METHODOLOGY_OPEN_QUESTIONS.md` belassen.
+### C. Datenimport in Streamlit anbinden
 
-### B. Rohdatenschema finalisieren
+Auf einer editierbaren Analyse:
 
-Für jede Zielkennzahl prüfen:
+- Button `Finanzdaten aktualisieren`
+- Quelle und Abrufzeit anzeigen
+- Importstatistik anzeigen
+- bei fehlendem API-Key verständliche Meldung
+- auf abgeschlossenen Analysen kein Refresh möglich
 
-- welcher Rohdatenwert benötigt wird
-- ob EODHD ihn direkt liefert
-- ob er aus anderen Rohdaten ableitbar ist
-- ob ASML IR / Geschäftsbericht nötig ist
-- ob Aktienfinder manuell sinnvoll ist
-- ob die Kennzahl nur bei bestimmten Geschäftsmodellen angezeigt wird
+### D. Analystenschätzungen prüfen
 
-### C. ASML-Datenbedarf definieren
+Für ASML prüfen, welche Annual Trend-Felder tatsächlich verfügbar sind:
+- EPS low / average / high
+- Revenue low / average / high
+- analyst count
+- Revisionsdaten optional
 
-Eine Mapping-Tabelle erstellen:
+Nur tatsächlich gelieferte Werte persistieren.
 
-`internal_key -> EODHD field -> ASML annual-report field -> fallback/manual -> unit/currency`
+### E. Management Guidance
 
-Noch keine blinde Providerimplementierung.
-
-### D. Jahresabschlussbereinigung spezifizieren
-
-Relevante Kindle-Stellen:
-- 8.3 Jahresabschlussbereinigung – 422
-- 8.3.1 Pro-forma-Abschlüsse und Sondereffekte – 427
-
-Festlegen, wie historische und prognostizierte Werte als `reported` und `normalized` gespeichert werden sollen.
+Noch nicht automatisch scrapen. Für V1 zentrale manuelle/strukturierte Eingabe vorbereiten:
+- Metric
+- Period
+- Low / Point / High
+- Unit / Currency
+- Publication Date
+- Source URL
+- Note
 
 ## Noch NICHT tun
 
-- keine endgültige Kennzahlenengine
-- keine produktive DCF-Engine
+- keine Kennzahlenengine aus den importierten Daten bauen
+- keine DCF-Engine
 - keine Fair-KGV-Punkte erfinden
 - keine Risiko-Dropdown-Prozentwerte festlegen
-- keine Analystenschätzungen ohne Quellenmetadaten speichern
+- keine ASML-Schätzung hart codieren
 
-## Definition of Done Phase 1.2
+## Definition of Done Phase 2.1
 
-- Ziel-Rohdatenschema für Industrieunternehmen ist ausreichend stabil.
-- ASML-Feldmapping für Phase 2 ist definiert.
-- alle noch offenen Buch-/Methodikfragen sind explizit markiert.
-- Normalisierung/Sondereffekte sind konzeptionell definiert.
-- danach kann Phase 2 (Datenprovider) kontrolliert beginnen.
+- ASML-Fundamentaldaten können mit API-Key reproduzierbar geladen und in einen Analyse-Snapshot geschrieben werden.
+- Providerfeld und Originalwert bleiben auditierbar.
+- EODHD-Import ist gegen offizielle ASML-Daten stichprobenartig validiert.
+- Estimates werden getrennt gespeichert.
+- abgeschlossene Analysen bleiben unveränderlich.
+- Live-Import besitzt Tests ohne externe Netzwerkabhängigkeit plus einen dokumentierten manuellen Integrationstest.
+
+Danach: Phase 2.2 ECB-Risikozins, manuelle Aktienfinder-/Guidance-Zentrale und Abschluss der Datenversorgung.
