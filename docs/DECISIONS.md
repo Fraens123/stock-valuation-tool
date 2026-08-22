@@ -53,9 +53,27 @@ Reports dürfen nur gespeicherte Snapshot-Daten verwenden und müssen historisch
 ## D-011 — Automatische Provider werden feldweise freigegeben
 **Status:** Accepted
 
-Ein Datenprovider wird nicht pauschal als korrekt betrachtet. Für den ASML-Referenzfall entscheidet der Primärquellencheck je internem Rohdatenfeld zwischen `approved`, `review` und `blocked`. FAIL/MISSING-Felder dürfen von Downstream-Kennzahlen nicht verwendet und nicht still mit offiziellen Kontrollwerten ersetzt werden.
+Ein Datenprovider wird nicht pauschal als korrekt betrachtet. Für den ASML-Referenzfall entscheidet der Primärquellencheck je internem Rohdatenfeld zwischen `approved`, `review` und `blocked`. FAIL/MISSING-Felder eines API-Providers dürfen nicht ungeprüft von Downstream-Kennzahlen verwendet werden.
+
+Offizielle Primärquellenwerte dürfen als **eigene, separat gespeicherte Quelle** ergänzt werden. Sie überschreiben oder löschen die ursprüngliche API-Zahl nicht; die Provenienz beider Werte bleibt erhalten.
 
 ## D-012 — ASML EBIT-Marge verwendet validiertes Income from operations
 **Status:** Accepted for ASML reference case only
 
 Für die erste Phase-3A-Kennzahl wird bei ASML das gegen die Primärquelle validierte Feld `operating_income` (`Income from operations`) als operative EBIT-Basis verwendet und durch `revenue` dividiert. Diese provider-/unternehmensspezifische Zuordnung ist keine universelle Definition für andere Unternehmen; dort muss die EBIT-Semantik erneut geprüft werden.
+
+## D-013 — Hybride Quellenstrategie für Fundamentaldaten
+**Status:** Accepted
+
+V1 verwendet keine Annahme, dass ein einzelner Drittanbieter sämtliche Finanzzeilen korrekt normalisiert.
+
+Quellenpriorität für einen konkreten Rohdatenwert:
+
+1. offizielle Unternehmens-/Primärquelle, wenn deterministisch importiert und fachlich eindeutig zugeordnet;
+2. feldweise validierter API-Provider, aktuell Alpha Vantage;
+3. weitere API-/Cross-Check-Quelle;
+4. expliziter manueller Override, wenn die Anwendung dies für den jeweiligen Datentyp vorsieht.
+
+Für ASML werden die offiziellen 2025-US-GAAP-Financial-Statements als eigene Quelle `asml_primary` gespeichert. Alpha-Vantage-Werte bleiben parallel im Snapshot. Der Daten-Gate bevorzugt für dasselbe Feld/Jahr `asml_primary`, ohne den Fallback-Wert zu löschen.
+
+Die breite historische API-Serie wird nicht rückwirkend durch einen pauschalen Skalierungs- oder Korrekturfaktor verändert. Insbesondere werden die ASML-Cashflow-Abweichungen von Alpha Vantage nicht mathematisch „repariert“.
