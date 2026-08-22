@@ -17,7 +17,8 @@ dependencies = [
   "plotly>=5.23",
   "PyYAML>=6.0",
   "python-dotenv>=1.0",
-  "reportlab>=4.2"
+  "reportlab>=4.2",
+  "openpyxl>=3.1"
 ]
 
 [project.optional-dependencies]
