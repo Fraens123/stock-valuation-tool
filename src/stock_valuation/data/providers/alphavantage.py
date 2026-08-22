@@ -53,6 +53,48 @@ def extract_matching_annual_fields(
     return output
 
 
+def extract_candidate_annual_fields(
+    payload: dict[str, Any],
+    *,
+    statement: str,
+    candidates: dict[str, tuple[str, ...]],
+    max_reports: int = 2,
+) -> list[dict[str, Any]]:
+    """Return raw annual fields that may represent one of our blocked internal facts.
+
+    A provider field can be emitted for more than one candidate on purpose. This is a
+    diagnostic helper only; it never decides the mapping. The caller can compare each
+    candidate with primary-source controls before changing normalization rules.
+    """
+    rows = payload.get("annualReports") or []
+    if not isinstance(rows, list):
+        return []
+
+    output: list[dict[str, Any]] = []
+    for row in rows[:max_reports]:
+        if not isinstance(row, dict):
+            continue
+        fiscal_date = row.get("fiscalDateEnding")
+        currency = row.get("reportedCurrency")
+        for field, value in row.items():
+            if field in {"fiscalDateEnding", "reportedCurrency"}:
+                continue
+            lowered = field.lower()
+            for candidate, keywords in candidates.items():
+                if any(keyword in lowered for keyword in keywords):
+                    output.append(
+                        {
+                            "candidate_for": candidate,
+                            "statement": statement,
+                            "fiscal_date": fiscal_date,
+                            "reported_currency": currency,
+                            "field": field,
+                            "value": value,
+                        }
+                    )
+    return output
+
+
 class AlphaVantageProvider(FinancialDataProvider):
     """Alpha Vantage adapter for fundamentals testing."""
 
@@ -158,6 +200,43 @@ class AlphaVantageProvider(FinancialDataProvider):
                 cash_flow,
                 statement="cash_flow",
                 keywords=keywords,
+                max_reports=2,
+            ),
+        ]
+
+    def probe_blocked_field_candidates(self, symbol: str) -> list[dict[str, Any]]:
+        """Inspect candidate raw fields for still-blocked ASML facts using two requests.
+
+        Exactly one BALANCE_SHEET and one CASH_FLOW request are used. No data is persisted.
+        Candidate labels express only what a raw field *might* represent; primary-source
+        comparison remains mandatory before any normalization mapping is changed.
+        """
+        balance_candidates = {
+            "accounts_receivable": ("receiv",),
+            "inventory": ("invent",),
+            "ppe_net": ("property", "plant", "equipment"),
+            "short_term_debt": ("shorttermdebt", "currentdebt", "borrow"),
+            "cash_and_short_term_investments": ("cash", "shortterminvest"),
+        }
+        cash_flow_candidates = {
+            "operating_cash_flow": ("operatingcash", "operatingactivit", "cashflowfromoperating"),
+            "capital_expenditures": ("capitalexpend", "property", "plant", "equipment", "purchase"),
+            "dividends_paid": ("dividend",),
+        }
+
+        balance = self._request("BALANCE_SHEET", symbol=symbol)
+        cash_flow = self._request("CASH_FLOW", symbol=symbol)
+        return [
+            *extract_candidate_annual_fields(
+                balance,
+                statement="balance_sheet",
+                candidates=balance_candidates,
+                max_reports=2,
+            ),
+            *extract_candidate_annual_fields(
+                cash_flow,
+                statement="cash_flow",
+                candidates=cash_flow_candidates,
                 max_reports=2,
             ),
         ]
