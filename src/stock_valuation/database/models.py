@@ -36,9 +36,39 @@ class Company(Base):
     currency: Mapped[str] = mapped_column(String(8), default="EUR")
     sector: Mapped[str | None] = mapped_column(String(160), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # Legacy/default symbol kept for EODHD/backward compatibility. New provider-specific
+    # identifiers belong in CompanyProviderSymbol.
     provider_symbol: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     analyses: Mapped[list[Analysis]] = relationship(back_populates="company")
+    provider_symbols: Mapped[list[CompanyProviderSymbol]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+
+
+class CompanyProviderSymbol(Base):
+    """Persist a provider-specific identifier without overloading Company.ticker.
+
+    One company may need different identifiers for local market prices and fundamentals;
+    ASML is the first reference case (`ASML.AMS` vs `ASML`). The table is generic and is
+    created safely in existing SQLite databases by SQLAlchemy `create_all`.
+    """
+
+    __tablename__ = "company_provider_symbols"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    purpose: Mapped[str] = mapped_column(String(40), default="fundamentals", index=True)
+    symbol: Mapped[str] = mapped_column(String(120), index=True)
+    exchange: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    company: Mapped[Company] = relationship(back_populates="provider_symbols")
 
 
 class Analysis(Base):
