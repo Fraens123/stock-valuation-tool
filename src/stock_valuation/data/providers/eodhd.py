@@ -12,7 +12,12 @@ from stock_valuation.data.normalization import (
 )
 from stock_valuation.data.types import NormalizedEstimate, NormalizedFinancialFact, ProviderCompany
 
-from .base import FinancialDataProvider
+from .base import (
+    FinancialDataProvider,
+    ProviderAccessError,
+    ProviderRateLimitError,
+    ProviderResponseError,
+)
 
 
 class EODHDProvider(FinancialDataProvider):
@@ -36,8 +41,20 @@ class EODHDProvider(FinancialDataProvider):
         if params:
             merged.update(params)
         response = requests.get(url, params=merged, timeout=self.timeout)
+        if response.status_code == 403:
+            raise ProviderAccessError(
+                "EODHD hat die Anfrage mit HTTP 403 abgelehnt. Der API-Key ist vorhanden, "
+                "aber der aktuelle Tarif enthält für diesen Abruf keinen Fundamentals-Zugriff. "
+                "Bitte nicht automatisch upgraden; im Tool kann stattdessen ein anderer Provider "
+                "verwendet werden."
+            )
+        if response.status_code == 429:
+            raise ProviderRateLimitError("EODHD API-Limit erreicht. Bitte später erneut versuchen.")
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ProviderResponseError("EODHD lieferte keine gültige JSON-Antwort.") from exc
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
         data = self._get(f"{self.SEARCH_URL}/{query}")
@@ -49,12 +66,10 @@ class EODHDProvider(FinancialDataProvider):
         params = {"filter": filter_} if filter_ else None
         data = self._get(f"{self.FUNDAMENTALS_URL}/{symbol}", params=params)
         if not isinstance(data, dict):
-            raise ValueError("Unerwartetes Fundamentals-Format von EODHD.")
+            raise ProviderResponseError("Unerwartetes Fundamentals-Format von EODHD.")
         return data
 
     def get_estimates(self, symbol: str) -> dict[str, Any]:
-        # Keep General for currency metadata; avoid assuming that a filtered Earnings
-        # response always contains sufficient context across API versions.
         fundamentals = self.get_fundamentals(symbol)
         earnings = fundamentals.get("Earnings", {})
         return earnings if isinstance(earnings, dict) else {}
@@ -66,8 +81,6 @@ class EODHDProvider(FinancialDataProvider):
         self, symbol: str, *, period_type: str = "FY"
     ) -> list[NormalizedFinancialFact]:
         payload = self.get_fundamentals(symbol, filter_="Financials")
-        # A section-filtered response may either return the section directly or retain
-        # the top-level key. Normalize both shapes without silently changing fields.
         if "Financials" not in payload:
             payload = {"Financials": payload}
         return normalize_eodhd_financials(payload, period_type=period_type)
