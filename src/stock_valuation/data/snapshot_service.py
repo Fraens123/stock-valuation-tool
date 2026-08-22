@@ -18,11 +18,7 @@ def replace_financial_facts(
     provider: str,
     source_url: str | None = None,
 ) -> int:
-    """Replace one provider's imported financial facts inside an editable snapshot.
-
-    Re-running an import while an analysis is still draft/in-progress is deterministic:
-    old rows from the same provider are removed first. Completed analyses remain frozen.
-    """
+    """Replace one provider's imported financial facts inside an editable snapshot."""
     ensure_editable(analysis)
     rows = list(facts)
 
@@ -97,32 +93,65 @@ def replace_estimates(
     return len(rows)
 
 
-def sync_eodhd_snapshot(session: Session, analysis: Analysis, provider) -> tuple[int, int]:
-    """Load EODHD annual financials and annual estimates into an editable analysis.
-
-    The provider argument is intentionally duck-typed so tests can inject a fake provider
-    without network access or credentials.
-    """
+def _sync_provider_snapshot(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    symbol: str,
+    provider_name: str,
+    source_url: str | None,
+) -> tuple[int, int]:
     ensure_editable(analysis)
-    symbol = analysis.company.provider_symbol
-    if not symbol:
-        raise ValueError("Für das Unternehmen fehlt ein Provider-Symbol.")
-
     facts = provider.get_normalized_financials(symbol, period_type="FY")
     estimates = provider.get_normalized_estimates(symbol)
-    source_url = f"https://eodhd.com/api/v1.1/fundamentals/{symbol}"
 
     fact_count = replace_financial_facts(
         session,
         analysis,
         facts,
-        provider="eodhd",
+        provider=provider_name,
         source_url=source_url,
     )
     estimate_count = replace_estimates(
         session,
         analysis,
         estimates,
-        provider="eodhd",
+        provider=provider_name,
     )
     return fact_count, estimate_count
+
+
+def sync_eodhd_snapshot(session: Session, analysis: Analysis, provider) -> tuple[int, int]:
+    """Load EODHD annual financials and annual estimates into an editable analysis."""
+    symbol = analysis.company.provider_symbol
+    if not symbol:
+        raise ValueError("Für das Unternehmen fehlt ein EODHD-Provider-Symbol.")
+    return _sync_provider_snapshot(
+        session,
+        analysis,
+        provider,
+        symbol=symbol,
+        provider_name="eodhd",
+        source_url=f"https://eodhd.com/api/v1.1/fundamentals/{symbol}",
+    )
+
+
+def sync_alphavantage_snapshot(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    symbol: str,
+) -> tuple[int, int]:
+    """Load Alpha Vantage annual statements and estimates into an editable analysis."""
+    if not symbol.strip():
+        raise ValueError("Für Alpha Vantage fehlt das Symbol.")
+    return _sync_provider_snapshot(
+        session,
+        analysis,
+        provider,
+        symbol=symbol.strip(),
+        provider_name="alphavantage",
+        source_url="https://www.alphavantage.co/documentation/#fundamentals",
+    )
