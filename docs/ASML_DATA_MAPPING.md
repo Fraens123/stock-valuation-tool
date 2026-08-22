@@ -2,20 +2,23 @@
 
 ## Zweck
 
-ASML ist das Referenzunternehmen für die Datenpipeline. Bevor die Kennzahlenengine gebaut wird, wird jeder benötigte interne Rohdatenwert einer Providerquelle und einer Primärquelle zur Validierung zugeordnet.
+ASML ist das Referenzunternehmen für die Datenpipeline. Bevor die Kennzahlenengine gebaut wird, wird jeder benötigte interne Rohdatenwert einer automatischen Providerquelle und einer Primärquelle zur Validierung zugeordnet.
 
-**Primärlisting:** `ASML.AS`  
+**Primärlisting für die spätere Marktpreisbewertung:** Euronext Amsterdam  
 **Unternehmen:** ASML Holding N.V.  
-**Bewertungswährung:** EUR
+**Bewertungswährung:** EUR  
+**Alpha-Vantage-Fundamentals-Symbol:** `ASML`
+
+Wichtig: Provider-Symbole für Kursdaten und Fundamentaldaten dürfen unterschiedlich sein. `ASML.AMS` lieferte im Live-Test keine Fundamentals-Reports; `ASML` liefert die konsolidierten ASML-Holding-Abschlüsse in EUR.
 
 ## Quellenhierarchie
 
 Für veröffentlichte historische Zahlen gilt:
 
 1. **ASML Annual Report / offizielle Financial Statements**
-2. **EODHD Fundamentals v1.1** als automatisierter Datenprovider
+2. **für das konkrete Feld validierter automatischer Provider**
 3. optionaler zweiter Provider als Cross-Check
-4. **Aktienfinder** als manuelle Ergänzung, nicht als automatische Grundquelle
+4. **Aktienfinder** als manuelle Ergänzung
 
 Für Prognosen gilt:
 
@@ -23,147 +26,184 @@ Für Prognosen gilt:
 2. **Analystenkonsens Low / Average / High** separat
 3. eigene Annahme / Override
 
-Die offizielle ASML-Downloadseite stellt sowohl US-GAAP- als auch IFRS-Geschäftsberichte sowie Financial-Statements-Exceldateien bereit. Für den Referenzfall werden diese Dateien als Kontrollquelle verwendet.
+Aktueller Live-Provider-Kandidat ist Alpha Vantage. EODHD bleibt als integrierter optionaler Fallback erhalten, ist mit dem getesteten Free-Tarif für Fundamentals jedoch gesperrt.
 
 ---
 
-## 1. Unternehmensstammdaten
+## 1. Live-Status
 
-| Interner Schlüssel | EODHD v1.1 | ASML / Fallback | Ziel |
-|---|---|---|---|
-| `name` | `General::Name` | ASML IR | Stammdaten |
-| `ticker` | `General::Code` | `ASML` | Stammdaten |
-| `provider_symbol` | Request-Symbol | `ASML.AS` | Provider-ID |
-| `isin` | `General::ISIN` | offizielle Unternehmensunterlagen | Identifikation |
-| `exchange` | `General::Exchange` | Euronext Amsterdam | Listing |
-| `currency` | `General::CurrencyCode` | EUR | Kurswährung |
-| `country` | `General::CountryName` | Netherlands | Stammdaten |
-| `sector` | `General::Sector` | optional manuell validieren | Klassifikation |
-| `industry` | `General::Industry` | optional manuell validieren | Klassifikation |
+### Alpha Vantage
 
-Andere Listings/ADRs werden nicht mit dem Primärlisting vermischt. Mehrfachlistings erhalten später eine separate Listing-Entität.
+Erfolgreich getestet:
 
----
+- `ASML` -> 20 Jahresberichte
+- `ASML` -> 81 Quartalsberichte
+- Berichtswährung EUR
+- 2025 `totalRevenue` = 32,6673 Mrd. EUR
+- vollständiger lokaler Snapshot-Import: 720 Financial-Fact-Zeilen über 20 Geschäftsjahre
 
-## 2. GuV
+Noch offen:
 
-Pfad EODHD: `Financials::Income_Statement::yearly` bzw. `quarterly`.
+- semantische Feldabweichungen vollständig bereinigen
+- kritische Felder müssen den ASML-Primärquellen-Gate bestehen
 
-| Internal key | EODHD-Feld | Primärquellen-Check | Bemerkung |
-|---|---|---|---|
-| `revenue` | `totalRevenue` | ASML Total net sales | Pflicht |
-| `cost_of_goods_sold` | `costOfRevenue` | Cost of sales | wichtig für DIO/DPO |
-| `gross_profit` | `grossProfit` | Sales minus Cost of sales | Cross-Check |
-| `operating_expenses` | `totalOperatingExpenses` | ASML GuV | nur Plausibilisierung; Providerdefinition prüfen |
-| `ebit` | `ebit` bevorzugt, `operatingIncome` als Cross-Check | Income from operations | Pflicht |
-| `ebitda` | `ebitda` | intern zusätzlich `EBIT + D&A` prüfen | fertigen Providerwert nicht blind verwenden |
-| `interest_expense` | `interestExpense` | Finance costs / interest | Pflicht für Zinsdeckung / ROA |
-| `income_before_tax` | `incomeBeforeTax` | Income before income taxes | Steueranalyse |
-| `income_tax_expense` | `incomeTaxExpense` / `taxProvision` nach realem Payload prüfen | Income tax expense | nachhaltige Steuerquote |
-| `net_income` | `netIncome` | Net income | Pflicht |
-| `net_income_attributable` | `netIncomeApplicableToCommonShares` sofern vorhanden | Gewinn für Common Shareholders | Fallback `net_income` bei ASML prüfen |
-| `diluted_eps` | Earnings/Income Statement je nach Payload | diluted EPS | Validierung gegen ASML EPS |
-| `research_and_development` | `researchDevelopment` | R&D costs | für ASML qualitativ wichtig |
+### EODHD
 
-### ASML Kontrollwerte 2025
-
-Die offizielle 2025-Berichterstattung nennt unter anderem:
-- Total net sales: **€32.7 Mrd.**
-- Gross margin: **52.8 %**
-- R&D: **€4.7 Mrd.**
-- Basic EPS: **€24.73**
-
-Diese Werte dienen nicht als hart codierte Programmdaten, sondern als Plausibilitätsanker für den ersten Importtest.
+- `ASML.AS` mit gültigem Free-Key getestet
+- Fundamentals v1.1 -> HTTP 403
+- kein bezahlter Tarif wird für die Entwicklung vorausgesetzt
 
 ---
 
-## 3. Bilanz
+## 2. GuV – Alpha Vantage
 
-Pfad EODHD: `Financials::Balance_Sheet::yearly` bzw. `quarterly`.
+Endpoint: `INCOME_STATEMENT`
 
-| Internal key | EODHD-Feld | Primärquellen-Check | Policy |
+| Internal key | Alpha-Vantage-Feld | ASML Primärquellen-Check | Status/Policy |
 |---|---|---|---|
-| `cash_and_short_term_investments` | `cashAndShortTermInvestments`, alternativ Komponenten | Cash and cash equivalents + short-term investments | Komponenten und Gesamtfeld gegeneinander prüfen |
-| `accounts_receivable` | `netReceivables` | Current receivables / A/R | Pflicht WC |
-| `inventory` | `inventory` | Inventories | Pflicht WC |
-| `current_assets` | `totalCurrentAssets` | Current assets | Pflicht |
-| `ppe_net` | `propertyPlantAndEquipmentNet` | Property, plant and equipment | Anlagenanalyse |
-| `ppe_gross` | `propertyPlantAndEquipmentGross` | falls offiziell verfügbar | Anlagenabnutzung |
-| `accumulated_depreciation` | `accumulatedDepreciation` | falls offiziell verfügbar | Anlagenabnutzung |
-| `intangible_assets` | `intangibleAssets` | Intangible assets | Goodwill-Überlappung prüfen |
-| `goodwill` | Providerfeld im realen Payload prüfen | Goodwill im Annual Report | niemals aus Intangibles schätzen |
-| `non_current_assets` | `nonCurrentAssetsTotal` | Non-current assets | Anlagenintensität |
-| `total_assets` | `totalAssets` | Total assets | Pflicht |
-| `accounts_payable` | `accountsPayable` | Accounts payable | Pflicht WC |
-| `current_liabilities` | `totalCurrentLiabilities` | Current liabilities | Pflicht |
-| `short_term_debt` | `shortTermDebt` | Current debt | Net Debt |
-| `long_term_debt` | `longTermDebtTotal` / `longTermDebt` | Non-current borrowings | Net Debt |
-| `interest_bearing_debt` | intern normalisieren; EODHD `shortLongTermDebtTotal` als Cross-Check | offizielle Debt Notes | zentrale Debt-Policy |
-| `long_term_liabilities` | `nonCurrentLiabilitiesTotal` | Non-current liabilities | Anlagendeckung II |
-| `total_liabilities` | `totalLiab` | Total liabilities | ergänzende Kennzahlen |
-| `total_equity` | `totalStockholderEquity` | Total shareholders' equity | Pflicht |
+| `revenue` | `totalRevenue` | Total net sales | validieren; 2025 bereits exakter Treffer |
+| `cost_of_revenue` | `costOfRevenue` | Total cost of sales | validieren |
+| `gross_profit` | `grossProfit` | Gross profit | validieren |
+| `operating_income` | `operatingIncome` | Income from operations | zentrale EBIT-nahe operative Größe |
+| `ebit` | `ebit` | gegen Income from operations / EBIT-Definition prüfen | Providerwert nicht blind mit operating income gleichsetzen |
+| `ebitda` | `ebitda` | intern zusätzlich aus EBIT + D&A plausibilisieren | Cross-Check |
+| `pretax_income` | `incomeBeforeTax` | Income before income taxes | validieren |
+| `income_tax_expense` | `incomeTaxExpense` | Income tax expense | Vorzeichen prüfen |
+| `net_income` | `netIncome` | Net income | validieren |
+| `interest_expense` | `interestExpense` | Interest/finance notes | Definition prüfen |
+| `research_and_development` | `researchAndDevelopment` | R&D costs | validieren |
 
-### Net-Debt-Regel
+### US-GAAP-Kontrollwerte 2025
 
-EODHD dokumentiert `netDebt` und `shortLongTermDebtTotal`. Für das Tool wird Net Debt trotzdem aus den normalisierten Einzelpositionen nachvollziehbar berechnet. Provider-`netDebt` ist ein Cross-Check, keine Blackbox-Grundlage.
+- Revenue: 32,6673 Mrd. EUR
+- Cost of sales: 15,4093 Mrd. EUR
+- Gross profit: 17,2580 Mrd. EUR
+- R&D: 4,6988 Mrd. EUR
+- Income from operations: 11,3014 Mrd. EUR
+- Income before taxes: 11,4061 Mrd. EUR
+- Net income: 9,6094 Mrd. EUR
+
+Die vollständigen 2025/2024 Kontrollwerte stehen maschinenlesbar in `src/stock_valuation/validation/asml_reference.py`.
 
 ---
 
-## 4. Cashflow
+## 3. Bilanz – Alpha Vantage
 
-Pfad EODHD: `Financials::Cash_Flow::yearly` bzw. `quarterly`.
+Endpoint: `BALANCE_SHEET`
 
-| Internal key | EODHD-Feld | Primärquellen-Check | Policy |
+| Internal key | Alpha-Vantage-Feld | Primärquellen-Check | Status/Policy |
 |---|---|---|---|
-| `operating_cash_flow` | `totalCashFromOperatingActivities` | Net cash provided by operating activities | Pflicht |
-| `depreciation_amortization` | `depreciation`; zusätzlich IS `depreciationAndAmortization` | D&A / Cashflow reconciliation | Cross-Check |
-| `capex_ppe` | `capitalExpenditures` | Purchases of PPE | Vorzeichen normalisieren |
-| `capex_intangibles` | kein universell verlässliches Standardfeld | ASML Cashflow / Notes | bei Bedarf Primärquelle/manual |
-| `capex_total` | intern aus definierter Policy | Primärquelle | DCF-relevante Definition |
-| `change_in_working_capital_provider` | `changeInWorkingCapital` | Cashflow reconciliation | nur Cross-Check zur eigenen WC-Logik |
-| `stock_based_compensation` | `stockBasedCompensation` | Notes / cashflow reconciliation | Non-cash analysis |
-| `other_non_cash_items` | `otherNonCashItems` | Primärquelle | DCF-Prüfung |
-| `dividends_paid` | `dividendsPaid` | Financing cash flow | Ausschüttung |
-| `share_repurchases_net_cashflow` | `salePurchaseOfStock` | Share buyback disclosures | Vorzeichen/Issuance prüfen |
-| `free_cash_flow_provider` | `freeCashFlow` | intern OCF - Capex gegenprüfen | Provider-FCF nur Cross-Check |
+| `total_assets` | `totalAssets` | Total assets | validieren |
+| `current_assets` | `totalCurrentAssets` | Total current assets | validieren |
+| `cash_and_equivalents` | `cashAndCashEquivalentsAtCarryingValue` | Cash and cash equivalents | primäres Cash-Feld |
+| `short_term_investments` | `shortTermInvestments` | Short-term investments | separat halten |
+| `cash_and_short_term_investments` | `cashAndShortTermInvestments` | Summe Cash + ST investments | nur Cross-Check; Komponenten bevorzugen |
+| `inventory` | `inventory` | Inventories, net | validieren |
+| `current_assets` | `totalCurrentAssets` | Current assets | validieren |
+| `ppe_net` | `propertyPlantEquipment` | PP&E net | validieren |
+| `intangible_assets` | `intangibleAssets` | Intangibles | Goodwill-Überlappung beachten |
+| `goodwill` | `goodwill` | Goodwill | validieren |
+| `total_liabilities` | `totalLiabilities` | Total liabilities | validieren |
+| `current_liabilities` | `totalCurrentLiabilities` | Total current liabilities | validieren |
+| `accounts_payable` | `currentAccountsPayable` | Accounts payable | validieren; 2025 bereits exakter Treffer |
+| `short_term_debt` | `shortTermDebt` | reine Short-term borrowings | nicht mit gesamtem Current Debt verwechseln |
+| `current_debt` | `currentDebt` | Short-term borrowings + current portion long-term debt | für spätere Debt-Bridge semantisch passender |
+| `long_term_debt` | `longTermDebt` | Long-term debt | validieren |
+| `shareholders_equity` | `totalShareholderEquity` | Total shareholders' equity | validieren |
 
-EODHD definiert `freeCashFlow` als Operating Cash Flow minus `capitalExpenditures`. Für das Tool wird die verwendete FCF-Definition explizit gespeichert, damit Analyse-FCF, Owner Earnings und später FCFF nicht vermischt werden.
+### `accounts_receivable` – wichtiger Sonderfall
+
+Das bisherige Alpha-Vantage-Mapping verwendet `currentNetReceivables`.
+
+Alpha Vantage definiert `currentNetReceivables` als **Receivables, Net, Current, Total**. Dieses Feld umfasst neben Trade Accounts Receivable ausdrücklich auch Notes, Loans und weitere kurzfristige Forderungen.
+
+Damit ist es **nicht semantisch identisch** mit ASML `Accounts receivable, net` und darf nicht ungeprüft als `accounts_receivable` für DSO/Working Capital verwendet werden.
+
+Erster lokaler 2025-Vergleich:
+- Alpha `currentNetReceivables`: ca. 4,1642 Mrd. EUR
+- ASML `Accounts receivable, net`: 3,0230 Mrd. EUR
+
+Folge: Das Feld bleibt bis zur gezielten Mappingkorrektur für DSO/Working Capital gesperrt. Wenn Alpha kein engeres Trade-Receivables-Feld liefert, kommt dieser Rohwert aus ASML Primärquelle/manueller strukturierter Ergänzung oder einem anderen Provider.
+
+### Debt-Semantik
+
+Alpha dokumentiert:
+- `shortTermDebt` = Short-term borrowings mit ursprünglicher kurzer Laufzeit
+- `currentDebt` = gesamte Current Debt inklusive current maturities of long-term debt
+- `longTermDebt` = Long-term debt total
+
+Die spätere Net-Debt-/EV-Bridge muss diese Komponenten explizit definieren; `shortTermDebt` allein reicht nicht.
 
 ---
 
-## 5. Aktienzahl und Bewertung
+## 4. Cashflow – Alpha Vantage
 
-| Internal key | EODHD | Primärquelle | Policy |
+Endpoint: `CASH_FLOW`
+
+| Internal key | Alpha-Vantage-Feld | Primärquellen-Check | Policy |
 |---|---|---|---|
-| `shares_outstanding_point_in_time` | `outstandingShares` / SharesStats | ASML share data | für historische Market Cap |
-| `diluted_weighted_average_shares` | Income Statement / `commonStockSharesOutstanding` nur nach Prüfung | ASML EPS note | Fair Value je Aktie / EPS |
-| `market_cap` | `Highlights::MarketCapitalization` als Cross-Check | selbst aus Kurs × passender Aktienzahl | intern rechnen |
-| `market_price` | EOD-/Price API, nicht Fundamentals | Börsenkurs am Analyse-Stichtag | Snapshot speichern |
+| `operating_cash_flow` | `operatingCashflow` | Net cash provided by operating activities | Pflicht |
+| `depreciation_amortization` | `depreciationDepletionAndAmortization` | D&A cashflow reconciliation | validieren |
+| `capital_expenditures` | `capitalExpenditures` | ASML PP&E / PP&E+intangibles | semantisch prüfen, nicht blind DCF-CAPEX |
+| `dividends_paid` | `dividendPayout` | Dividend paid | validieren |
+| `share_repurchases` | `paymentsForRepurchaseOfCommonStock` | Share buyback cash flow | validieren |
+| `change_in_operating_assets` | `changeInOperatingAssets` | Cashflow reconciliation | optional/cross-check |
+| `change_in_operating_liabilities` | `changeInOperatingLiabilities` | Cashflow reconciliation | optional/cross-check |
 
-Stichtags-Aktienzahl und gewichtete durchschnittliche Aktienzahl sind unterschiedliche Größen und dürfen nicht austauschbar verwendet werden.
+### `capitalExpenditures` – wichtiger Sonderfall
+
+Alpha Vantage dokumentiert dieses Feld als `PaymentsToAcquireProductiveAssets`: Cash outflows für PP&E, Software und weitere immaterielle produktive Assets.
+
+ASML US GAAP 2025:
+- PP&E purchases: 1,5736 Mrd. EUR
+- intangible purchases: 0,0576 Mrd. EUR
+- PP&E + intangible purchases: 1,6312 Mrd. EUR
+
+Erster Alpha-Vantage-Wert: ca. 1,5115 Mrd. EUR.
+
+Der Providerwert entspricht keiner offiziellen ASML-Größe exakt. Er darf daher noch nicht als `capex_ppe` oder `capex_total` in FCF/Owner Earnings eingehen. Die DCF-CAPEX-Policy bleibt ein eigener fachlicher Schritt.
+
+---
+
+## 5. Primärquellen-Gate
+
+Implementiert in:
+
+- `src/stock_valuation/validation/asml_reference.py`
+- `src/stock_valuation/validation/service.py`
+- Streamlit `Datenimport -> ASML Primärquellen-Validierung`
+
+Regeln:
+
+- <= 0,5 % Abweichung -> PASS
+- > 0,5 % bis 2 % -> WARN
+- > 2 % -> FAIL
+- kein Providerwert -> MISSING
+
+Kritische FAIL/MISSING-Felder blockieren die Freigabe dieses Provider-Mappings. Cross-Check-Felder blockieren nicht automatisch.
+
+Kontrollwerte werden niemals als stille Ersatzdaten in den Snapshot geschrieben.
 
 ---
 
 ## 6. Analystenschätzungen
 
-EODHD Fundamentals v1.1 enthält unter `Earnings::Trend` getrennte Annual-/Quarterly-Schätzungen. Erwartete Felder umfassen unter anderem:
+Endpoint: `EARNINGS_ESTIMATES`
 
-- `earningsEstimateAvg`
-- `earningsEstimateLow`
-- `earningsEstimateHigh`
-- `revenueEstimateAvg`
-- EPS-Trend-/Revisionsdaten
+Alpha Vantage liefert annual/quarterly EPS- und Revenue-Schätzungen sowie Analystenzahl und Revisionshistorie.
 
-Beim realen ASML-Payload wird geprüft, welche Revenue-Low/High- und Analyst-Count-Felder tatsächlich geliefert werden. Nicht vorhandene Felder werden nicht erfunden.
+Gespeichert werden:
 
-### DCF-Verwendung
+- EPS Low / Average / High
+- Revenue Low / Average / High
+- Analyst Count
+- Provider
+- Abrufzeit
+- Periodenlabel
 
-- **Jahr 1:** Management-Guidance + Analystenkonsens
-- **Jahre 2–3:** Low / Average / High als Szenarioanker
-- **Jahre 4–5:** eigene fundamentale Annahmen
-- **Jahre 6–10:** Fade / Mean Reversion
+Der Provider liefert auch lange historische Estimate-/Revisionsreihen. Diese bleiben im Snapshot erhalten, werden in der normalen UI aber standardmäßig ausgeblendet, wenn die Periode vor dem Analyse-Stichtag liegt.
 
-Analystenschätzungen werden mit `provider`, `retrieved_at`, Zeitraum und Analystenzahl gespeichert.
+Für die DCF-Verwendung wird später zusätzlich eindeutig zwischen annual und quarterly/horizon unterschieden. Bis dahin werden historische Estimate-Reihen nicht als Zukunftsforecast interpretiert.
 
 ---
 
@@ -171,73 +211,52 @@ Analystenschätzungen werden mit `provider`, `retrieved_at`, Zeitraum und Analys
 
 Guidance wird **nicht** als Analystenschätzung gespeichert.
 
-Für den 2025 Annual Report / Blick auf 2026 wurden offiziell genannt:
+Offizielle Referenzbeispiele:
 
-- 2026 Total net sales: **€34–39 Mrd.**
-- 2026 Gross margin: **51–53 %**
-- annualisierte effektive Steuerquote ungefähr **17 %** nach US GAAP
+- 2026 Total net sales: 34–39 Mrd. EUR
+- 2026 Gross margin: 51–53 %
+- 2030 Revenue Opportunity: ca. 44–60 Mrd. EUR
+- 2030 Gross margin opportunity: ca. 56–60 %
 
-Langfristige 2030-Chance:
-
-- Revenue: **ca. €44–60 Mrd.**
-- Gross margin: **ca. 56–60 %**
-
-Diese Korridore sind wertvolle DCF-Evidenz, aber keine automatisch zu erzwingenden Base-/Best-Case-Werte. Die langfristigen Ziele werden als Management-Szenario gespeichert und mit Analysten- und eigenen Annahmen verglichen.
+Diese Korridore sind Evidenz für Szenarien, keine automatisch erzwungenen DCF-Annahmen.
 
 ---
 
 ## 8. Unternehmensspezifische ASML-Daten
 
-Für die qualitative Analyse und spätere Forecast-Qualität werden optional gespeichert:
+Optionale `operating facts`:
 
 - Net system sales
 - Net service and field option sales
 - Logic / Memory sales
-- bookings / order intake, soweit veröffentlicht
-- backlog, soweit veröffentlicht
-- System-/Technologie-Mix (EUV, non-EUV etc.)
-- R&D
+- bookings / order intake
+- backlog
+- System-/Technologie-Mix
 - Installed-base-bezogene Informationen
+- R&D
 
-Diese Daten sind **nicht Teil des universellen Industrie-Rohdatenschemas**, sondern ASML-spezifische `operating facts`.
-
----
-
-## 9. 10-Jahres-Validierungsplan
-
-Für ASML sollen die letzten zehn abgeschlossenen Geschäftsjahre geladen werden.
-
-Validierung:
-
-1. EODHD v1.1 laden.
-2. Berichtsperioden auf ASML-Fiscal-Year-End ausrichten.
-3. Währung und Einheiten normalisieren.
-4. Für 2025 alle Kernfelder gegen offizielles ASML Financial-Statements-Excel prüfen.
-5. Stichproben für ältere Jahre durchführen.
-6. Abweichungen oberhalb definierter Toleranzen protokollieren.
-7. Keine stillen Feldsubstitutionen.
-
-### Toleranzprinzip
-
-Toleranzen dienen nur Rundungs-/Darstellungsunterschieden. Eine semantische Abweichung darf nie als 'innerhalb Toleranz' kaschiert werden.
+Diese Daten sind nicht Teil des universellen Industrie-Rohdatenschemas.
 
 ---
 
-## 10. Phase-2-Akzeptanzkriterien für ASML
+## 9. Phase-2-Akzeptanzkriterien für ASML
 
-Phase 2 gilt für ASML erst dann als erfolgreich, wenn:
+Phase 2 gilt für die automatische ASML-Datenbasis erst dann als ausreichend validiert, wenn:
 
-- mindestens zehn Jahresperioden soweit verfügbar importiert werden,
+- mindestens zehn Jahresperioden verfügbar sind,
 - GuV, Bilanz und Cashflow eindeutig den Perioden zugeordnet sind,
-- Umsatz, EBIT, Net Income, Equity, Assets, Cash, Debt, OCF, Capex, D&A, A/R, Inventory und A/P verfügbar oder explizit als missing markiert sind,
-- 2025-Kernwerte gegen die offizielle ASML-Quelle plausibilisiert sind,
+- Kernfelder gegen ASML 2025/2024 geprüft sind,
+- semantisch breitere Providerfelder nicht unter zu engen internen Namen geführt werden,
+- Debt-Komponenten explizit definiert sind,
+- CAPEX-Basis vor DCF/FCF geklärt ist,
 - Estimates und Guidance getrennt gespeichert werden,
-- jede Zahl Quelle und Abrufzeit besitzt,
+- jede Zahl Providerfeld, Originalwert und Abrufzeit besitzt,
 - kein fertiger Provider-ROE/ROCE ungeprüft in die Kennzahlenengine gelangt.
 
 ## Quellen
 
-- EODHD Fundamentals API v1.1: `https://eodhd.com/financial-apis/stock-etfs-fundamental-data-feeds`
-- EODHD Fundamentals Glossary: `https://eodhd.com/financial-academy/financial-faq/fundamentals-glossary-common-stock`
-- ASML Annual Report 2025 Downloads: `https://www.asml.com/investors/annual-report/2025/downloads`
-- ASML Annual Report 2025 Financials: `https://www.asml.com/en/investors/annual-report/2025/financials`
+- Alpha Vantage API: `https://www.alphavantage.co/documentation/`
+- Alpha Vantage Fundamental field definitions: `https://documentation.alphavantage.co/FundamentalDataDocs/index.html`
+- ASML Annual Report 2025 US GAAP: `https://ourbrand.asml.com/m/71076aaad607de4d/original/asml-2025-annual-report-based-on-us-gaap.pdf`
+- ASML Annual Report 2025 Downloads: `https://www.asml.com/en/investors/annual-report/2025/downloads`
+- EODHD Fundamentals API (optional fallback): `https://eodhd.com/financial-apis/stock-etfs-fundamental-data-feeds`
