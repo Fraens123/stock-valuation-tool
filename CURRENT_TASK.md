@@ -1,27 +1,31 @@
 # Current Task
 
-## Phase 2.2 – ASML Primärquellen-Gate und Provider-Mapping bereinigen
+## Phase 2.2 – Feldweise ASML-Datenfreigabe und Vorbereitung Phase 3A
 
-Phase 0 ist implementiert. Phase 1 ist fachlich ausreichend spezifiziert. Die Datenpipeline wurde lokal mit echten API-Keys getestet.
+Der erste echte lokale ASML-Import ist erfolgreich gelaufen.
 
-## Aktueller Live-Stand
+### Verifizierter Live-Stand
 
-### EODHD
+- Alpha-Vantage-Free-Key funktioniert.
+- Fundamentals-Symbol `ASML` liefert konsolidierte ASML-Holding-Abschlüsse in EUR.
+- `ASML.AMS` lieferte beim Fundamentals-Probe keine Statements und wird dafür nicht verwendet.
+- Probe: 20 Jahresberichte, 81 Quartalsberichte.
+- erster Snapshot: 720 normalisierte jährliche Rohdatenpunkte.
+- EODHD-Free-Key bleibt für Fundamentals gesperrt (`403 Forbidden`).
+- Primärquellencheck 2024/2025 gegen ASML US GAAP ist implementiert.
+- mehrere Felder bestehen exakt/nahezu exakt; andere Felder sind nachweislich ungeeignet oder missing.
 
-- Free-Key gültig.
-- `ASML.AS` Fundamentals v1.1 liefert HTTP 403, weil der getestete Free-Tarif Fundamentals nicht freischaltet.
-- Adapter bleibt erhalten, ist aber derzeit **nicht V1-Livequelle**.
+Siehe `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`.
 
-### Alpha Vantage
+## Verbindliche Regel
 
-- Free-Key gültig.
-- `ASML.AMS` liefert beim Fundamentals-Endpoint 0 Reports.
-- `ASML` liefert konsolidierte ASML-Holding-Abschlüsse in EUR.
-- Lokaler Nutzer-Test: 20 Jahresberichte, 81 Quartalsberichte.
-- Vollimport erfolgreich: 720 Financial-Fact-Datenpunkte über 20 Geschäftsjahre.
-- Estimate-Historie wurde ebenfalls importiert.
+Alpha Vantage wird nicht pauschal freigegeben. Jedes interne Rohdatenfeld erhält einen Feld-Gate:
 
-Alpha Vantage ist damit **V1-Kandidat**, aber erst nach Primärquellenprüfung freizugeben.
+- `approved`: alle vorhandenen Primärquellenchecks PASS
+- `review`: WARN, aber kein FAIL/MISSING
+- `blocked`: mindestens ein FAIL oder MISSING
+
+Downstream-Kennzahlen dürfen nur auf fachlich freigegebenen Rohdatenfeldern aufbauen.
 
 ## Vor Beginn lesen
 
@@ -29,68 +33,53 @@ Alpha Vantage ist damit **V1-Kandidat**, aber erst nach Primärquellenprüfung f
 2. `ROADMAP.md`
 3. `docs/RAW_DATA_SCHEMA.md`
 4. `docs/ASML_DATA_MAPPING.md`
-5. `docs/ASML_PROVIDER_VALIDATION.md`
+5. `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`
 6. `docs/NORMALIZATION_POLICY.md`
-7. `docs/DATA_SOURCES.md`
-8. `src/stock_valuation/validation/asml_reference.py`
-9. `src/stock_valuation/validation/service.py`
-10. `src/stock_valuation/data/normalization_alphavantage.py`
+7. `docs/METHODOLOGY_OPEN_QUESTIONS.md`
+8. `src/stock_valuation/validation/service.py`
 
-## Bereits implementiert
+## Aktueller Arbeitsblock
 
-- Alpha-Vantage-Adapter mit Free-Tier-Pacing
-- 1-Request-Diagnosetest
-- Alpha-Vantage-Normalisierung für GuV/Bilanz/Cashflow/Estimates
-- Snapshot-Persistenz
-- EODHD-Zugriffsfehler als verständliche Providerfehlermeldung
-- ASML-US-GAAP-Referenzwerte 2025/2024
-- automatisches Primärquellen-Gate mit PASS/WARN/FAIL/MISSING
-- Streamlit-Validierungstabelle
-- historische Analystenschätzungen bleiben gespeichert, werden aber standardmäßig aus der normalen Ansicht ausgeblendet
-- Tests für Validierung und Estimate-Filter
+### A. Feld-Gates stabilisieren
 
-## Jetzt lokal prüfen
+- Feldfreigabe aus 2024/2025-Checks anzeigen.
+- Ein FAIL/MISSING sperrt das Feld auch dann, wenn das andere Jahr PASS ist.
+- problematische Felder nicht still ersetzen.
+- `accounts_receivable`, `inventory`, `ppe_net`, `short_term_debt`, `operating_cash_flow`, `capital_expenditures` und `depreciation_amortization` bleiben bis zur Klärung blockiert.
 
-Nach `git pull` und `pytest -q`:
+### B. Phase-3A-Datenbereitschaft
 
-1. Bestehende ASML-Analyse öffnen. **Kein neuer API-Import nötig.**
-2. `Datenimport` öffnen.
-3. Abschnitt `ASML Primärquellen-Validierung` prüfen.
-4. PASS/WARN/FAIL/MISSING-Ausgabe erfassen.
-5. Besonders prüfen:
-   - `accounts_receivable`
-   - `capital_expenditures`
-   - `cash_and_short_term_investments`
-   - Debt-Felder
-   - D&A
-   - Inventory
-6. Problemfelder anhand der Providersemantik und ASML-US-GAAP-Primärquelle neu mappen oder explizit als nicht belastbar markieren.
+Automatisch anzeigen, welche Kennzahlen bereits eine freigegebene Rohdatenbasis besitzen:
 
-## Gate-Regel
+- Eigenkapitalrendite
+- Umsatzrendite
+- EBIT-Marge
+- Kapitalumschlag
+- ROCE-Datenbasis
+- EBITDA-Marge-Datenbasis
 
-Phase 3 darf für eine konkrete Kennzahl nur validierte Rohdaten verwenden.
+Dies ist nur ein Daten-Gate. Offene Buchdefinitionen bleiben separat blockierend.
 
-- <= 0,5 % Abweichung: PASS
-- > 0,5 % bis 2 %: WARN
-- > 2 %: FAIL
-- kein Wert: MISSING
+### C. Nächster Implementierungsschritt
 
-Cross-Check-only-Felder blockieren den Provider nicht automatisch.
+Wenn die lokalen Feld-Gates bestätigen, dass `revenue`, `net_income`, `operating_income`, `total_assets`, `shareholders_equity` und ggf. `current_liabilities` approved sind:
+
+1. Phase 3A mit den eindeutig möglichen Kennzahlen beginnen.
+2. noch gesperrte Kennzahlen sichtbar als `nicht berechenbar / Datenbasis nicht freigegeben` darstellen.
+3. keine Ersatzwerte aus offiziellen ASML-Kontrollzahlen in die normale Providerhistorie schreiben.
 
 ## Noch NICHT tun
 
-- keine Kennzahlenengine auf ungeprüfte Felder loslassen
 - keine DCF-Engine
+- keine FCF-/Owner-Earnings-Berechnung aus blockiertem OCF/CAPEX
+- keine Working-Capital-Kennzahlen aus `currentNetReceivables`
 - keine Fair-KGV-Punkte erfinden
-- keine Risiko-Dropdown-Prozentwerte festlegen
-- keine fehlenden Providerwerte mit ASML-Referenzwerten automatisch auffüllen
+- keine offenen Schmidlin-Formeln eigenmächtig festlegen
 
 ## Definition of Done dieses Blocks
 
-- ASML 2025/2024 Kernfelder gegen US GAAP automatisch geprüft.
-- alle kritischen FAIL/MISSING-Felder fachlich geklärt oder aus der automatischen Datenbasis ausgeschlossen.
-- Providerfeld-Semantik dokumentiert.
-- Alpha Vantage entweder für definierte Rohdatenfelder freigegeben oder durch eine bessere Quelle ersetzt.
-- Estimate-Ansicht zeigt standardmäßig keine veralteten historischen Perioden.
-
-Danach kann Phase 3A mit den ersten **validierten** Ertrags-/Rentabilitätskennzahlen beginnen.
+- lokale Seite `Datenqualität` zeigt Feld-Gates reproduzierbar.
+- Phase-3A-Datenbereitschaft ist sichtbar.
+- Tests für PASS/WARN/FAIL/MISSING-Gating bestehen.
+- problematische ASML-Felder sind dokumentiert.
+- danach kann Phase 3A feldweise beginnen.
