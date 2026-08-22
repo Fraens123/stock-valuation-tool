@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
+from stock_valuation.data.providers.asml_primary import (
+    ASMLPrimarySourceError,
+    download_2025_us_gaap_workbook,
+    scan_financial_statement_workbook,
+)
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.snapshot_service import sync_alphavantage_depreciation_amortization
 from stock_valuation.database.models import AnalysisStatus
@@ -299,3 +304,47 @@ if st.button(
         st.error(str(exc))
     except Exception as exc:
         st.exception(exc)
+
+st.divider()
+st.subheader("Offizielle ASML-Primärquelle – US-GAAP Excel")
+st.caption(
+    "Die Cashflow-Diagnose zeigt für 2024 und 2025 einen nahezu einheitlichen Skalierungsfehler "
+    "über OCF, PP&E-CAPEX und Dividenden. Deshalb wird das Alpha-Vantage-Cashflow-Statement für "
+    "ASML nicht durch einen Korrekturfaktor repariert. Stattdessen prüfen wir die offizielle "
+    "ASML-US-GAAP-Finanzdatei direkt. Dieser Abruf benötigt **0 Alpha-Vantage-Requests**, "
+    "verändert den Snapshot noch nicht und zeigt zunächst nur die gefundenen Originalzeilen."
+)
+
+if st.button("Offizielle ASML-2025-US-GAAP-Excel prüfen (0 AV Requests)"):
+    try:
+        with st.spinner("Lade und untersuche die offizielle ASML-US-GAAP-Finanzdatei …"):
+            workbook_content = download_2025_us_gaap_workbook()
+            primary_matches = scan_financial_statement_workbook(workbook_content)
+        st.session_state["asml_primary_matches"] = primary_matches
+        st.success(
+            f"Offizielle ASML-Datei gelesen: {len(primary_matches)} relevante Zeilen gefunden. "
+            "Noch wurden keine Primärquellenwerte in den Snapshot geschrieben."
+        )
+    except ASMLPrimarySourceError as exc:
+        st.error(str(exc))
+
+primary_matches = st.session_state.get("asml_primary_matches")
+if primary_matches:
+    primary_rows = [
+        {
+            "Interner Kandidat": row["target"],
+            "Tabellenblatt": row["sheet"],
+            "Zeile": row["row"],
+            "Treffer": row["matched_pattern"],
+            "Originalzeile": row["row_values"],
+            "Kopfzeile -1": row["header_minus_1"],
+            "Kopfzeile -2": row["header_minus_2"],
+        }
+        for row in primary_matches
+    ]
+    st.dataframe(pd.DataFrame(primary_rows), use_container_width=True, hide_index=True)
+    st.info(
+        "Diese Tabelle dient einmalig dazu, das Layout der offiziellen ASML-Datei zu bestätigen. "
+        "Danach wird daraus ein deterministischer Primärquellen-Importer für die gesperrten "
+        "Bilanz- und Cashflow-Zeilen gebaut."
+    )
