@@ -13,7 +13,11 @@ from stock_valuation.companies.provider_symbols import get_provider_symbol, upse
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.providers.eodhd import EODHDProvider
-from stock_valuation.data.snapshot_service import sync_alphavantage_snapshot, sync_eodhd_snapshot
+from stock_valuation.data.snapshot_service import (
+    sync_alphavantage_estimates,
+    sync_alphavantage_financials,
+    sync_eodhd_snapshot,
+)
 from stock_valuation.database.models import AnalysisStatus, EstimateSnapshot, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
 
@@ -97,9 +101,9 @@ provider_choice = st.radio(
 
 if provider_choice == "Alpha Vantage":
     st.write(
-        "Ein vollständiger Import verwendet vier Requests: GuV, Bilanz, Cashflow und "
-        "Analystenschätzungen. Vorher wird mit genau einem Request geprüft, ob der gewählte "
-        "Provider-Ticker tatsächlich Fundamentals liefert."
+        "Die Imports sind absichtlich getrennt: **3 Requests** für GuV/Bilanz/Cashflow und "
+        "optional **1 Request** für Analystenschätzungen. Fehlende Estimates blockieren damit "
+        "nicht mehr den historischen Finanzdatenimport."
     )
     api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
     if api_key_available:
@@ -178,40 +182,68 @@ if provider_choice == "Alpha Vantage":
         st.info(
             "Diese Analyse ist eingefroren. Für aktuelle Daten zuerst eine neue Revision erzeugen."
         )
-    elif st.button(
-        "Finanzdaten und Schätzungen importieren (4 Requests)",
-        type="primary",
-        disabled=not api_key_available or not probe_ok,
-        help="Wird erst nach einem erfolgreichen 1-Request-Test für genau dieses Symbol freigeschaltet.",
-    ):
-        try:
-            provider = AlphaVantageProvider()
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse wurde nicht gefunden.")
-                with st.spinner(f"Importiere {alpha_symbol} …"):
-                    fact_count, estimate_count = sync_alphavantage_snapshot(
-                        session,
-                        current,
-                        provider,
-                        symbol=alpha_symbol,
+    else:
+        import_cols = st.columns(2)
+        with import_cols[0]:
+            if st.button(
+                "Finanzabschlüsse importieren (3 Requests)",
+                type="primary",
+                disabled=not api_key_available or not probe_ok,
+                help="GuV, Bilanz und Cashflow. Funktioniert unabhängig davon, ob Estimates verfügbar sind.",
+            ):
+                try:
+                    provider = AlphaVantageProvider()
+                    with get_session() as session:
+                        current = get_analysis(session, analysis_id)
+                        if current is None:
+                            raise ValueError("Analyse wurde nicht gefunden.")
+                        with st.spinner(f"Importiere Finanzabschlüsse für {alpha_symbol} …"):
+                            fact_count = sync_alphavantage_financials(
+                                session,
+                                current,
+                                provider,
+                                symbol=alpha_symbol,
+                            )
+                        upsert_provider_symbol(
+                            session,
+                            current.company,
+                            provider="alphavantage",
+                            purpose="fundamentals",
+                            symbol=alpha_symbol,
+                            note="Erfolgreicher Finanzabschlussimport.",
+                        )
+                    st.success(f"{fact_count} Finanzdatenzeilen gespeichert.")
+                    st.rerun()
+                except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+                    st.error(str(exc))
+
+        with import_cols[1]:
+            if st.button(
+                "Analystenschätzungen importieren (1 Request)",
+                disabled=not api_key_available or not probe_ok,
+                help="Optional. Ein Fehler hier verändert bereits gespeicherte Finanzabschlüsse nicht.",
+            ):
+                try:
+                    provider = AlphaVantageProvider()
+                    with get_session() as session:
+                        current = get_analysis(session, analysis_id)
+                        if current is None:
+                            raise ValueError("Analyse wurde nicht gefunden.")
+                        with st.spinner(f"Importiere Estimates für {alpha_symbol} …"):
+                            estimate_count = sync_alphavantage_estimates(
+                                session,
+                                current,
+                                provider,
+                                symbol=alpha_symbol,
+                            )
+                    st.success(f"{estimate_count} Schätzdatensätze gespeichert.")
+                    st.rerun()
+                except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+                    st.error(
+                        "Die Analystenschätzungen konnten nicht importiert werden. "
+                        "Bereits gespeicherte Finanzabschlüsse bleiben unverändert.\n\n"
+                        + str(exc)
                     )
-                upsert_provider_symbol(
-                    session,
-                    current.company,
-                    provider="alphavantage",
-                    purpose="fundamentals",
-                    symbol=alpha_symbol,
-                    note="Erfolgreicher Fundamentals- und Estimates-Import.",
-                )
-            st.success(
-                f"Import abgeschlossen: {fact_count} Finanzdatenzeilen und "
-                f"{estimate_count} Schätzdatensätze gespeichert."
-            )
-            st.rerun()
-        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-            st.error(str(exc))
 
 else:
     st.warning(
@@ -338,7 +370,7 @@ if company_ticker.upper() == "ASML":
     )
 else:
     st.info(
-        "Der automatische Import dieser Aktie ist damit unabhängig von ASML. Die nächste "
-        "Ausbaustufe ergänzt generische Primärquellenadapter und einen Qualitätsstatus für "
-        "Unternehmen ohne speziellen Referenzadapter."
+        "Der automatische Import dieser Aktie ist unabhängig von ASML. Für offizielle "
+        "regulatorische Daten zusätzlich **Offizielle Daten** öffnen; SEC-reporting Unternehmen "
+        "können dort per Company Facts/XBRL ergänzt werden."
     )
