@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 
-CALCULATION_VERSION = "3a-0.2"
+CALCULATION_VERSION = "3a-0.3"
 
 
 @dataclass(frozen=True)
@@ -27,19 +27,19 @@ def safe_ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decima
 
 
 def calculate_ebit_margin(
-    operating_income: Decimal | None,
+    ebit: Decimal | None,
     revenue: Decimal | None,
 ) -> Decimal | None:
-    """Calculate EBIT/operating margin as a decimal fraction."""
-    return safe_ratio(operating_income, revenue)
+    """Calculate EBIT margin as a decimal fraction from already approved inputs."""
+    return safe_ratio(ebit, revenue)
 
 
 def calculate_ebitda_margin(
-    operating_income: Decimal | None,
+    ebit: Decimal | None,
     depreciation_amortization: Decimal | None,
     revenue: Decimal | None,
 ) -> Decimal | None:
-    """Calculate EBITDA margin as (operating income + D&A) / revenue."""
-    if operating_income is None or depreciation_amortization is None:
+    """Calculate EBITDA margin as (EBIT + D&A) / revenue from already approved inputs."""
+    if ebit is None or depreciation_amortization is None:
         return None
-    return safe_ratio(operating_income + depreciation_amortization, revenue)
+    return safe_ratio(ebit + depreciation_amortization, revenue)
