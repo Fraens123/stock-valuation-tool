@@ -6,9 +6,11 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-from stock_valuation.analyses.service import get_analysis, list_analyses
+from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
+from stock_valuation.data.snapshot_service import sync_alphavantage_depreciation_amortization
+from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.validation.service import (
     metric_validation_gates,
@@ -55,6 +57,7 @@ with get_session() as session:
         st.error("Analyse nicht gefunden.")
         st.stop()
     results = validate_asml_primary_source(session, analysis)
+    editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
 
 if analysis.company.ticker.upper() != "ASML":
     st.info("Der automatische Primärquellen-Gate ist derzeit für den ASML-Referenzfall implementiert.")
@@ -124,39 +127,75 @@ st.info(
 st.divider()
 st.subheader("D&A-Rohfelddiagnose")
 st.caption(
-    "Optionaler technischer Diagnoseabruf für die blockierte EBITDA-Marge. Dieser Test verändert "
-    "den Snapshot **nicht**, benötigt aber genau **2 Alpha-Vantage-Requests**: einmal "
-    "`INCOME_STATEMENT` und einmal `CASH_FLOW`. Er zeigt lediglich alle Rohfelder der letzten "
-    "zwei Geschäftsjahre, deren Namen `depreci`, `amorti` oder `depletion` enthalten."
+    "Die Diagnose zeigte für ASML, dass `depreciationAndAmortization` aus dem "
+    "`INCOME_STATEMENT` die offiziellen D&A-Kontrollwerte 2025 (1.025,9 Mio. €) und 2024 "
+    "(918,6 Mio. €) exakt trifft. Das Cashflow-Feld weicht 2024 ab und bleibt deshalb nur "
+    "Cross-Check."
 )
 
 api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 if not api_key_available:
-    st.warning("Für die optionale Diagnose fehlt `ALPHA_VANTAGE_API_KEY` in der lokalen `.env`.")
+    st.warning("Für die optionale Diagnose/Reparatur fehlt `ALPHA_VANTAGE_API_KEY` in der lokalen `.env`.")
 
-if st.button(
-    "D&A-Rohfelder prüfen (2 Requests)",
-    disabled=not api_key_available,
-    help="Nur ausführen, wenn du zwei Requests aus deinem Alpha-Vantage-Tageskontingent verwenden möchtest.",
-):
-    try:
-        provider = AlphaVantageProvider()
-        with st.spinner("Prüfe D&A-Rohfelder für ASML …"):
-            rows = provider.probe_depreciation_fields("ASML")
-        if not rows:
-            st.warning("In den beiden Statements wurden keine passenden Rohfelder gefunden.")
-        else:
+button_cols = st.columns(2)
+with button_cols[0]:
+    if st.button(
+        "D&A-Rohfelder prüfen (2 Requests)",
+        disabled=not api_key_available,
+        help="Technische Diagnose; verändert den Snapshot nicht.",
+    ):
+        try:
+            provider = AlphaVantageProvider()
+            with st.spinner("Prüfe D&A-Rohfelder für ASML …"):
+                rows = provider.probe_depreciation_fields("ASML")
+            if not rows:
+                st.warning("In den beiden Statements wurden keine passenden Rohfelder gefunden.")
+            else:
+                st.success(
+                    f"Diagnose abgeschlossen: {len(rows)} passende Rohfeld-Zeilen gefunden. "
+                    "Es wurden keine Snapshot-Daten verändert."
+                )
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        except ProviderError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.exception(exc)
+
+with button_cols[1]:
+    if st.button(
+        "D&A-Mapping anwenden (1 Request)",
+        type="primary",
+        disabled=not api_key_available or not editable,
+        help=(
+            "Lädt nur INCOME_STATEMENT und ersetzt ausschließlich die D&A-Serie im bestehenden "
+            "Snapshot. Alle anderen 720 Rohdaten bleiben unverändert."
+        ),
+    ):
+        try:
+            provider = AlphaVantageProvider()
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse nicht gefunden.")
+                with st.spinner("Aktualisiere nur die D&A-Serie aus INCOME_STATEMENT …"):
+                    count = sync_alphavantage_depreciation_amortization(
+                        session,
+                        current,
+                        provider,
+                        symbol="ASML",
+                    )
             st.success(
-                f"Diagnose abgeschlossen: {len(rows)} passende Rohfeld-Zeilen gefunden. "
-                "Es wurden keine Snapshot-Daten verändert."
+                f"D&A-Mapping aktualisiert: {count} Jahreswerte gespeichert. "
+                "Verbraucht wurde genau 1 Alpha-Vantage-Request."
             )
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.caption(
-                "ASML-Kontrollwerte für die bisherige kombinierte D&A-Prüfung: "
-                "2025 = 1.025,9 Mio. €, 2024 = 918,6 Mio. €. Ein ähnlich großer Wert ist nur ein "
-                "Hinweis; vor einem Mapping müssen Definition und Komponenten fachlich passen."
-            )
-    except ProviderError as exc:
-        st.error(str(exc))
-    except Exception as exc:
-        st.exception(exc)
+            st.rerun()
+        except (ProviderError, AnalysisFrozenError, ValueError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.exception(exc)
+
+if not editable:
+    st.caption(
+        "Die ausgewählte Analyse ist abgeschlossen/archiviert. Das D&A-Mapping kann nur in einer "
+        "offenen Revision geändert werden."
+    )
