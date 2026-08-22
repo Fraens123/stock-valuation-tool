@@ -98,7 +98,7 @@ else:
                 for item in analyses
             ]
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -269,6 +269,6 @@ with compare_tab:
                                     for item in group
                                 ]
                             ),
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True,
                         )
