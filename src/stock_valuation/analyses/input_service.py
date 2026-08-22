@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -56,7 +56,7 @@ def upsert_manual_input(
     row.unit = unit
     row.note = note.strip() if note else None
     row.overrides_metric = overrides_metric or None
-    row.entered_at = datetime.utcnow()
+    row.entered_at = datetime.now(UTC)
     session.commit()
     return row
 
