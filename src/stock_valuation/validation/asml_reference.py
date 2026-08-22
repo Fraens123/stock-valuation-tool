@@ -51,6 +51,16 @@ ASML_US_GAAP_REFERENCES: tuple[PrimarySourceReference, ...] = (
     _eur("current_assets", 2025, "30616.1", "Total current assets"),
     _eur("cash_and_equivalents", 2025, "12916.0", "Cash and cash equivalents"),
     _eur(
+        "short_term_investments",
+        2025,
+        "405.9",
+        "Short-term investments",
+        note=(
+            "Control component derived from the official disclosed total cash + short-term "
+            "investments less official cash and cash equivalents."
+        ),
+    ),
+    _eur(
         "cash_and_short_term_investments",
         2025,
         "13321.9",
@@ -103,6 +113,16 @@ ASML_US_GAAP_REFERENCES: tuple[PrimarySourceReference, ...] = (
     _eur("total_assets", 2024, "48589.6", "Total assets"),
     _eur("current_assets", 2024, "30737.4", "Total current assets"),
     _eur("cash_and_equivalents", 2024, "12735.9", "Cash and cash equivalents"),
+    _eur(
+        "short_term_investments",
+        2024,
+        "5.4",
+        "Short-term investments",
+        note=(
+            "Control component derived from the official disclosed total cash + short-term "
+            "investments less official cash and cash equivalents."
+        ),
+    ),
     _eur(
         "cash_and_short_term_investments",
         2024,
