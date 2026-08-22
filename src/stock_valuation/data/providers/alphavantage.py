@@ -21,14 +21,15 @@ from .base import (
 
 
 class AlphaVantageProvider(FinancialDataProvider):
-    """Alpha Vantage adapter for free-tier-friendly fundamentals testing.
+    """Alpha Vantage adapter for fundamentals testing.
 
     Financial statements are fetched from the documented INCOME_STATEMENT,
     BALANCE_SHEET and CASH_FLOW endpoints. Estimates use EARNINGS_ESTIMATES.
 
-    Alpha Vantage asks free API users to spread requests to roughly one request per
-    second. A full snapshot currently needs four endpoint calls, so this provider
-    spaces calls automatically instead of sending a burst.
+    The free tier currently has a daily quota and also asks users to spread requests
+    out. Full imports therefore pace calls. A one-request diagnostic probe is exposed
+    separately so rate-limit/access problems can be distinguished without repeatedly
+    spending four calls on a full import.
     """
 
     BASE_URL = "https://www.alphavantage.co/query"
@@ -37,7 +38,7 @@ class AlphaVantageProvider(FinancialDataProvider):
         self,
         api_key: str | None = None,
         timeout: int = 30,
-        min_request_interval_seconds: float = 1.1,
+        min_request_interval_seconds: float = 2.0,
     ) -> None:
         self.api_key = api_key or os.getenv("ALPHA_VANTAGE_API_KEY")
         self.timeout = timeout
@@ -47,7 +48,7 @@ class AlphaVantageProvider(FinancialDataProvider):
             raise ValueError("ALPHA_VANTAGE_API_KEY fehlt.")
 
     def _wait_for_request_slot(self) -> None:
-        """Respect the free-tier burst guidance without changing daily quota logic."""
+        """Space consecutive requests conservatively for the free tier."""
         if self._last_request_started_at is None or self.min_request_interval_seconds <= 0:
             return
         elapsed = time.monotonic() - self._last_request_started_at
@@ -62,23 +63,29 @@ class AlphaVantageProvider(FinancialDataProvider):
         query = {"function": function, "apikey": self.api_key, **params}
         response = requests.get(self.BASE_URL, params=query, timeout=self.timeout)
         if response.status_code == 403:
-            raise ProviderAccessError("Alpha Vantage hat den Abruf mit HTTP 403 abgelehnt.")
+            raise ProviderAccessError(
+                f"Alpha Vantage: {function} wurde mit HTTP 403 abgelehnt."
+            )
         if response.status_code == 429:
             raise ProviderRateLimitError(
-                "Alpha-Vantage-API-Limit erreicht. Beim Free-Tarif gilt zusätzlich zum "
-                "Tageslimit ein Burst-Limit; bitte später erneut versuchen."
+                f"Alpha Vantage: {function} — HTTP 429. API-Limit erreicht; "
+                "bitte später erneut versuchen."
             )
         response.raise_for_status()
         try:
             data = response.json()
         except ValueError as exc:
-            raise ProviderResponseError("Alpha Vantage lieferte keine gültige JSON-Antwort.") from exc
+            raise ProviderResponseError(
+                f"Alpha Vantage: {function} lieferte keine gültige JSON-Antwort."
+            ) from exc
 
         if not isinstance(data, dict):
-            raise ProviderResponseError("Unerwartetes Antwortformat von Alpha Vantage.")
+            raise ProviderResponseError(
+                f"Alpha Vantage: {function} lieferte ein unerwartetes Antwortformat."
+            )
 
-        # Alpha Vantage reports throttling and entitlement messages inside JSON with
-        # HTTP 200, so these must be handled explicitly.
+        # Alpha Vantage can report throttling and entitlement messages inside JSON
+        # while still returning HTTP 200, so those messages must be handled explicitly.
         message = str(data.get("Information") or data.get("Note") or data.get("Error Message") or "")
         lowered = message.lower()
         if message:
@@ -91,12 +98,29 @@ class AlphaVantageProvider(FinancialDataProvider):
                 "more sparingly",
             )
             if any(marker in lowered for marker in rate_limit_markers):
-                raise ProviderRateLimitError(message)
+                raise ProviderRateLimitError(f"Alpha Vantage: {function} — {message}")
             if "premium" in lowered or "subscription" in lowered or "entitlement" in lowered:
-                raise ProviderAccessError(message)
+                raise ProviderAccessError(f"Alpha Vantage: {function} — {message}")
             if data.get("Error Message"):
-                raise ProviderResponseError(message)
+                raise ProviderResponseError(f"Alpha Vantage: {function} — {message}")
         return data
+
+    def probe_income_statement(self, symbol: str) -> dict[str, Any]:
+        """Perform exactly one API request for diagnostics.
+
+        This intentionally does not persist anything. It is used by the UI to determine
+        whether a free key can currently access one fundamental endpoint before a full
+        four-request import is attempted.
+        """
+        data = self._request("INCOME_STATEMENT", symbol=symbol)
+        annual = data.get("annualReports") or []
+        quarterly = data.get("quarterlyReports") or []
+        return {
+            "function": "INCOME_STATEMENT",
+            "symbol": data.get("symbol") or symbol,
+            "annual_report_count": len(annual) if isinstance(annual, list) else 0,
+            "quarterly_report_count": len(quarterly) if isinstance(quarterly, list) else 0,
+        }
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
         data = self._request("SYMBOL_SEARCH", keywords=query)
