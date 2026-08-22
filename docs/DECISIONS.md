@@ -77,3 +77,26 @@ Quellenpriorität für einen konkreten Rohdatenwert:
 Für ASML werden die offiziellen 2025-US-GAAP-Financial-Statements als eigene Quelle `asml_primary` gespeichert. Alpha-Vantage-Werte bleiben parallel im Snapshot. Der Daten-Gate bevorzugt für dasselbe Feld/Jahr `asml_primary`, ohne den Fallback-Wert zu löschen.
 
 Die breite historische API-Serie wird nicht rückwirkend durch einen pauschalen Skalierungs- oder Korrekturfaktor verändert. Insbesondere werden die ASML-Cashflow-Abweichungen von Alpha Vantage nicht mathematisch „repariert“.
+
+## D-014 — ASML ist Referenzfall, nicht Import-Sonderweg
+**Status:** Accepted
+
+Neue Unternehmen müssen ohne Codeänderung angelegt und importiert werden können. Unternehmenssuche und Fundamentals-Ticker werden providerbezogen gespeichert. `Company.ticker` wird nicht als universeller Identifier missbraucht.
+
+Unternehmensidentität:
+
+1. ISIN, wenn verfügbar;
+2. sonst Ticker + Börse/Region.
+
+Ein gleicher Ticker an zwei Börsen darf nicht automatisch zu einem Unternehmen zusammengeführt werden.
+
+## D-015 — Generische Primärquellenadapter statt Unternehmensparser
+**Status:** Accepted
+
+Der ASML-XLSX-Parser bleibt ein Referenzadapter. Für breite Abdeckung werden generische regulatorische Quellen bevorzugt:
+
+1. SEC EDGAR Company Facts/XBRL für SEC-reporting Unternehmen (`sec_companyfacts`),
+2. europäische ESEF/iXBRL-Quellen für IFRS-Emittenten,
+3. generischer IR-Dokumentimport als Fallback.
+
+`sec_companyfacts` ist als offizielle Primärquelle in der zentralen Source-Resolution höher priorisiert als Alpha Vantage. Alpha-Vantage-Daten bleiben parallel gespeichert und auditierbar.
