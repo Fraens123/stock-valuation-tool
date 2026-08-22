@@ -109,4 +109,12 @@ def test_offline_replay_remaps_fact_ids_and_imports_review() -> None:
         )
         assert finding is not None
         assert finding.verdict == "PASS"
-        assert finding.fact_id == fact.id
+        # AIReviewFinding intentionally stores an auditable snapshot of the reviewed fact rather
+        # than a foreign-key fact_id. Successful import already proves that the old fact_id was
+        # remapped to a valid recreated fact. Verify the persisted semantic identity/value here.
+        assert finding.metric == fact.metric
+        assert finding.statement == fact.statement
+        assert finding.period_end == fact.period_end
+        assert finding.imported_value == fact.value
+        assert finding.provider == fact.provider
+        assert finding.provider_field == fact.provider_field
