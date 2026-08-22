@@ -37,7 +37,7 @@ FIELD_DEFINITIONS: dict[str, str] = {
     ),
     "ebitda": (
         "EBITDA ist eine abgeleitete Kennzahl. Provider-EBITDA dient nur als Cross-Check; für "
-        "Berechnungen soll EBITDA aus freigegebenem EBIT und freigegebenem D&A entstehen."
+        "Berechnungen wird EBITDA selbst aus freigegebenem EBIT und freigegebenem D&A abgeleitet."
     ),
 }
 
