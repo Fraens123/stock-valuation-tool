@@ -18,7 +18,7 @@ Für den Referenzfall ASML:
 
 Offizielle Unternehmensangaben haben bei historischen veröffentlichten Zahlen Vorrang vor einem normalisierten Sekundärprovider.
 
-### 2. Alpha Vantage — aktueller automatisierter V1-Testkandidat
+### 2. Alpha Vantage — automatischer V1-Kandidat mit Feld-Gates
 
 Für ASML muss zwischen Kurs- und Fundamentals-Symbol unterschieden werden:
 
@@ -46,14 +46,26 @@ Free-Tier:
 - vollständiger Import benötigt derzeit vier Requests
 - geeignet für Entwicklung und Einzelanalysen, nicht für Massen-Screening
 
-**Qualitäts-Gate:** Alpha Vantage wird erst für konkrete Rohdatenfelder freigegeben, wenn diese gegen offizielle ASML-US-GAAP-Kontrollwerte geprüft wurden. Der Gate ist in `stock_valuation.validation.service` implementiert.
+**Qualitätsentscheidung:** Alpha Vantage wird nicht pauschal freigegeben. Jedes interne Rohdatenfeld erhält einen eigenen Feld-Gate:
 
-Bekannte erste Prüfpunkte:
-- `accounts_receivable`: sichtbare semantische Abweichung
-- `capital_expenditures`: sichtbare Abweichung zur offiziellen PP&E-Cash-Purchase-Zahl
-- `cash_and_short_term_investments`: nur Cross-Check; Komponenten werden später separat aufgebaut
+- `approved`: alle vorhandenen Primärquellenchecks PASS
+- `review`: mindestens WARN, aber kein FAIL/MISSING
+- `blocked`: mindestens ein FAIL oder MISSING
 
-Siehe `docs/ASML_PROVIDER_VALIDATION.md`.
+Ein gutes Jahr darf eine problematische zweite Periode nicht verdecken.
+
+Bekannte blockierte/problematische ASML-Felder aus dem ersten Live-Test:
+- `accounts_receivable`
+- `inventory`
+- `ppe_net`
+- `short_term_debt`
+- `operating_cash_flow`
+- `capital_expenditures`
+- `depreciation_amortization`
+
+`cash_and_short_term_investments` bleibt nur Cross-Check; für Net Debt / EV sollen validierte Komponenten verwendet werden.
+
+Siehe `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`.
 
 Dokumentation:
 - `https://www.alphavantage.co/documentation/`
@@ -163,6 +175,8 @@ Priorität:
 3. optionaler Cross-Check-Provider
 4. manuelle Ergänzung
 
+Ein Providername allein ist keine Freigabe. Entscheidend ist die validierte Feldsemantik.
+
 ### Primärquellen-Gate
 
 Für ASML 2025/2024:
@@ -175,7 +189,7 @@ Ein Providerwert wird bei FAIL/MISSING nicht still durch den Kontrollwert ersetz
 
 ### Keine stillen Ersatzwerte
 
-Wenn z. B. `costOfRevenue` fehlt, wird DPO/DIO nicht still mit Umsatz berechnet. Der Wert wird als `missing` markiert und eine fachlich definierte Alternative muss explizit gewählt werden.
+Wenn ein benötigtes Rohdatenfeld fehlt oder blockiert ist, wird die davon abhängige Kennzahl nicht mit einem ähnlichen Feld berechnet. Der Wert wird als `missing` bzw. `blocked` markiert.
 
 ### Keine gemischten Definitionen
 
@@ -203,6 +217,6 @@ Die offizielle ASML-US-GAAP-Berichterstattung 2025/2024 dient als Primärquellen
 
 - `docs/RAW_DATA_SCHEMA.md`
 - `docs/ASML_DATA_MAPPING.md`
-- `docs/ASML_PROVIDER_VALIDATION.md`
+- `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`
 - `docs/NORMALIZATION_POLICY.md`
 - `docs/DCF_METHOD.md`
