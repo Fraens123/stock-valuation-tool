@@ -31,6 +31,19 @@ class ChangeItem:
     def changed(self) -> bool:
         return self.old_value != self.new_value
 
+    @property
+    def absolute_delta(self) -> float | None:
+        if isinstance(self.old_value, (int, float)) and isinstance(self.new_value, (int, float)):
+            return float(self.new_value) - float(self.old_value)
+        return None
+
+    @property
+    def relative_delta(self) -> float | None:
+        delta = self.absolute_delta
+        if delta is None or self.old_value in (0, 0.0):
+            return None
+        return delta / abs(float(self.old_value))
+
 
 def _normalize(value: Any) -> Any:
     if isinstance(value, Decimal):
@@ -67,7 +80,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
 
     changes: list[ChangeItem] = []
 
-    # Analysis metadata / market context.
     _add_change(
         changes,
         category="Analyse",
@@ -85,7 +97,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
         new_value=new.notes,
     )
 
-    # Published financial facts.
     old_rows = session.scalars(
         select(FinancialFactSnapshot).where(FinancialFactSnapshot.analysis_id == old.id)
     ).all()
@@ -106,7 +117,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
             new_value=right.value if right else None,
         )
 
-    # Analyst estimates.
     old_rows = session.scalars(
         select(EstimateSnapshot).where(EstimateSnapshot.analysis_id == old.id)
     ).all()
@@ -133,7 +143,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
                 new_value=getattr(right, field) if right else None,
             )
 
-    # Management guidance.
     old_rows = session.scalars(
         select(GuidanceSnapshot).where(GuidanceSnapshot.analysis_id == old.id)
     ).all()
@@ -159,7 +168,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
                 new_value=getattr(right, field) if right else None,
             )
 
-    # Manually entered source data (e.g. Aktienfinder).
     old_rows = session.scalars(
         select(ManualInputSnapshot).where(ManualInputSnapshot.analysis_id == old.id)
     ).all()
@@ -180,7 +188,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
             new_value=right.value if right else None,
         )
 
-    # Qualitative thesis/assessment.
     old_rows = session.scalars(
         select(QualitativeAssessment).where(QualitativeAssessment.analysis_id == old.id)
     ).all()
@@ -209,7 +216,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
             new_value=right.comment if right else None,
         )
 
-    # Valuation assumptions.
     old_rows = session.scalars(
         select(ValuationAssumption).where(ValuationAssumption.analysis_id == old.id)
     ).all()
@@ -230,7 +236,6 @@ def compare_analyses(session: Session, old: Analysis, new: Analysis) -> list[Cha
             new_value=right.value if right else None,
         )
 
-    # Valuation results.
     old_rows = session.scalars(
         select(ValuationResult).where(ValuationResult.analysis_id == old.id)
     ).all()
