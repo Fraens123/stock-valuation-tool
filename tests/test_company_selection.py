@@ -2,6 +2,7 @@ from stock_valuation.companies.selection import (
     choose_recommended_listing,
     group_company_candidates,
     resolve_fundamentals_symbol,
+    standard_issuer_groups,
 )
 from stock_valuation.companies.service import CompanyCandidate
 
@@ -59,8 +60,15 @@ def test_asml_listings_are_grouped_as_one_issuer_despite_punctuation() -> None:
     assert asml_groups[0].name == "ASML Holding N.V."
 
 
+def test_standard_selection_hides_cdr_only_group() -> None:
+    groups = standard_issuer_groups(_asml_candidates())
+
+    assert len(groups) == 1
+    assert groups[0].key == "asml holding nv"
+
+
 def test_fundamentals_resolver_prefers_plain_symbol_and_verifies_it() -> None:
-    group = [group for group in group_company_candidates(_asml_candidates()) if group.key == "asml holding nv"][0]
+    group = standard_issuer_groups(_asml_candidates())[0]
     provider = FakeProvider(valid_symbol="ASML")
 
     resolution = resolve_fundamentals_symbol(provider, group.candidates, max_attempts=3)
@@ -72,7 +80,7 @@ def test_fundamentals_resolver_prefers_plain_symbol_and_verifies_it() -> None:
 
 
 def test_listing_resolution_uses_report_currency_and_prefers_amsterdam_for_asml() -> None:
-    group = [group for group in group_company_candidates(_asml_candidates()) if group.key == "asml holding nv"][0]
+    group = standard_issuer_groups(_asml_candidates())[0]
 
     listing = choose_recommended_listing(group.candidates, reported_currency="EUR")
 
