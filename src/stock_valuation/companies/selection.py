@@ -37,6 +37,12 @@ EXCHANGE_PRIORITY = {
     "nyse": 36,
 }
 
+CORPORATE_SUFFIX_ALIASES = {
+    ("n", "v"): "nv",
+    ("s", "a"): "sa",
+    ("s", "p", "a"): "spa",
+}
+
 
 class FundamentalsProbeProvider(Protocol):
     def probe_income_statement(self, symbol: str) -> dict[str, object]: ...
@@ -59,8 +65,26 @@ class FundamentalsResolution:
 
 
 def canonical_issuer_key(name: str) -> str:
-    """Normalize punctuation/casing so e.g. `N.V.` and `NV` group together."""
-    return " ".join(re.findall(r"[a-z0-9]+", name.casefold()))
+    """Normalize company-name punctuation so equivalent legal suffixes group together.
+
+    Examples that must resolve to the same issuer key:
+    `ASML Holding N.V.`, `ASML Holding NV`, and `ASML Holding N. V.`.
+    """
+    cleaned = name.casefold().replace(".", "").replace(",", " ")
+    tokens = re.findall(r"[a-z0-9]+", cleaned)
+
+    # Some providers insert spaces between letters of legal-form abbreviations (N. V., S. A.).
+    # Normalize only well-known corporate suffix patterns instead of merging arbitrary initials.
+    for parts, replacement in sorted(
+        CORPORATE_SUFFIX_ALIASES.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if len(tokens) >= len(parts) and tuple(tokens[-len(parts) :]) == parts:
+            tokens = [*tokens[: -len(parts)], replacement]
+            break
+
+    return " ".join(tokens)
 
 
 def _is_suspicious(candidate: CompanyCandidate) -> bool:
