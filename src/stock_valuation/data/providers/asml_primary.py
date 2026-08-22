@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
 import requests
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+
+from stock_valuation.data.types import NormalizedFinancialFact
 
 
 ASML_2025_US_GAAP_XLSX = (
@@ -50,6 +54,47 @@ TARGET_PATTERNS: dict[str, tuple[str, ...]] = {
 }
 
 
+PRIMARY_IMPORT_ROWS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
+    ("balance_sheet", "cash_and_equivalents", ("cash and cash equivalents",), "Balance Sheets"),
+    ("balance_sheet", "short_term_investments", ("short-term investments",), "Balance Sheets"),
+    ("balance_sheet", "accounts_receivable", ("accounts receivable, net",), "Balance Sheets"),
+    ("balance_sheet", "inventory", ("inventories, net",), "Balance Sheets"),
+    (
+        "balance_sheet",
+        "ppe_net",
+        ("property, plant and equipment, net",),
+        "Balance Sheets",
+    ),
+    (
+        "balance_sheet",
+        "short_term_debt",
+        ("short-term borrowings and current portion of long-term debt",),
+        "Balance Sheets",
+    ),
+    (
+        "cash_flow",
+        "operating_cash_flow",
+        ("net cash provided by operating activities",),
+        "Cash Flow",
+    ),
+    (
+        "cash_flow",
+        "capital_expenditures",
+        ("purchase of property, plant and equipment", "purchases of property, plant and equipment"),
+        "Cash Flow",
+    ),
+    (
+        "cash_flow",
+        "intangible_purchases",
+        ("purchase of intangible assets", "purchases of intangible assets"),
+        "Cash Flow",
+    ),
+    ("cash_flow", "dividends_paid", ("dividend paid",), "Cash Flow"),
+)
+
+OUTFLOW_METRICS = {"capital_expenditures", "intangible_purchases", "dividends_paid"}
+
+
 def download_2025_us_gaap_workbook(*, timeout: int = 30) -> bytes:
     """Download ASML's official 2025 US-GAAP financial-statements workbook.
 
@@ -89,16 +134,107 @@ def _row_cells(values: tuple[Any, ...], row_number: int) -> str:
     return " | ".join(parts)
 
 
-def scan_financial_statement_workbook(content: bytes) -> list[dict[str, Any]]:
-    """Find relevant official ASML rows without assuming a fixed workbook layout.
+def _decimal(value: Any) -> Decimal | None:
+    if value in (None, "", "None", "null") or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
-    The first iteration is deliberately diagnostic: it returns matched labels plus the
-    complete matching row and nearby header rows. No financial fact is persisted yet.
-    Once the live workbook layout is confirmed, a deterministic importer can be added.
+
+def _find_exact_row(sheet, patterns: tuple[str, ...]) -> tuple[int, tuple[Any, ...]] | None:
+    """Find one financial-statement row by its label in column A.
+
+    The primary-source importer is intentionally stricter than the diagnostic scanner: only
+    column-A labels are accepted, so a similarly named cash-flow movement cannot be mistaken
+    for a balance-sheet closing balance.
     """
+    wanted = tuple(pattern.strip().lower() for pattern in patterns)
+    for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+        values = tuple(row)
+        label = str(values[0] or "").strip().lower() if values else ""
+        if any(label == pattern for pattern in wanted):
+            return row_number, values
+    return None
+
+
+def _last_two_numeric(values: tuple[Any, ...]) -> tuple[Decimal, Decimal] | None:
+    numeric: list[Decimal] = []
+    for value in values[1:]:
+        parsed = _decimal(value)
+        if parsed is not None:
+            numeric.append(parsed)
+    if len(numeric) < 2:
+        return None
+    return numeric[-2], numeric[-1]
+
+
+def parse_primary_source_facts(
+    content: bytes,
+    *,
+    retrieved_at: datetime | None = None,
+) -> list[NormalizedFinancialFact]:
+    """Parse validated 2024/2025 rows from ASML's official 2025 US-GAAP workbook.
+
+    The live workbook has two balance-sheet comparison columns (2024/2025) and at least three
+    cash-flow periods (2023/2024/2025). For the current validation gate we deliberately import
+    only the two right-most numeric values, i.e. 2024 and 2025. Raw workbook values are in
+    EUR millions and are preserved in `provider_value`; normalized `value` is stored in EUR.
+    """
+    retrieved_at = retrieved_at or datetime.now(timezone.utc)
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    except Exception as exc:  # openpyxl raises several format-specific exceptions
+    except Exception as exc:
+        raise ASMLPrimarySourceError("Die ASML-XLSX-Datei konnte nicht gelesen werden.") from exc
+
+    facts: list[NormalizedFinancialFact] = []
+    try:
+        for statement, metric, patterns, sheet_name in PRIMARY_IMPORT_ROWS:
+            if sheet_name not in workbook.sheetnames:
+                continue
+            sheet = workbook[sheet_name]
+            match = _find_exact_row(sheet, patterns)
+            if match is None:
+                continue
+            row_number, values = match
+            pair = _last_two_numeric(values)
+            if pair is None:
+                continue
+
+            for year, raw_millions in zip((2024, 2025), pair, strict=True):
+                normalized_millions = abs(raw_millions) if metric in OUTFLOW_METRICS else raw_millions
+                facts.append(
+                    NormalizedFinancialFact(
+                        statement=statement,
+                        metric=metric,
+                        period_end=date(year, 12, 31),
+                        period_type="FY",
+                        value=normalized_millions * Decimal("1000000"),
+                        provider_value=raw_millions,
+                        currency="EUR",
+                        unit="currency",
+                        provider="asml_primary",
+                        provider_field=f"{sheet_name}!A{row_number}",
+                        filing_date=None,
+                        retrieved_at=retrieved_at,
+                        is_cross_check_only=False,
+                        note=(
+                            f"Official ASML 2025 US-GAAP workbook; row label: {values[0]}. "
+                            "provider_value is EUR millions; value is normalized to EUR."
+                        ),
+                    )
+                )
+    finally:
+        workbook.close()
+    return facts
+
+
+def scan_financial_statement_workbook(content: bytes) -> list[dict[str, Any]]:
+    """Find relevant official ASML rows without assuming a fixed workbook layout."""
+    try:
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except Exception as exc:
         raise ASMLPrimarySourceError("Die ASML-XLSX-Datei konnte nicht gelesen werden.") from exc
 
     matches: list[dict[str, Any]] = []
