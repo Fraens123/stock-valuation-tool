@@ -7,7 +7,12 @@ import streamlit as st
 from dotenv import load_dotenv
 from sqlalchemy import select
 
-from stock_valuation.analyses.estimate_service import relevant_estimates
+from stock_valuation.analyses.estimate_service import (
+    annual_estimates,
+    estimate_period_type,
+    infer_fiscal_year_end_month_day,
+    relevant_estimates,
+)
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.companies.provider_symbols import get_provider_symbol, upsert_provider_symbol
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
@@ -24,7 +29,7 @@ from stock_valuation.database.session import get_session, init_database
 
 load_dotenv()
 init_database()
-st.set_page_config(page_title="Datenimport", layout="wide")
+st.set_page_config(page_title="Finanzdaten", layout="wide")
 
 STATUS_LABELS = {
     AnalysisStatus.DRAFT: "Entwurf",
@@ -41,11 +46,10 @@ def _analysis_label(analysis) -> str:
     )
 
 
-st.title("Datenimport")
+st.title("Finanzdaten")
 st.caption(
-    "Der automatische Import ist unternehmensunabhängig. Für jede neue Aktie wird zuerst ein "
-    "Provider-Symbol geprüft und anschließend als Teil der Unternehmenskonfiguration gespeichert. "
-    "ASML ist nur der Referenzfall für zusätzliche Primärquellen-Validierung."
+    "Im normalen Workflow genügt ein Klick. Alpha Vantage lädt GuV, Bilanz, Cashflow und "
+    "Analystenschätzungen; alle Daten werden im ausgewählten Analyse-Snapshot gespeichert."
 )
 
 with get_session() as session:
@@ -53,7 +57,7 @@ with get_session() as session:
     options = {_analysis_label(a): a.id for a in analyses}
 
 if not options:
-    st.info("Zuerst unter **Unternehmen** eine Aktie suchen und eine Analyse anlegen.")
+    st.info("Zuerst unter **Unternehmen** eine Aktie auswählen und eine Analyse anlegen.")
     st.stop()
 
 selected_label = st.selectbox("Analyse", list(options))
@@ -71,80 +75,114 @@ with get_session() as session:
         purpose="fundamentals",
     )
 
-    cols = st.columns(5)
-    cols[0].metric("Unternehmen", analysis.company.name)
-    cols[1].metric("Ticker", analysis.company.ticker)
-    cols[2].metric(
-        "Alpha-Vantage-Symbol",
-        alpha_identifier.symbol if alpha_identifier else "noch nicht gespeichert",
-    )
-    cols[3].metric("Revision", f"R{analysis.revision_number}")
-    cols[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
-
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
     analysis_as_of_date = analysis.as_of_date
     company_ticker = analysis.company.ticker
     company_currency = analysis.company.currency
     legacy_eodhd_symbol = analysis.company.provider_symbol
 
-st.divider()
-st.subheader("Automatischer Fundamentaldaten-Import")
-provider_choice = st.radio(
-    "Datenprovider",
-    ["Alpha Vantage", "EODHD"],
-    horizontal=True,
-    help=(
-        "Alpha Vantage ist der kostenlose automatische V1-Provider. EODHD bleibt als optionaler "
-        "Adapter erhalten; beim getesteten Free-Tarif waren Fundamentals nicht freigeschaltet."
-    ),
-)
+alpha_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
+api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 
-if provider_choice == "Alpha Vantage":
-    st.write(
-        "Die Imports sind absichtlich getrennt: **3 Requests** für GuV/Bilanz/Cashflow und "
-        "optional **1 Request** für Analystenschätzungen. Fehlende Estimates blockieren damit "
-        "nicht mehr den historischen Finanzdatenimport."
+header = st.columns(5)
+header[0].metric("Unternehmen", analysis.company.name)
+header[1].metric("Ticker", company_ticker)
+header[2].metric("Fundamentals-Symbol", alpha_symbol or "—")
+header[3].metric("Revision", f"R{analysis.revision_number}")
+header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
+
+if not api_key_available:
+    st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
+elif not editable:
+    st.info(
+        "Diese Analyse ist abgeschlossen und eingefroren. Für aktuelle Daten zuerst eine neue "
+        "Revision anlegen."
     )
-    api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
-    if api_key_available:
-        st.success("ALPHA_VANTAGE_API_KEY ist vorhanden.")
-    else:
-        st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
-
-    default_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
-    alpha_symbol = st.text_input(
-        "Alpha-Vantage-Fundamentals-Symbol",
-        value=default_symbol,
-        help=(
-            "Normalerweise ist dies der über die Online-Unternehmenssuche gewählte Ticker. "
-            "Bei Zweitnotierungen kann der Fundamentals-Ticker von der lokalen Kursnotierung "
-            "abweichen. Der erfolgreiche Ticker wird dauerhaft beim Unternehmen gespeichert."
-        ),
-    ).strip()
-
-    probe_key = f"{analysis_id}:{alpha_symbol.upper()}"
-    st.markdown("#### Fundamentals-Verfügbarkeit prüfen")
-    st.caption(
-        "Genau 1 Request (`INCOME_STATEMENT`). Es werden noch keine Finanzdaten gespeichert."
+else:
+    st.subheader("Automatischer Import")
+    st.write(
+        "Der Button verwendet normalerweise **4 Alpha-Vantage-Requests**: GuV, Bilanz, "
+        "Cashflow und Analystenschätzungen. Die Finanzabschlüsse werden zuerst gespeichert. "
+        "Falls nur die Estimates fehlen, bleiben die bereits geladenen Abschlüsse erhalten."
     )
 
     if st.button(
+        "Daten laden / aktualisieren",
+        type="primary",
+        disabled=not alpha_symbol,
+        help="Ein Klick: 3 Requests Finanzabschlüsse + 1 Request Analystenschätzungen.",
+    ):
+        provider = AlphaVantageProvider()
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse wurde nicht gefunden.")
+                with st.spinner(f"Lade Finanzabschlüsse für {alpha_symbol} …"):
+                    fact_count = sync_alphavantage_financials(
+                        session,
+                        current,
+                        provider,
+                        symbol=alpha_symbol,
+                    )
+                upsert_provider_symbol(
+                    session,
+                    current.company,
+                    provider="alphavantage",
+                    purpose="fundamentals",
+                    symbol=alpha_symbol,
+                    note="Erfolgreicher automatischer Finanzabschlussimport.",
+                )
+            st.success(f"Finanzabschlüsse geladen: {fact_count} Datenpunkte gespeichert.")
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.error(str(exc))
+            st.stop()
+
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse wurde nicht gefunden.")
+                with st.spinner("Lade Analystenschätzungen …"):
+                    estimate_count = sync_alphavantage_estimates(
+                        session,
+                        current,
+                        provider,
+                        symbol=alpha_symbol,
+                    )
+            if estimate_count:
+                st.success(f"Analystenschätzungen geladen: {estimate_count} Datensätze gespeichert.")
+            else:
+                st.info(
+                    "Finanzabschlüsse wurden gespeichert; Alpha Vantage lieferte für dieses "
+                    "Unternehmen derzeit keine Analystenschätzungen."
+                )
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.warning(
+                "Die Finanzabschlüsse wurden erfolgreich gespeichert, aber die "
+                "Analystenschätzungen konnten nicht aktualisiert werden: " + str(exc)
+            )
+
+with st.expander("Erweitert / Diagnose", expanded=False):
+    st.caption(
+        "Diese Funktionen sind für Fehlersuche und Sonderfälle gedacht. Im normalen Workflow "
+        "werden sie nicht benötigt."
+    )
+    diagnostic_symbol = st.text_input(
+        "Alpha-Vantage-Fundamentals-Symbol",
+        value=alpha_symbol,
+        key=f"diagnostic-symbol-{analysis_id}",
+    ).strip()
+
+    if st.button(
         "Fundamentals testen (1 Request)",
-        disabled=not api_key_available or not alpha_symbol,
+        disabled=not api_key_available or not diagnostic_symbol,
     ):
         try:
             provider = AlphaVantageProvider()
-            with st.spinner(f"Teste {alpha_symbol} …"):
-                result = provider.probe_income_statement(alpha_symbol)
-
-            if result["annual_report_count"] == 0:
-                st.session_state["alpha_probe_ok_key"] = None
-                st.warning(
-                    "Der Provider-Ticker existiert, liefert aber keine Jahresabschlüsse. "
-                    "Bitte auf **Unternehmen** einen anderen Börsen-/Provider-Treffer wählen oder "
-                    "hier einen alternativen Fundamentals-Ticker eingeben."
-                )
-            else:
+            with st.spinner(f"Teste {diagnostic_symbol} …"):
+                result = provider.probe_income_statement(diagnostic_symbol)
+            if result["annual_report_count"]:
                 with get_session() as session:
                     current = get_analysis(session, analysis_id)
                     if current is None:
@@ -154,125 +192,78 @@ if provider_choice == "Alpha Vantage":
                         current.company,
                         provider="alphavantage",
                         purpose="fundamentals",
-                        symbol=alpha_symbol,
+                        symbol=diagnostic_symbol,
                         currency=result.get("reported_currency") or company_currency,
-                        note="Fundamentals-Symbol durch erfolgreichen INCOME_STATEMENT-Probe bestätigt.",
+                        note="Fundamentals-Symbol durch INCOME_STATEMENT-Probe bestätigt.",
                     )
-                st.session_state["alpha_probe_ok_key"] = probe_key
                 st.success(
-                    f"Fundamentals verfügbar: {result['annual_report_count']} Jahresberichte, "
-                    f"{result['quarterly_report_count']} Quartalsberichte. Symbol wurde gespeichert."
+                    f"{result['annual_report_count']} Jahresberichte und "
+                    f"{result['quarterly_report_count']} Quartalsberichte gefunden."
                 )
-
-            st.json(
-                {
-                    "Angefragt": result.get("requested_symbol"),
-                    "Zurückgegeben": result.get("returned_symbol"),
-                    "Letztes Geschäftsjahr": result.get("latest_fiscal_date") or "—",
-                    "Berichtswährung": result.get("reported_currency") or "—",
-                    "Letzter Umsatz (raw)": result.get("latest_revenue") or "—",
-                }
-            )
+            else:
+                st.warning("Für dieses Symbol wurden keine Jahresabschlüsse gefunden.")
+            st.json(result)
         except (ProviderError, ValueError) as exc:
-            st.session_state["alpha_probe_ok_key"] = None
             st.error(str(exc))
 
-    probe_ok = st.session_state.get("alpha_probe_ok_key") == probe_key
-    if not editable:
-        st.info(
-            "Diese Analyse ist eingefroren. Für aktuelle Daten zuerst eine neue Revision erzeugen."
-        )
-    else:
-        import_cols = st.columns(2)
-        with import_cols[0]:
-            if st.button(
-                "Finanzabschlüsse importieren (3 Requests)",
-                type="primary",
-                disabled=not api_key_available or not probe_ok,
-                help="GuV, Bilanz und Cashflow. Funktioniert unabhängig davon, ob Estimates verfügbar sind.",
-            ):
-                try:
-                    provider = AlphaVantageProvider()
-                    with get_session() as session:
-                        current = get_analysis(session, analysis_id)
-                        if current is None:
-                            raise ValueError("Analyse wurde nicht gefunden.")
-                        with st.spinner(f"Importiere Finanzabschlüsse für {alpha_symbol} …"):
-                            fact_count = sync_alphavantage_financials(
-                                session,
-                                current,
-                                provider,
-                                symbol=alpha_symbol,
-                            )
-                        upsert_provider_symbol(
-                            session,
-                            current.company,
-                            provider="alphavantage",
-                            purpose="fundamentals",
-                            symbol=alpha_symbol,
-                            note="Erfolgreicher Finanzabschlussimport.",
-                        )
-                    st.success(f"{fact_count} Finanzdatenzeilen gespeichert.")
-                    st.rerun()
-                except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-                    st.error(str(exc))
-
-        with import_cols[1]:
-            if st.button(
-                "Analystenschätzungen importieren (1 Request)",
-                disabled=not api_key_available or not probe_ok,
-                help="Optional. Ein Fehler hier verändert bereits gespeicherte Finanzabschlüsse nicht.",
-            ):
-                try:
-                    provider = AlphaVantageProvider()
-                    with get_session() as session:
-                        current = get_analysis(session, analysis_id)
-                        if current is None:
-                            raise ValueError("Analyse wurde nicht gefunden.")
-                        with st.spinner(f"Importiere Estimates für {alpha_symbol} …"):
-                            estimate_count = sync_alphavantage_estimates(
-                                session,
-                                current,
-                                provider,
-                                symbol=alpha_symbol,
-                            )
-                    st.success(f"{estimate_count} Schätzdatensätze gespeichert.")
-                    st.rerun()
-                except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-                    st.error(
-                        "Die Analystenschätzungen konnten nicht importiert werden. "
-                        "Bereits gespeicherte Finanzabschlüsse bleiben unverändert.\n\n"
-                        + str(exc)
+    separate = st.columns(2)
+    with separate[0]:
+        if st.button(
+            "Nur Finanzabschlüsse importieren (3 Requests)",
+            disabled=not editable or not api_key_available or not diagnostic_symbol,
+        ):
+            try:
+                provider = AlphaVantageProvider()
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    count = sync_alphavantage_financials(
+                        session, current, provider, symbol=diagnostic_symbol
                     )
+                st.success(f"{count} Finanzdatenpunkte gespeichert.")
+            except (ProviderError, AnalysisFrozenError, ValueError) as exc:
+                st.error(str(exc))
 
-else:
-    st.warning(
-        "EODHD ist derzeit nur optional. Der getestete kostenlose Account hatte keinen "
-        "Fundamentals-Zugriff."
-    )
-    api_key_available = bool(os.getenv("EODHD_API_KEY"))
-    if not editable:
-        st.info("Diese Analyse ist eingefroren.")
-    elif not legacy_eodhd_symbol:
-        st.error("Für dieses Unternehmen ist kein EODHD-Symbol hinterlegt.")
-    elif st.button("EODHD importieren", disabled=not api_key_available):
-        try:
-            provider = EODHDProvider()
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse wurde nicht gefunden.")
-                fact_count, estimate_count = sync_eodhd_snapshot(session, current, provider)
-            st.success(
-                f"Import abgeschlossen: {fact_count} Finanzdatenzeilen, "
-                f"{estimate_count} Schätzdatensätze gespeichert."
-            )
-            st.rerun()
-        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-            st.error(str(exc))
+    with separate[1]:
+        if st.button(
+            "Nur Analystenschätzungen importieren (1 Request)",
+            disabled=not editable or not api_key_available or not diagnostic_symbol,
+        ):
+            try:
+                provider = AlphaVantageProvider()
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    count = sync_alphavantage_estimates(
+                        session, current, provider, symbol=diagnostic_symbol
+                    )
+                st.success(f"{count} Schätzdatensätze gespeichert.")
+            except (ProviderError, AnalysisFrozenError, ValueError) as exc:
+                st.error(str(exc))
+
+    st.divider()
+    st.caption("Optionaler EODHD-Adapter")
+    if legacy_eodhd_symbol and os.getenv("EODHD_API_KEY") and editable:
+        if st.button("EODHD importieren"):
+            try:
+                provider = EODHDProvider()
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    fact_count, estimate_count = sync_eodhd_snapshot(session, current, provider)
+                st.success(
+                    f"EODHD: {fact_count} Finanzdatenpunkte und {estimate_count} Estimates gespeichert."
+                )
+            except (ProviderError, AnalysisFrozenError, ValueError) as exc:
+                st.error(str(exc))
+    else:
+        st.caption("EODHD ist für diese Analyse derzeit nicht aktiv/verfügbar.")
 
 st.divider()
-st.subheader("Gespeicherter Snapshot")
+st.subheader("Gespeicherter Datenstand")
 with get_session() as session:
     facts = session.scalars(
         select(FinancialFactSnapshot)
@@ -300,52 +291,64 @@ else:
     summary[3].metric("Cross-Check", cross_check_count)
     summary[4].metric("Quellen", len(providers))
 
-    st.caption(
-        "Import und Qualitätsprüfung sind getrennt: Providerdaten werden vollständig gespeichert. "
-        "Eine zusätzliche Primärquellenprüfung kann später einzelne Felder höher priorisieren, "
-        "ohne die Providerhistorie zu löschen."
-    )
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "Periode": fact.period_end,
-                    "Quelle": fact.provider,
-                    "Source Type": fact.source_type,
-                    "Statement": fact.statement,
-                    "Interner Schlüssel": fact.metric,
-                    "Wert": float(fact.value) if fact.value is not None else None,
-                    "Währung": fact.currency,
-                    "Provider-Feld": fact.provider_field,
-                    "Originalwert": (
-                        float(fact.provider_value) if fact.provider_value is not None else None
-                    ),
-                    "Cross-Check": fact.is_cross_check_only,
-                }
-                for fact in facts
-            ]
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
+    with st.expander("Rohdaten anzeigen", expanded=False):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Periode": fact.period_end,
+                        "Quelle": fact.provider,
+                        "Source Type": fact.source_type,
+                        "Statement": fact.statement,
+                        "Interner Schlüssel": fact.metric,
+                        "Wert": float(fact.value) if fact.value is not None else None,
+                        "Währung": fact.currency,
+                        "Provider-Feld": fact.provider_field,
+                        "Originalwert": (
+                            float(fact.provider_value) if fact.provider_value is not None else None
+                        ),
+                        "Cross-Check": fact.is_cross_check_only,
+                    }
+                    for fact in facts
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 st.subheader("Analystenschätzungen")
 if not estimates:
     st.caption("Noch keine Analystenschätzungen gespeichert oder vom Provider geliefert.")
 else:
+    fiscal_year_end = infer_fiscal_year_end_month_day(facts)
+    relevant = relevant_estimates(estimates, as_of_date=analysis_as_of_date)
+    show_quarters = st.checkbox("Quartalsschätzungen anzeigen", value=False)
     show_history = st.checkbox("Historische Estimate-Historie anzeigen", value=False)
+
+    base_estimates = estimates if show_history else relevant
     visible_estimates = (
-        estimates if show_history else relevant_estimates(estimates, as_of_date=analysis_as_of_date)
+        base_estimates
+        if show_quarters
+        else annual_estimates(base_estimates, fiscal_year_end=fiscal_year_end)
     )
-    if not show_history:
+
+    if fiscal_year_end:
         st.caption(
-            f"{len(visible_estimates)} relevante Datensätze ab Analysestichtag; "
-            f"{len(estimates) - len(visible_estimates)} historische Datensätze ausgeblendet."
+            f"Erkanntes Geschäftsjahresende: {fiscal_year_end[1]:02d}.{fiscal_year_end[0]:02d}. "
+            "Standardmäßig werden nur volle Geschäftsjahresschätzungen gezeigt."
         )
+    if not show_quarters:
+        hidden_quarters = len(base_estimates) - len(visible_estimates)
+        st.caption(f"{hidden_quarters} Quartalsdatensätze ausgeblendet.")
+
     st.dataframe(
         pd.DataFrame(
             [
                 {
+                    "Typ": estimate_period_type(
+                        item.period,
+                        fiscal_year_end=fiscal_year_end,
+                    ),
                     "Periode": item.period,
                     "Metrik": item.metric,
                     "Low": float(item.low) if item.low is not None else None,
@@ -362,15 +365,8 @@ else:
         hide_index=True,
     )
 
-if company_ticker.upper() == "ASML":
-    st.info(
-        "Für ASML existiert zusätzlich die Referenz-Primärquellenprüfung auf der Seite "
-        "**Datenqualität**. Dieser Spezialcheck dient der Entwicklung der allgemeinen "
-        "Qualitätsarchitektur und ist keine Voraussetzung für den Import anderer Aktien."
-    )
-else:
-    st.info(
-        "Der automatische Import dieser Aktie ist unabhängig von ASML. Für offizielle "
-        "regulatorische Daten zusätzlich **Offizielle Daten** öffnen; SEC-reporting Unternehmen "
-        "können dort per Company Facts/XBRL ergänzt werden."
-    )
+st.info(
+    "Für die spätere Bewertung werden nur gespeicherte Snapshot-Daten verwendet. Offizielle "
+    "Primärquellen können einzelne Werte zusätzlich absichern, sind aber kein notwendiger "
+    "manueller Schritt für den normalen Alpha-Vantage-Import."
+)
