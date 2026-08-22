@@ -80,12 +80,44 @@ Das entspricht jeweils ungefähr `+4.46 %`.
 
 **Bewertung:** Das ist starke Evidenz für ein Provider-/Normalisierungsproblem auf Statement-Ebene und nicht für zufällig unabhängige Abweichungen einzelner Cashflow-Zeilen. Ein rechnerischer Korrekturfaktor ist ausdrücklich **nicht zulässig**, weil Ursache und historische Stabilität nicht bewiesen sind.
 
-**Entscheidung:** Für ASML werden Alpha-Vantage-Cashflow-Zeilen wie OCF, CAPEX und Dividenden bis auf Weiteres blockiert. Als nächster Datenweg wird die offizielle ASML-US-GAAP-Finanzdatei direkt als Primärquelle untersucht.
+**Entscheidung:** Für ASML werden Alpha-Vantage-Cashflow-Zeilen wie OCF, CAPEX und Dividenden als Fallback-/Auditwerte behandelt, nicht als maßgebliche 2024/2025-Datenbasis.
+
+## Offizielle ASML-US-GAAP-Excel als Primärquelle
 
 Offizielle 2025 US-GAAP Financial Statements Excel:
 `https://ourbrand.asml.com/m/6cd86f972a9dfd24/original/2025-US-GAAP-Financial-Statements.xlsx`
 
-## Problematische Bilanzfelder
+Der lokale Workbook-Scan bestätigt eindeutige Zeilen in `Balance Sheets` und `Cash Flow`.
+
+Der deterministische Import verwendet für 2024/2025:
+
+### Balance Sheets
+- `Cash and cash equivalents`
+- `Short-term investments`
+- `Accounts receivable, net`
+- `Inventories, net`
+- `Property, plant and equipment, net`
+- `Short-term borrowings and current portion of long-term debt`
+
+### Cash Flow
+- `Net cash provided by operating activities`
+- `Purchase of property, plant and equipment`
+- `Purchase of intangible assets`
+- `Dividend paid`
+
+Die importierten Werte werden unter `provider=asml_primary` und `source_type=primary_source` separat im Snapshot gespeichert. Alpha-Vantage-Zeilen bleiben erhalten.
+
+### Quellenpriorität
+
+Für dasselbe interne Feld und dasselbe Geschäftsjahr gilt im Resolver:
+
+1. `asml_primary`
+2. `alphavantage`
+3. `eodhd`
+
+Der Daten-Gate und die Kennzahlenengine verwenden dieselbe zentrale Source-Resolution. Ein offizieller ASML-Fakt kann somit ein zuvor wegen Alpha Vantage blockiertes 2024/2025-Feld freigeben, ohne den abweichenden API-Wert zu löschen.
+
+## Problematische Alpha-Vantage-Bilanzfelder
 
 ### `accounts_receivable`
 
@@ -97,43 +129,38 @@ Beobachtung:
 - 2024 Provider ca. `5,443.3 Mio. EUR`
 - ASML Accounts receivable, net `4,477.5 Mio. EUR`
 
-Bewertung: **blocked**.
-
-`currentNetReceivables` ist semantisch breiter als reine Trade/Accounts Receivable. Das Feld darf nicht für DSO oder andere Working-Capital-Kennzahlen verwendet werden, solange kein engeres Primärquellen-/Providerfeld vorhanden ist.
+Bewertung als Alpha-Vantage-Feld: **blocked**. Nach Primärquellenimport wird für 2024/2025 stattdessen die offizielle Bilanzzeile verwendet.
 
 ### `inventory`
 
-Beobachtung:
-- 2025 Alpha Vantage ca. `11,424.4 Mio. EUR`; ASML `11,429.3 Mio. EUR` — sehr eng.
-- 2024 Alpha Vantage ca. `11,707.1 Mio. EUR`; ASML `10,891.5 Mio. EUR` — deutliche Abweichung.
+- 2025 Alpha Vantage ca. `11,424.4 Mio. EUR`; ASML `11,429.3 Mio. EUR`.
+- 2024 Alpha Vantage ca. `11,707.1 Mio. EUR`; ASML `10,891.5 Mio. EUR`.
 
-Bewertung: **blocked**. Ein gutes 2025 darf die abweichende historische Definition 2024 nicht verdecken.
+Bewertung als Alpha-Vantage-Feld: **blocked**. Offizielle 2024/2025-Bilanzzeilen stehen im Primärquellenimport zur Verfügung.
 
 ### `ppe_net`
 
 Providerfeld `propertyPlantEquipment` war im ASML-Live-Payload für 2024/2025 `None`.
 
-Bewertung: **blocked / missing**.
+Bewertung als Alpha-Vantage-Feld: **blocked / missing**. Die offizielle Bilanzzeile wird importiert.
 
 ### `short_term_debt`
 
 - 2025 `currentDebt` und `shortTermDebt` fehlen.
 - 2024 `shortTermDebt` liegt bei ca. `1,078.9 Mio. EUR` gegenüber offiziell `1,010.3 Mio. EUR`.
 
-Bewertung: **blocked**. Für Net Debt / EV wird später eine explizite Debt-Bridge aus geeigneten Primärquellenpositionen aufgebaut.
+Bewertung als Alpha-Vantage-Feld: **blocked**. Für 2024/2025 steht die offizielle Bilanzzeile im Primärquellenimport zur Verfügung. Die endgültige Net-Debt-/EV-Brücke bleibt dennoch eine separate Methodikentscheidung.
 
 ## Konsequenz für Phase 3
 
-Phase 3 darf **feldweise** beginnen.
-
-Zulässig sind Kennzahlen nur dann, wenn alle dafür benötigten Rohdatenfelder den Feld-Gate `approved` besitzen und die jeweilige Formel fachlich bereits festgelegt ist.
+Phase 3 darf feldweise fortgesetzt werden.
 
 - EBIT-Marge ist aktiv.
 - EBITDA-Marge ist aktiv.
 - ROE, Umsatzrendite, Kapitalumschlag, Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten weiterhin auf die jeweilige Buchdefinition.
-- Working-Capital-Kennzahlen bleiben blockiert, solange Accounts Receivable / Inventory nicht sauber validiert sind.
-- DCF/FCF bleibt blockiert, solange OCF und CAPEX nicht sauber aus Primärquellen stammen.
+- Die 2024/2025-Datenbasis für Forderungen, Vorräte, PP&E, kurzfristige Schulden, OCF, CAPEX und Dividenden kann über die offizielle ASML-Primärquelle hergestellt werden.
+- Working-Capital- und DCF-**Historien** bleiben so lange eingeschränkt, bis eine ausreichende Primärquellen-/validierte Providerhistorie für ältere Jahre vorliegt.
 
 ## Architekturentscheidung
 
-Die Datenpipeline bleibt providerunabhängig. Für einzelne problematische Felder werden Primärquellenadapter bzw. alternative Provider eingesetzt, ohne die Kennzahlenengine neu zu definieren. Die offizielle ASML-US-GAAP-Excel-Datei wird deshalb zunächst diagnostisch gescannt; nach Bestätigung ihres Layouts folgt ein deterministischer Import der benötigten Originalzeilen.
+Die Datenpipeline bleibt providerunabhängig und revisionssicher. Primärquelle und Drittanbieter werden parallel gespeichert. Downstream-Logik fragt nicht mehr direkt „Alpha Vantage“ ab, sondern nutzt den zentralen Source Resolver. Dadurch können später weitere offizielle Jahresdateien oder alternative Provider ergänzt werden, ohne Kennzahlenformeln umzuschreiben.
