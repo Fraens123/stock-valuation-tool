@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from decimal import Decimal
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
-from stock_valuation.data.resolution import load_preferred_financial_facts
+from stock_valuation.data.preferred_data import PreferredDataState, load_preferred_data_states
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot, MetricSnapshot
 from stock_valuation.metrics.engine import (
     CALCULATION_VERSION,
@@ -16,11 +15,10 @@ from stock_valuation.metrics.engine import (
     calculate_ebit_margin,
     calculate_ebitda_margin,
 )
-from stock_valuation.validation.service import metric_validation_gates, validate_asml_primary_source
 
 
 class MetricDataQualityError(RuntimeError):
-    """Raised when a metric would rely on raw facts that have not passed the data gate."""
+    """Raised when a metric would rely on facts that are not calculation-ready."""
 
 
 @dataclass(frozen=True)
@@ -44,12 +42,12 @@ PHASE_3A_METHOD_STATES: tuple[Phase3AMetricState, ...] = (
     Phase3AMetricState(
         "ebit_margin",
         "implemented",
-        "Für ASML werden die validierten Felder Income from operations / Revenue verwendet.",
+        "Berechnung ausschließlich aus verifizierter Preferred Data. ASML nutzt die validierte Operating-Income-Zuordnung; andere Unternehmen verwenden das freigegebene interne EBIT-Feld.",
     ),
     Phase3AMetricState(
         "ebitda_margin",
         "implemented",
-        "ASML-V1 nutzt (Income from operations + D&A) / Revenue; D&A kommt aus dem 2024/2025 exakt validierten Income-Statement-Feld depreciationAndAmortization.",
+        "EBITDA wird selbst aus verifiziertem EBIT plus sauber definiertem D&A berechnet. Provider-EBITDA wird nicht als Berechnungsinput verwendet.",
     ),
     Phase3AMetricState(
         "capital_turnover",
@@ -78,12 +76,6 @@ def phase_3a_method_states() -> tuple[Phase3AMetricState, ...]:
     return PHASE_3A_METHOD_STATES
 
 
-def _approved_asml_fields(session: Session, analysis: Analysis) -> set[str]:
-    validation = validate_asml_primary_source(session, analysis)
-    gates = metric_validation_gates(validation)
-    return {gate.metric for gate in gates if gate.status == "approved"}
-
-
 def _inputs_hash(*facts: FinancialFactSnapshot) -> str:
     payload = "|".join(
         sorted(
@@ -95,106 +87,136 @@ def _inputs_hash(*facts: FinancialFactSnapshot) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _annual_facts(
+def _ebit_input_metric(analysis: Analysis) -> str:
+    # D-012 remains valid for the ASML reference case: its validated Income from operations is the
+    # EBIT basis. For other companies we do not silently equate operating income with EBIT.
+    return "operating_income" if analysis.company.ticker.upper() == "ASML" else "ebit"
+
+
+def _annual_ready_facts(
     session: Session,
     analysis: Analysis,
     required: set[str],
-) -> dict[object, dict[str, FinancialFactSnapshot]]:
-    """Load canonical stored facts with ASML primary-source priority per metric/year."""
-    facts = load_preferred_financial_facts(
+) -> tuple[dict[object, dict[str, FinancialFactSnapshot]], list[PreferredDataState]]:
+    states = load_preferred_data_states(
         session,
         analysis.id,
         metrics=required,
         period_type="FY",
     )
     by_period: dict[object, dict[str, FinancialFactSnapshot]] = {}
-    for fact in facts:
-        if fact.period_end > analysis.as_of_date:
+    for state in states:
+        fact = state.fact
+        if fact.period_end > analysis.as_of_date or not state.calculation_ready:
             continue
         by_period.setdefault(fact.period_end, {})[fact.metric] = fact
-    return by_period
+    return by_period, states
 
 
-def _require_approved(
-    session: Session,
-    analysis: Analysis,
+def _blocked_reason(
+    states: list[PreferredDataState],
     required: set[str],
     *,
     label: str,
-) -> None:
-    if analysis.company.ticker.upper() != "ASML":
-        raise MetricDataQualityError(
-            "Phase 3A ist derzeit nur für den validierten ASML-Referenzfall freigegeben."
-        )
-    approved = _approved_asml_fields(session, analysis)
-    blocked = sorted(required - approved)
-    if blocked:
-        raise MetricDataQualityError(
-            f"{label} ist wegen nicht freigegebener Rohdaten blockiert: " + ", ".join(blocked)
-        )
+) -> str:
+    unresolved = [state for state in states if state.fact.metric in required and not state.calculation_ready]
+    if not unresolved:
+        return f"{label} hat keine vollständigen, berechnungsbereiten Jahresinputs."
+
+    latest = sorted(unresolved, key=lambda state: state.fact.period_end, reverse=True)[:6]
+    details = "; ".join(
+        f"{state.fact.period_end.year} {state.fact.metric}: {state.quality_status}"
+        for state in latest
+    )
+    return f"{label} ist wegen nicht freigegebener Preferred-Data-Inputs blockiert: {details}"
 
 
-def calculate_asml_ebit_margin_series(
+def calculate_ebit_margin_series(
     session: Session,
     analysis: Analysis,
 ) -> list[MetricPoint]:
-    required = {"revenue", "operating_income"}
-    _require_approved(session, analysis, required, label="EBIT-Marge")
-    by_period = _annual_facts(session, analysis, required)
+    ebit_metric = _ebit_input_metric(analysis)
+    required = {"revenue", ebit_metric}
+    by_period, states = _annual_ready_facts(session, analysis, required)
 
     points: list[MetricPoint] = []
     for period_end in sorted(by_period):
         period_facts = by_period[period_end]
         revenue = period_facts.get("revenue")
-        operating_income = period_facts.get("operating_income")
-        if revenue is None or operating_income is None:
+        ebit = period_facts.get(ebit_metric)
+        if revenue is None or ebit is None:
             continue
         points.append(
             MetricPoint(
                 metric_id="ebit_margin",
                 period_end=period_end,
-                value=calculate_ebit_margin(operating_income.value, revenue.value),
+                value=calculate_ebit_margin(ebit.value, revenue.value),
                 unit="decimal_ratio",
                 basis="reported",
                 calculation_version=CALCULATION_VERSION,
-                inputs_hash=_inputs_hash(revenue, operating_income),
+                inputs_hash=_inputs_hash(revenue, ebit),
             )
         )
+
+    if not points:
+        raise MetricDataQualityError(_blocked_reason(states, required, label="EBIT-Marge"))
     return points
 
 
-def calculate_asml_ebitda_margin_series(
+def calculate_ebitda_margin_series(
     session: Session,
     analysis: Analysis,
 ) -> list[MetricPoint]:
-    required = {"revenue", "operating_income", "depreciation_amortization"}
-    _require_approved(session, analysis, required, label="EBITDA-Marge")
-    by_period = _annual_facts(session, analysis, required)
+    ebit_metric = _ebit_input_metric(analysis)
+    required = {"revenue", ebit_metric, "depreciation_amortization"}
+    by_period, states = _annual_ready_facts(session, analysis, required)
 
     points: list[MetricPoint] = []
     for period_end in sorted(by_period):
         period_facts = by_period[period_end]
         revenue = period_facts.get("revenue")
-        operating_income = period_facts.get("operating_income")
+        ebit = period_facts.get(ebit_metric)
         d_and_a = period_facts.get("depreciation_amortization")
-        if revenue is None or operating_income is None or d_and_a is None:
+        if revenue is None or ebit is None or d_and_a is None:
             continue
         points.append(
             MetricPoint(
                 metric_id="ebitda_margin",
                 period_end=period_end,
                 value=calculate_ebitda_margin(
-                    operating_income.value,
+                    ebit.value,
                     d_and_a.value,
                     revenue.value,
                 ),
                 unit="decimal_ratio",
                 basis="reported",
                 calculation_version=CALCULATION_VERSION,
-                inputs_hash=_inputs_hash(revenue, operating_income, d_and_a),
+                inputs_hash=_inputs_hash(revenue, ebit, d_and_a),
             )
         )
+
+    if not points:
+        raise MetricDataQualityError(_blocked_reason(states, required, label="EBITDA-Marge"))
     return points
+
+
+# Backward-compatible names used by existing tests/reference tooling.
+def calculate_asml_ebit_margin_series(
+    session: Session,
+    analysis: Analysis,
+) -> list[MetricPoint]:
+    if analysis.company.ticker.upper() != "ASML":
+        raise MetricDataQualityError("Diese Kompatibilitätsfunktion ist nur für ASML vorgesehen.")
+    return calculate_ebit_margin_series(session, analysis)
+
+
+def calculate_asml_ebitda_margin_series(
+    session: Session,
+    analysis: Analysis,
+) -> list[MetricPoint]:
+    if analysis.company.ticker.upper() != "ASML":
+        raise MetricDataQualityError("Diese Kompatibilitätsfunktion ist nur für ASML vorgesehen.")
+    return calculate_ebitda_margin_series(session, analysis)
 
 
 def replace_metric_points(
@@ -231,7 +253,7 @@ def replace_metric_points(
 
 
 def calculate_and_store_phase_3a(session: Session, analysis: Analysis) -> dict[str, int]:
-    ebit_points = calculate_asml_ebit_margin_series(session, analysis)
+    ebit_points = calculate_ebit_margin_series(session, analysis)
     counts = {
         "ebit_margin": replace_metric_points(
             session,
@@ -243,7 +265,7 @@ def calculate_and_store_phase_3a(session: Session, analysis: Analysis) -> dict[s
     }
 
     try:
-        ebitda_points = calculate_asml_ebitda_margin_series(session, analysis)
+        ebitda_points = calculate_ebitda_margin_series(session, analysis)
     except MetricDataQualityError:
         counts["ebitda_margin"] = 0
     else:
