@@ -9,6 +9,7 @@ from stock_valuation.database.models import FinancialFactSnapshot
 
 
 DEFAULT_PROVIDER_PRIORITY: tuple[str, ...] = (
+    "manual_override",
     "asml_primary",
     "esef_ixbrl",
     "sec_companyfacts",
@@ -28,8 +29,9 @@ def load_preferred_financial_facts(
     """Resolve one canonical stored fact for every metric/period pair.
 
     The function performs no network access and no arithmetic transformation. It only selects
-    among facts already persisted in the selected analysis snapshot. Source priority is explicit
-    and deterministic; lower-priority facts remain stored for audit and comparison.
+    among facts already persisted in the selected analysis snapshot. Explicit manual overrides
+    win, followed by official primary sources and then provider fallbacks. Lower-priority facts
+    remain stored for audit and comparison.
     """
     query = select(FinancialFactSnapshot).where(
         FinancialFactSnapshot.analysis_id == analysis_id,
