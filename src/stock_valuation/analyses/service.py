@@ -78,7 +78,8 @@ def list_analyses(
     return list(session.scalars(query).all())
 
 
-def _ensure_editable(analysis: Analysis) -> None:
+def ensure_editable(analysis: Analysis) -> None:
+    """Public domain guard used by all services that mutate an analysis snapshot."""
     if analysis.status in {AnalysisStatus.COMPLETED, AnalysisStatus.ARCHIVED}:
         raise AnalysisFrozenError(
             "Abgeschlossene oder archivierte Analysen sind eingefroren. "
@@ -95,7 +96,7 @@ def update_analysis_metadata(
     market_price: Decimal | float | None,
     market_price_currency: str | None = None,
 ) -> Analysis:
-    _ensure_editable(analysis)
+    ensure_editable(analysis)
     analysis.title = title.strip() if title else None
     analysis.notes = notes.strip() if notes else None
     analysis.market_price = Decimal(str(market_price)) if market_price is not None else None
@@ -109,7 +110,7 @@ def update_analysis_metadata(
 
 
 def mark_in_progress(session: Session, analysis: Analysis) -> Analysis:
-    _ensure_editable(analysis)
+    ensure_editable(analysis)
     if analysis.status == AnalysisStatus.DRAFT:
         analysis.status = AnalysisStatus.IN_PROGRESS
         session.commit()
@@ -117,9 +118,11 @@ def mark_in_progress(session: Session, analysis: Analysis) -> Analysis:
 
 
 def complete_analysis(session: Session, analysis: Analysis) -> Analysis:
-    _ensure_editable(analysis)
+    ensure_editable(analysis)
     if analysis.status not in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}:
-        raise InvalidAnalysisTransition(f"Analyse kann aus Status {analysis.status.value} nicht abgeschlossen werden.")
+        raise InvalidAnalysisTransition(
+            f"Analyse kann aus Status {analysis.status.value} nicht abgeschlossen werden."
+        )
     analysis.status = AnalysisStatus.COMPLETED
     analysis.completed_at = datetime.utcnow()
     session.commit()
@@ -176,6 +179,7 @@ def create_revision(
                     comment=row.comment,
                     source_note=row.source_note,
                     source_url=row.source_url,
+                    needs_review=True,
                 )
             )
 
