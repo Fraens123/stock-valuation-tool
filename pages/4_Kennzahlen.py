@@ -48,6 +48,56 @@ def _metric_title(metric_id: str) -> str:
     return f"{title_de} ({title_en})" if title_en else title_de
 
 
+def _render_percentage_series(
+    analysis_id: int,
+    metric_id: str,
+    value_label: str,
+    *,
+    empty_message: str,
+) -> None:
+    with get_session() as session:
+        series = load_metric_series(session, analysis_id, metric_id)
+
+    if not series:
+        st.warning(empty_message)
+        return
+
+    values = [float(row.value * 100) for row in series if row.value is not None]
+    years = [int(row.period) for row in series if row.value is not None]
+    data = pd.DataFrame({"Jahr": years, value_label: values})
+    visible = data.tail(10).copy()
+    if visible.empty:
+        st.warning("Keine berechenbaren Jahreswerte vorhanden.")
+        return
+
+    latest = visible.iloc[-1][value_label]
+    last_five = visible.tail(5)[value_label].tolist()
+    ten_values = visible[value_label].tolist()
+
+    summary = st.columns(4)
+    summary[0].metric("Aktuell", f"{latest:.2f} %")
+    summary[1].metric("5J Ø", f"{sum(last_five) / len(last_five):.2f} %")
+    summary[2].metric("5J Median", f"{median(last_five):.2f} %")
+    summary[3].metric("10J Median", f"{median(ten_values):.2f} %")
+
+    st.line_chart(visible.set_index("Jahr")[value_label])
+    st.dataframe(
+        visible.sort_values("Jahr", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")
+        },
+    )
+
+    calculation_versions = sorted({row.calculation_version for row in series})
+    st.caption(
+        "Berechnungsbasis: reported · Berechnungsversion: "
+        + ", ".join(calculation_versions)
+        + " · Standardanzeige: letzte 10 Geschäftsjahre"
+    )
+
+
 st.title("Kennzahlenanalyse")
 st.caption(
     "Kennzahlen werden ausschließlich aus dem gespeicherten Analyse-Snapshot berechnet. "
@@ -91,21 +141,13 @@ method_rows = [
 st.dataframe(pd.DataFrame(method_rows), use_container_width=True, hide_index=True)
 
 st.info(
-    "Ein grüner Datenstatus allein entscheidet keine Methodikfrage. ROE, Umsatzrendite, "
-    "Kapitalumschlag, Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die "
-    "verifizierte Buchdefinition. Die EBITDA-Marge wartet zusätzlich auf ein freigegebenes D&A-Feld."
-)
-
-st.divider()
-metric_heading("ebit_margin")
-st.caption(
-    "ASML-V1: `Income from operations / Total net sales`. Revenue und Operating Income haben "
-    "den 2024/2025-Primärquellen-Gate bestanden. Historische Werte verwenden dasselbe "
-    "Alpha-Vantage-Feldmapping; die Validierungsevidenz bezieht sich derzeit auf 2024/2025."
+    "EBIT- und EBITDA-Marge sind methodisch freigegeben. ROE, Umsatzrendite, Kapitalumschlag, "
+    "Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die verifizierte "
+    "Buchdefinition."
 )
 
 if editable:
-    if st.button("Kennzahlen aus Snapshot berechnen", type="primary"):
+    if st.button("Aktive Kennzahlen aus Snapshot berechnen", type="primary"):
         try:
             with get_session() as session:
                 current = get_analysis(session, analysis_id)
@@ -113,7 +155,9 @@ if editable:
                     raise ValueError("Analyse nicht gefunden.")
                 counts = calculate_and_store_phase_3a(session, current)
             st.success(
-                f"Berechnung gespeichert: {counts.get('ebit_margin', 0)} Jahreswerte EBIT-Marge. "
+                "Berechnung gespeichert: "
+                f"{counts.get('ebit_margin', 0)} EBIT-Margen-Jahreswerte, "
+                f"{counts.get('ebitda_margin', 0)} EBITDA-Margen-Jahreswerte. "
                 "Es wurden keine API-Requests verwendet."
             )
             st.rerun()
@@ -125,46 +169,40 @@ else:
         "mit einer neueren Berechnungsversion überschrieben werden."
     )
 
-with get_session() as session:
-    series = load_metric_series(session, analysis_id, "ebit_margin")
+st.divider()
+metric_heading("ebit_margin")
+st.caption(
+    "ASML-V1: `Income from operations / Total net sales`. Revenue und Operating Income haben "
+    "den 2024/2025-Primärquellen-Gate bestanden."
+)
+_render_percentage_series(
+    analysis_id,
+    "ebit_margin",
+    "EBIT-Marge %",
+    empty_message=(
+        "Für diese Analyse ist noch keine EBIT-Margen-Serie gespeichert. Bei einer offenen "
+        "Analyse oben `Aktive Kennzahlen aus Snapshot berechnen` wählen."
+    ),
+)
 
-if not series:
-    st.warning(
-        "Für diese Analyse ist noch keine EBIT-Margen-Serie gespeichert. Bei einer offenen Analyse "
-        "oben `Kennzahlen aus Snapshot berechnen` wählen."
-    )
-else:
-    values = [float(row.value * 100) for row in series if row.value is not None]
-    years = [int(row.period) for row in series if row.value is not None]
-    data = pd.DataFrame({"Jahr": years, "EBIT-Marge %": values})
-    visible = data.tail(10).copy()
-
-    latest = visible.iloc[-1]["EBIT-Marge %"]
-    last_five = visible.tail(5)["EBIT-Marge %"].tolist()
-    ten_values = visible["EBIT-Marge %"].tolist()
-
-    summary = st.columns(4)
-    summary[0].metric("Aktuell", f"{latest:.2f} %")
-    summary[1].metric("5J Ø", f"{sum(last_five) / len(last_five):.2f} %")
-    summary[2].metric("5J Median", f"{median(last_five):.2f} %")
-    summary[3].metric("10J Median", f"{median(ten_values):.2f} %")
-
-    st.line_chart(visible.set_index("Jahr")["EBIT-Marge %"])
-    st.dataframe(
-        visible.sort_values("Jahr", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "EBIT-Marge %": st.column_config.NumberColumn("EBIT-Marge %", format="%.2f %%")
-        },
-    )
-
-    calculation_versions = sorted({row.calculation_version for row in series})
-    st.caption(
-        "Berechnungsbasis: reported · Berechnungsversion: "
-        + ", ".join(calculation_versions)
-        + " · Standardanzeige: letzte 10 Geschäftsjahre"
-    )
+st.divider()
+metric_heading("ebitda_margin")
+st.caption(
+    "ASML-V1: `(Income from operations + Depreciation & Amortization) / Total net sales`. "
+    "D&A wird aus Alpha Vantage `INCOME_STATEMENT.depreciationAndAmortization` verwendet. "
+    "Dieses Feld stimmt für 2025 (1.025,9 Mio. €) und 2024 (918,6 Mio. €) exakt mit den "
+    "offiziellen ASML-Kontrollwerten überein."
+)
+_render_percentage_series(
+    analysis_id,
+    "ebitda_margin",
+    "EBITDA-Marge %",
+    empty_message=(
+        "Noch keine EBITDA-Margen-Serie gespeichert. Falls das D&A-Feld im Datenqualitäts-Gate "
+        "noch gesperrt ist, zuerst dort `D&A-Mapping anwenden (1 Request)` ausführen und danach "
+        "die aktiven Kennzahlen neu berechnen."
+    ),
+)
 
 st.divider()
 st.subheader("Noch offene Kennzahlen dieses Kapitels")
