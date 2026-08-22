@@ -21,10 +21,12 @@ from stock_valuation.database.models import (
     ManualInputSnapshot,
 )
 from stock_valuation.database.session import get_session, init_database
+from stock_valuation.ui.navigation import render_navigation
 
 
 init_database()
 st.set_page_config(page_title="Manuelle Daten & Guidance", layout="wide")
+render_navigation()
 
 STATUS_LABELS = {
     AnalysisStatus.DRAFT: "Entwurf",
@@ -51,10 +53,11 @@ def _number(raw: str) -> Decimal | None:
         raise ValueError(f"Ungültige Zahl: {raw}") from exc
 
 
-st.title("Manuelle Daten, Management Guidance & Zins")
+st.title("Manuelle Daten")
 st.caption(
-    "Alle Werte werden zentral im gewählten Analyse-Snapshot gespeichert. "
-    "Damit gibt es keine verstreuten gelben Eingabefelder mehr."
+    "Hier werden zusätzliche externe Werte, Management Guidance und später Bewertungsannahmen "
+    "zentral im Analyse-Snapshot erfasst. Korrekturen importierter Abschlusswerte erfolgen direkt "
+    "auf der Seite **Finanzdaten**."
 )
 
 with get_session() as session:
@@ -86,16 +89,15 @@ if not editable:
     )
 
 manual_tab, guidance_tab, risk_tab = st.tabs(
-    ["Aktienfinder / manuelle Werte", "Management Guidance", "Risikofreier Zins"]
+    ["Aktienfinder / zusätzliche Werte", "Management Guidance", "Risikofreier Zins"]
 )
 
 with manual_tab:
-    st.subheader("Zentrale manuelle Eingabe")
+    st.subheader("Zusätzliche manuelle Eingabe")
     st.write(
-        "Hier kommen Daten hinein, die bewusst aus Aktienfinder oder einer anderen Quelle "
-        "manuell übernommen werden. Jeder Wert erhält Quelle, Periode und Kommentar."
+        "Für Daten, die bewusst aus Aktienfinder oder einer anderen Quelle ergänzt werden. "
+        "Jeder Wert erhält Quelle, Periode und Kommentar."
     )
-
     with st.form("manual-input"):
         metric = st.text_input("Interner Schlüssel / Metrik", placeholder="z. B. eps_estimate")
         period = st.text_input("Periode", placeholder="z. B. FY2027")
@@ -108,7 +110,7 @@ with manual_tab:
         source_name = st.text_input("Quelle", value="Aktienfinder")
         overrides_metric = st.text_input(
             "Überschreibt automatischen Schlüssel (optional)",
-            help="Nur setzen, wenn dieser Wert bewusst einen API-Wert ersetzt.",
+            help="Für echte Abschlusskorrekturen besser die Seite Finanzdaten verwenden.",
         )
         note = st.text_area("Kommentar / Begründung")
         save_manual = st.form_submit_button("Manuellen Wert speichern", disabled=not editable)
@@ -169,8 +171,8 @@ with manual_tab:
 with guidance_tab:
     st.subheader("Management Guidance")
     st.write(
-        "Management-Guidance bleibt bewusst getrennt vom Analystenkonsens. "
-        "Low/High-Korridore sind für die ersten DCF-Jahre besonders wertvoll."
+        "Management Guidance bleibt getrennt vom Analystenkonsens. Low/High-Korridore können "
+        "später die ersten DCF-Jahre verankern."
     )
     with st.form("guidance"):
         metric = st.text_input("Metrik", placeholder="revenue oder gross_margin")
@@ -188,7 +190,7 @@ with guidance_tab:
         with c2:
             unit = st.text_input("Einheit", placeholder="currency, ratio, %", key="guid_unit")
         publication_date = st.date_input("Veröffentlichungsdatum", value=date.today())
-        source_url = st.text_input("Quellen-URL", placeholder="https://www.asml.com/...")
+        source_url = st.text_input("Quellen-URL")
         note = st.text_area("Kommentar", key="guid_note")
         save_guidance = st.form_submit_button("Guidance speichern", disabled=not editable)
 
@@ -251,10 +253,9 @@ with guidance_tab:
 with risk_tab:
     st.subheader("EUR risikofreier Zins")
     st.write(
-        "V1 verwendet als Marktanker die Euro-Area-AAA-Zinskurve der ECB, "
-        "10-jährige Spot Rate. Der konkrete Beobachtungswert wird im Analyse-Snapshot eingefroren."
+        "V1 verwendet als Marktanker die Euro-Area-AAA-Zinskurve der ECB, 10-jährige Spot Rate. "
+        "Der Beobachtungswert wird im Analyse-Snapshot eingefroren."
     )
-
     if editable and st.button("Aktuellen ECB 10Y AAA Zins laden"):
         try:
             provider = ECBRiskFreeRateProvider()
@@ -294,6 +295,5 @@ with risk_tab:
 
 st.warning(
     "Der risikofreie Zins ist nur eine Komponente der Eigenkapitalkosten. "
-    "Die Risikoaufschlags-/Risiko-KGV-Logik und die Dropdown-Stufen werden erst nach "
-    "der methodischen Validierung festgelegt."
+    "Die Risikoaufschlags-/Risiko-KGV-Logik folgt erst nach methodischer Validierung."
 )
