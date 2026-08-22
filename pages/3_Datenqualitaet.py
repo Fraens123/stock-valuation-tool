@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
 from stock_valuation.analyses.service import get_analysis, list_analyses
+from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
+from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.validation.service import (
     metric_validation_gates,
@@ -12,6 +17,7 @@ from stock_valuation.validation.service import (
 )
 
 
+load_dotenv()
 init_database()
 st.set_page_config(page_title="Datenqualität", layout="wide")
 
@@ -25,7 +31,8 @@ GATE_LABELS = {
 st.title("Datenqualität")
 st.caption(
     "Provider werden nicht pauschal freigegeben. Entscheidend ist, ob ein konkretes Rohdatenfeld "
-    "gegen eine Primärquelle fachlich bestanden hat. Diese Seite benötigt keine API-Requests."
+    "gegen eine Primärquelle fachlich bestanden hat. Die normalen Feld-Gates verwenden nur den "
+    "gespeicherten Snapshot und benötigen keine API-Requests."
 )
 
 with get_session() as session:
@@ -113,3 +120,43 @@ st.info(
     "Working-Capital- und DCF-Kennzahlen bleiben gesperrt, solange z. B. Forderungen, CAPEX oder "
     "Operating Cash Flow die Primärquellenprüfung nicht bestehen."
 )
+
+st.divider()
+st.subheader("D&A-Rohfelddiagnose")
+st.caption(
+    "Optionaler technischer Diagnoseabruf für die blockierte EBITDA-Marge. Dieser Test verändert "
+    "den Snapshot **nicht**, benötigt aber genau **2 Alpha-Vantage-Requests**: einmal "
+    "`INCOME_STATEMENT` und einmal `CASH_FLOW`. Er zeigt lediglich alle Rohfelder der letzten "
+    "zwei Geschäftsjahre, deren Namen `depreci`, `amorti` oder `depletion` enthalten."
+)
+
+api_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
+if not api_key_available:
+    st.warning("Für die optionale Diagnose fehlt `ALPHA_VANTAGE_API_KEY` in der lokalen `.env`.")
+
+if st.button(
+    "D&A-Rohfelder prüfen (2 Requests)",
+    disabled=not api_key_available,
+    help="Nur ausführen, wenn du zwei Requests aus deinem Alpha-Vantage-Tageskontingent verwenden möchtest.",
+):
+    try:
+        provider = AlphaVantageProvider()
+        with st.spinner("Prüfe D&A-Rohfelder für ASML …"):
+            rows = provider.probe_depreciation_fields("ASML")
+        if not rows:
+            st.warning("In den beiden Statements wurden keine passenden Rohfelder gefunden.")
+        else:
+            st.success(
+                f"Diagnose abgeschlossen: {len(rows)} passende Rohfeld-Zeilen gefunden. "
+                "Es wurden keine Snapshot-Daten verändert."
+            )
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption(
+                "ASML-Kontrollwerte für die bisherige kombinierte D&A-Prüfung: "
+                "2025 = 1.025,9 Mio. €, 2024 = 918,6 Mio. €. Ein ähnlich großer Wert ist nur ein "
+                "Hinweis; vor einem Mapping müssen Definition und Komponenten fachlich passen."
+            )
+    except ProviderError as exc:
+        st.error(str(exc))
+    except Exception as exc:
+        st.exception(exc)
