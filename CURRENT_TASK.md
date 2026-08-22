@@ -1,6 +1,6 @@
 # Current Task
 
-## Phase 2/3 Übergang – Import, KI-Prüfung und Bedienung vereinfachen
+## Phase 2/3 Übergang – Import, ChatGPT-Prüfung und Bedienung vereinfachen
 
 ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import oder Speicherung neuer Aktien.
 
@@ -19,7 +19,9 @@ ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** f
 3. **Finanzdaten**
    - `Daten laden / aktualisieren` (Alpha Vantage, normalerweise 4 Requests),
    - kostenlose interne Plausibilitätschecks,
-   - `KI-Prüfung starten` gegen offizielle Webquellen,
+   - ChatGPT-Prüfpaket herunterladen,
+   - Prüfpaket im normalen ChatGPT mit Websuche prüfen lassen,
+   - JSON-Ergebnisdatei zurück in das Tool laden,
    - WARN/FAIL/UNKLAR prüfen,
    - pro sicherer Abweichung `Übernehmen` oder `Verwerfen`,
    - optional manuell korrigieren.
@@ -28,30 +30,42 @@ ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** f
 
 Später folgen Geschäftsmodell, Bewertung, Investmentthese und Report.
 
-## Direkte KI-Prüfung
+## ChatGPT-Dateiprüfung ohne separate API-Abrechnung
 
 Implementiert in:
 - `src/stock_valuation/analyses/ai_review_service.py`
 - `src/stock_valuation/database/ai_review_models.py`
 - `pages/1_Datenimport.py`
+- `docs/AI_DATA_REVIEW.md`
 
 ### Technischer Ablauf
 
-- OpenAI Responses API mit eingebautem `web_search`.
-- Konfiguration lokal über:
-  - `OPENAI_API_KEY`
-  - optional `OPENAI_REVIEW_MODEL` (Default `gpt-5.4`).
-- Standardprüfung: letzte 3 Geschäftsjahre; UI erlaubt 2 / 3 / 5 Jahre.
-- Nur nicht als Cross-Check markierte FY-Fakten aus GuV, Bilanz und Cashflow werden eingereicht.
-- Web-Recherche priorisiert Annual Report, 10-K/20-F, regulatorische Filings und offizielle Investor-Relations-Unterlagen.
-- Structured Outputs erzwingen pro eingereichtem `fact_id` ein Ergebnis.
-- Status: `PASS`, `WARN`, `FAIL`, `UNKLAR`.
-- API-Response wird mit `store=False` angefordert; der benötigte Review-Output wird lokal in SQLite gespeichert.
+- **keine OpenAI Responses API im normalen Workflow**,
+- kein `OPENAI_API_KEY` erforderlich,
+- keine `openai`-Python-Abhängigkeit,
+- UI erlaubt 2 / 3 / 5 tief zu prüfende Geschäftsjahre,
+- nur nicht als Cross-Check markierte FY-Fakten aus GuV, Bilanz und Cashflow kommen ins Prüfpaket,
+- Prüfpaket enthält Unternehmensidentität, Fact-IDs, Providerfelder, Werte, lokale Plausibilitätschecks und einen ausführlichen verbindlichen Prüfauftrag,
+- Web-Recherche in ChatGPT soll Annual Report, 10-K/20-F, regulatorische Filings und offizielle Investor-Relations-Unterlagen priorisieren,
+- ChatGPT soll eine strikt strukturierte JSON-Ergebnisdatei erzeugen,
+- Rückimport validiert Schema-Version, Package-ID, Ticker, Stichtag, Revision und Fact-IDs.
+
+### Package-ID / Snapshot-Sicherheit
+
+Die Package-ID ist ein SHA-256-Hash des exportierten Datenpakets.
+
+Wenn nach dem Export:
+- Daten geändert werden,
+- eine andere Revision gewählt wird,
+- ein anderes Unternehmen gewählt wird,
+
+passt die zurückgeladene Ergebnisdatei nicht mehr und wird abgelehnt.
 
 ### Review-Persistenz
 
 `ai_review_runs`
-- Modell, geprüfte Jahre, Response-ID, Summary, Zeitstempel.
+- geprüfte Jahre, Package-ID, Summary, Zeitstempel,
+- `model=chatgpt_file_review` als Herkunftskennzeichnung.
 
 `ai_review_findings`
 - Jahr/Periode, interner Schlüssel, importierter Wert, offizieller Wert,
@@ -60,7 +74,7 @@ Implementiert in:
 
 ### Sicherheitsregel
 
-Die KI ändert **niemals selbst Finanzdaten**.
+ChatGPT ändert **niemals selbst Finanzdaten**.
 
 `Übernehmen`:
 - erzeugt einen separaten `manual_override`,
@@ -91,25 +105,24 @@ Alpha Vantage `EARNINGS_ESTIMATES` enthält Jahres- und Quartalsschätzungen im 
 1. `git pull`
 2. `pip install -e ".[dev]"`
 3. `pytest -q`
-4. `.env` ergänzen:
-   - `OPENAI_API_KEY=<dein API-Key>`
-   - optional `OPENAI_REVIEW_MODEL=gpt-5.4`
-5. `streamlit run app.py`
-6. Microsoft unter `Finanzdaten` öffnen; kein neuer Alpha-Vantage-Import nötig.
-7. Unter `Daten prüfen` zunächst 2 oder 3 Geschäftsjahre auswählen.
-8. `KI-Prüfung starten` drücken.
-9. Prüfen: Summary + PASS/WARN/FAIL/UNKLAR erscheinen; Standardansicht blendet PASS aus.
-10. Bei einem sicheren WARN/FAIL:
+4. `streamlit run app.py`
+5. Microsoft unter `Finanzdaten` öffnen; kein neuer Alpha-Vantage-Import nötig.
+6. Unter `Daten prüfen` zunächst 2 Geschäftsjahre auswählen.
+7. `ChatGPT-Prüfpaket herunterladen`.
+8. Prüfpaket in ChatGPT hochladen und schreiben: `Führe die Prüfung aus und erstelle die angeforderte JSON-Ergebnisdatei.`
+9. Von ChatGPT erzeugte JSON-Datei herunterladen.
+10. JSON unter `ChatGPT-Prüfergebnis hochladen` auswählen und `Prüfergebnis einlesen`.
+11. Prüfen: Summary + PASS/WARN/FAIL/UNKLAR erscheinen; Standardansicht blendet PASS aus.
+12. Bei einem sicheren WARN/FAIL:
     - offizielle Quelle öffnen,
     - einmal `Übernehmen` testen,
     - prüfen, dass ein bestätigter Override erscheint und der Alpha-Vantage-Originalwert erhalten bleibt.
-11. Einen anderen Vorschlag `Verwerfen`; Finanzwert darf sich nicht ändern.
+13. Einen anderen Vorschlag `Verwerfen`; Finanzwert darf sich nicht ändern.
 
 ## Noch offene Import-/Prüfthemen
 
-- realen Microsoft-KI-Lauf testen und Prompt/Schema anhand der Ergebnisse nachschärfen,
-- Kosten-/Tokenanzeige aus API-Usage später ergänzen,
-- Review ggf. in kleinere Batches teilen, falls große 5-Jahres-Prüfungen zu langsam/teuer werden,
+- ersten echten Microsoft-Dateiprüflauf durchführen und Prompt/Schema nachschärfen,
+- entscheiden, welche Kernfelder standardmäßig tief geprüft werden sollen,
 - aktuellen Marktpreis automatisch laden und Listing/Währung sauber trennen,
 - automatische Primärquellen-Discovery dort ergänzen, wo zuverlässig möglich,
 - SEC-/ESEF-Mappings erweitern,
