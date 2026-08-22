@@ -10,11 +10,12 @@ from stock_valuation.companies.service import get_or_create_company
 from stock_valuation.data.snapshot_service import replace_financial_facts
 from stock_valuation.data.types import NormalizedFinancialFact
 from stock_valuation.database.models import Base, MetricSnapshot
-from stock_valuation.metrics.engine import calculate_ebit_margin, safe_ratio
+from stock_valuation.metrics.engine import calculate_ebit_margin, calculate_ebitda_margin, safe_ratio
 from stock_valuation.metrics.service import (
     MetricDataQualityError,
     calculate_and_store_phase_3a,
     calculate_asml_ebit_margin_series,
+    calculate_asml_ebitda_margin_series,
 )
 
 
@@ -50,21 +51,26 @@ def _validated_income_facts() -> list[NormalizedFinancialFact]:
     return [
         _fact("revenue", date(2025, 12, 31), "32667300000", "totalRevenue"),
         _fact("operating_income", date(2025, 12, 31), "11301400000", "operatingIncome"),
+        _fact("depreciation_amortization", date(2025, 12, 31), "1025900000", "depreciationAndAmortization"),
         _fact("revenue", date(2024, 12, 31), "28262900000", "totalRevenue"),
         _fact("operating_income", date(2024, 12, 31), "9022600000", "operatingIncome"),
+        _fact("depreciation_amortization", date(2024, 12, 31), "918600000", "depreciationAndAmortization"),
         _fact("revenue", date(2023, 12, 31), "27000000000", "totalRevenue"),
         _fact("operating_income", date(2023, 12, 31), "8500000000", "operatingIncome"),
+        _fact("depreciation_amortization", date(2023, 12, 31), "850000000", "depreciationAndAmortization"),
     ]
 
 
-def test_safe_ratio_and_ebit_margin_do_not_invent_values() -> None:
+def test_safe_ratio_and_margin_functions_do_not_invent_values() -> None:
     assert safe_ratio(Decimal("25"), Decimal("100")) == Decimal("0.25")
     assert safe_ratio(None, Decimal("100")) is None
     assert safe_ratio(Decimal("25"), Decimal("0")) is None
     assert calculate_ebit_margin(Decimal("25"), Decimal("100")) == Decimal("0.25")
+    assert calculate_ebitda_margin(Decimal("25"), Decimal("5"), Decimal("100")) == Decimal("0.30")
+    assert calculate_ebitda_margin(Decimal("25"), None, Decimal("100")) is None
 
 
-def test_asml_ebit_margin_uses_only_stored_snapshot_after_data_gate_passes() -> None:
+def test_asml_margin_series_use_only_stored_snapshot_after_data_gate_passes() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
 
@@ -77,13 +83,16 @@ def test_asml_ebit_margin_uses_only_stored_snapshot_after_data_gate_passes() -> 
             provider="alphavantage",
         )
 
-        points = calculate_asml_ebit_margin_series(session, analysis)
+        ebit_points = calculate_asml_ebit_margin_series(session, analysis)
+        ebitda_points = calculate_asml_ebitda_margin_series(session, analysis)
 
-        assert [point.period_end.year for point in points] == [2023, 2024, 2025]
-        latest = points[-1]
-        assert latest.metric_id == "ebit_margin"
-        assert latest.value == Decimal("11301400000") / Decimal("32667300000")
-        assert latest.inputs_hash is not None
+        assert [point.period_end.year for point in ebit_points] == [2023, 2024, 2025]
+        assert [point.period_end.year for point in ebitda_points] == [2023, 2024, 2025]
+        assert ebit_points[-1].value == Decimal("11301400000") / Decimal("32667300000")
+        assert ebitda_points[-1].value == (
+            Decimal("11301400000") + Decimal("1025900000")
+        ) / Decimal("32667300000")
+        assert ebitda_points[-1].inputs_hash is not None
 
 
 def test_phase3a_persists_versioned_metric_snapshots() -> None:
@@ -103,11 +112,11 @@ def test_phase3a_persists_versioned_metric_snapshots() -> None:
         rows = session.scalars(
             select(MetricSnapshot)
             .where(MetricSnapshot.analysis_id == analysis.id)
-            .order_by(MetricSnapshot.period)
+            .order_by(MetricSnapshot.metric_id, MetricSnapshot.period)
         ).all()
-        assert result == {"ebit_margin": 3}
-        assert [row.period for row in rows] == ["2023", "2024", "2025"]
-        assert all(row.calculation_version == "3a-0.1" for row in rows)
+        assert result == {"ebit_margin": 3, "ebitda_margin": 3}
+        assert len(rows) == 6
+        assert all(row.calculation_version == "3a-0.2" for row in rows)
         assert all(row.inputs_hash for row in rows)
 
 
