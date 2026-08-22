@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import os
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -18,48 +20,21 @@ from stock_valuation.database.models import Analysis, FinancialFactSnapshot
 
 
 class AIReviewError(RuntimeError):
-    """Raised when the external AI review cannot produce a usable result."""
+    """Raised when a ChatGPT review package/result is invalid or cannot be imported."""
 
 
-DEFAULT_REVIEW_MODEL = "gpt-5.4"
+REVIEW_SCHEMA_VERSION = "1.0"
+VALID_VERDICTS = {"PASS", "WARN", "FAIL", "UNKLAR"}
 
 
-REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "summary": {"type": "string"},
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "fact_id": {"type": "integer"},
-                    "official_value": {"type": ["number", "null"]},
-                    "status": {
-                        "type": "string",
-                        "enum": ["PASS", "WARN", "FAIL", "UNKLAR"],
-                    },
-                    "official_label": {"type": ["string", "null"]},
-                    "source_title": {"type": ["string", "null"]},
-                    "source_url": {"type": ["string", "null"]},
-                    "reason": {"type": "string"},
-                },
-                "required": [
-                    "fact_id",
-                    "official_value",
-                    "status",
-                    "official_label",
-                    "source_title",
-                    "source_url",
-                    "reason",
-                ],
-            },
-        },
-    },
-    "required": ["summary", "findings"],
-}
+@dataclass(frozen=True)
+class ReviewPackage:
+    filename: str
+    content: bytes
+    package_id: str
+    years_requested: int
+    fact_count: int
+    result_filename: str
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -71,7 +46,16 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _review_facts(session: Session, analysis: Analysis, years: int) -> list[FinancialFactSnapshot]:
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return cleaned.strip("._") or "company"
+
+
+def _review_facts(
+    session: Session,
+    analysis: Analysis,
+    years: int,
+) -> list[FinancialFactSnapshot]:
     preferred = load_preferred_financial_facts(session, analysis.id)
     available_years = sorted({fact.period_end.year for fact in preferred if fact.value is not None})
     selected_years = set(available_years[-max(1, years) :])
@@ -85,142 +69,255 @@ def _review_facts(session: Session, analysis: Analysis, years: int) -> list[Fina
     ]
 
 
-def _build_review_input(session: Session, analysis: Analysis, facts: list[FinancialFactSnapshot]) -> str:
-    deterministic = run_deterministic_audit(session, analysis)
-    check_lines = [
-        f"{item.year} | {item.status} | {item.label} | deviation_pct={item.deviation_pct} | {item.detail}"
-        for item in deterministic
-    ]
-    fact_lines = [
-        " | ".join(
-            [
-                f"fact_id={fact.id}",
-                f"period_end={fact.period_end.isoformat()}",
-                f"statement={fact.statement}",
-                f"metric={fact.metric}",
-                f"value={fact.value}",
-                f"currency={fact.currency or ''}",
-                f"unit={fact.unit or ''}",
-                f"provider={fact.provider or ''}",
-                f"provider_field={fact.provider_field or ''}",
-            ]
-        )
-        for fact in sorted(facts, key=lambda row: (row.period_end, row.statement, row.metric))
-    ]
-
-    return f"""Prüfe historische Finanzdaten für eine fundamentale Unternehmensanalyse.
-
-UNTERNEHMEN
-Name: {analysis.company.name}
-Ticker: {analysis.company.ticker}
-ISIN: {analysis.company.isin or 'nicht hinterlegt'}
-Börse/Region: {analysis.company.exchange or 'nicht hinterlegt'}
-Analyse-Stichtag: {analysis.as_of_date}
-
-QUELLENREGELN
-- Nutze Websuche aktiv.
-- Bevorzuge strikt: offizieller Annual Report / 10-K / 20-F / regulatorisches Filing; danach offizielle Investor-Relations-Finanzstatements.
-- Sekundärquellen dürfen nur zur Orientierung dienen und niemals allein eine Korrektur begründen.
-- Prüfe Geschäftsjahr, Berichtswährung, Einheit, Rechnungslegungsstandard und Konsolidierungskreis.
-- Verwechsle keine Quartalswerte mit Jahreswerten.
-- Providerfelder können semantisch breiter oder enger sein als die offizielle Abschlusszeile. Wenn die Definition nicht identisch ist: UNKLAR oder FAIL mit Erklärung, nicht gewaltsam gleichsetzen.
-- Restatements sind zu beachten. Verwende die am Analyse-Stichtag maßgebliche veröffentlichte Zahl, soweit eindeutig feststellbar.
-- Gib `official_value` immer in derselben Basiseinheit wie der importierte Wert zurück (z. B. 281724000000 statt 281724 Mio.).
-- Wenn keine belastbare Primärquelle gefunden wird: official_value=null, status=UNKLAR.
-- PASS: gleicher wirtschaftlicher Sachverhalt und <=0,5 % Abweichung.
-- WARN: gleicher Sachverhalt und >0,5 bis <=2 % Abweichung oder geringe nachvollziehbare Rundungs-/Darstellungsfrage.
-- FAIL: >2 % Abweichung oder klar falsche semantische Zuordnung.
-- Für WARN/FAIL muss eine konkrete offizielle Quellen-URL angegeben werden, wenn eine sichere offizielle Zahl vorliegt.
-- Ändere keine Daten. Du lieferst ausschließlich Prüfergebnisse.
-
-WICHTIG FÜR DIE AUSGABE
-- Gib genau einen Finding-Eintrag für jeden unten übergebenen `fact_id` zurück.
-- `fact_id` muss unverändert übernommen werden.
-- Erfinde keine zusätzlichen fact_ids.
-
-IMPORTIERTE FAKTEN
-{chr(10).join(fact_lines)}
-
-BEREITS DURCHGEFÜHRTE INTERNE PLAUSIBILITÄTSCHECKS
-{chr(10).join(check_lines) if check_lines else 'Keine.'}
-"""
+def _package_payload(analysis: Analysis, facts: list[FinancialFactSnapshot], years: int) -> dict[str, Any]:
+    return {
+        "schema_version": REVIEW_SCHEMA_VERSION,
+        "analysis": {
+            "analysis_id": analysis.id,
+            "company_name": analysis.company.name,
+            "ticker": analysis.company.ticker,
+            "isin": analysis.company.isin,
+            "exchange": analysis.company.exchange,
+            "analysis_as_of_date": analysis.as_of_date.isoformat(),
+            "revision": analysis.revision_number,
+        },
+        "years_requested": years,
+        "facts": [
+            {
+                "fact_id": fact.id,
+                "period_end": fact.period_end.isoformat(),
+                "statement": fact.statement,
+                "metric": fact.metric,
+                "value": str(fact.value),
+                "currency": fact.currency,
+                "unit": fact.unit,
+                "provider": fact.provider,
+                "provider_field": fact.provider_field,
+                "source_type": fact.source_type,
+                "source_url": fact.source_url,
+            }
+            for fact in sorted(facts, key=lambda row: (row.period_end, row.statement, row.metric))
+        ],
+    }
 
 
-def execute_ai_review(
+def _package_id(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_chatgpt_review_package(
     session: Session,
     analysis: Analysis,
     *,
     years: int = 3,
-    model: str | None = None,
-    client: Any | None = None,
-) -> AIReviewRun:
-    """Run a web-enabled OpenAI review and persist proposed differences without changing facts."""
-    ensure_editable(analysis)
+) -> ReviewPackage:
+    """Build a self-contained Markdown package for review in the normal ChatGPT product.
+
+    No external API call is performed. The package contains the selected stored facts, internal
+    consistency checks, a strict research brief and the exact JSON schema to return to the app.
+    """
+    years = max(1, int(years))
     facts = _review_facts(session, analysis, years)
     if not facts:
         raise AIReviewError("Keine prüfbaren Jahresabschlussdaten im Snapshot vorhanden.")
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if client is None:
-        if not api_key:
-            raise AIReviewError("OPENAI_API_KEY fehlt in der lokalen `.env`.")
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - dependency guard
-            raise AIReviewError("OpenAI-Python-SDK ist nicht installiert.") from exc
-        client = OpenAI(api_key=api_key)
+    payload = _package_payload(analysis, facts, years)
+    package_id = _package_id(payload)
+    deterministic = run_deterministic_audit(session, analysis)
+    selected_years = {fact.period_end.year for fact in facts}
+    checks = [item for item in deterministic if item.year in selected_years]
 
-    selected_model = model or os.getenv("OPENAI_REVIEW_MODEL") or DEFAULT_REVIEW_MODEL
-    prompt = _build_review_input(session, analysis, facts)
+    ticker = _safe_filename_part(analysis.company.ticker.upper())
+    result_filename = (
+        f"{ticker}_{analysis.as_of_date.isoformat()}_R{analysis.revision_number}_chatgpt_review_result.json"
+    )
+    filename = (
+        f"{ticker}_{analysis.as_of_date.isoformat()}_R{analysis.revision_number}_chatgpt_review_package.md"
+    )
 
+    fact_json = json.dumps(payload["facts"], ensure_ascii=False, indent=2)
+    check_json = json.dumps(
+        [
+            {
+                "year": item.year,
+                "status": item.status,
+                "check": item.label,
+                "deviation_pct": str(item.deviation_pct) if item.deviation_pct is not None else None,
+                "detail": item.detail,
+            }
+            for item in checks
+        ],
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    content = f"""# ChatGPT-Prüfpaket – historische Finanzdaten
+
+## Auftrag an ChatGPT
+
+Prüfe die unten enthaltenen historischen Finanzzahlen **mit Websuche gegen belastbare offizielle Primärquellen** und erstelle am Ende eine **JSON-Datei** mit dem Namen:
+
+`{result_filename}`
+
+Die JSON-Datei wird anschließend in das lokale Aktienanalyse-Tool zurückgeladen. Gib deshalb keine Korrektur frei, die du nicht sauber aus einer offiziellen Quelle belegen kannst.
+
+## Identität des Prüfpakets
+
+- Schema-Version: `{REVIEW_SCHEMA_VERSION}`
+- Package-ID: `{package_id}`
+- Unternehmen: {analysis.company.name}
+- Ticker: {analysis.company.ticker}
+- ISIN: {analysis.company.isin or 'nicht hinterlegt'}
+- Börse/Region: {analysis.company.exchange or 'nicht hinterlegt'}
+- Analyse-Stichtag: {analysis.as_of_date}
+- Revision: R{analysis.revision_number}
+- Zu prüfende Geschäftsjahre: {years}
+- Fakten im Paket: {len(facts)}
+
+## Verbindliche Prüfregeln
+
+1. Nutze Websuche aktiv.
+2. Quellenpriorität: offizieller Annual Report / 10-K / 20-F / regulatorisches Filing; danach offizielle Investor-Relations-Finanzstatements.
+3. Sekundärquellen dürfen nur zur Orientierung dienen und niemals allein eine Korrektur begründen.
+4. Prüfe Geschäftsjahr, Berichtswährung, Einheit, Rechnungslegungsstandard und Konsolidierungskreis.
+5. Verwechsle keine Quartalswerte mit Jahreswerten.
+6. Providerfelder können semantisch breiter oder enger sein als die offizielle Abschlusszeile. Wenn die Definition nicht identisch ist: `UNKLAR` oder `FAIL` mit Erklärung, nicht gewaltsam gleichsetzen.
+7. Beachte Restatements. Verwende die am Analyse-Stichtag maßgebliche veröffentlichte Zahl, soweit eindeutig feststellbar.
+8. `official_value` muss immer in derselben Basiseinheit wie der importierte Wert stehen. Beispiel: 281724000000 statt 281724 Mio.
+9. Wenn keine belastbare Primärquelle gefunden wird: `official_value=null`, `status=UNKLAR`.
+10. Statusregeln:
+    - `PASS`: gleicher wirtschaftlicher Sachverhalt und <= 0,5 % Abweichung.
+    - `WARN`: gleicher Sachverhalt und > 0,5 bis <= 2 % Abweichung oder geringe nachvollziehbare Rundungs-/Darstellungsfrage.
+    - `FAIL`: > 2 % Abweichung oder klar falsche semantische Zuordnung.
+    - `UNKLAR`: keine sichere Zuordnung/Primärquelle.
+11. Für `WARN`/`FAIL` muss bei sicherer offizieller Zahl eine konkrete offizielle Quellen-URL angegeben werden.
+12. Ändere keine Daten. Du lieferst ausschließlich Prüfergebnisse.
+13. Gib **genau einen Finding-Eintrag für jeden `fact_id`** zurück und erfinde keine zusätzlichen IDs.
+14. Die Felder `package_id`, `schema_version`, `years_requested` und die Unternehmensidentität müssen unverändert übernommen werden.
+15. Erstelle am Ende die JSON-Datei zum Herunterladen. Kein Markdown in der JSON-Datei.
+
+## Erwartetes Ergebnisformat
+
+```json
+{{
+  "schema_version": "{REVIEW_SCHEMA_VERSION}",
+  "package_id": "{package_id}",
+  "years_requested": {years},
+  "company": {{
+    "name": {json.dumps(analysis.company.name, ensure_ascii=False)},
+    "ticker": {json.dumps(analysis.company.ticker)},
+    "analysis_as_of_date": "{analysis.as_of_date.isoformat()}",
+    "revision": {analysis.revision_number}
+  }},
+  "summary": "Kurze Zusammenfassung der Datenqualität",
+  "findings": [
+    {{
+      "fact_id": 123,
+      "official_value": 123456789.0,
+      "status": "PASS",
+      "official_label": "Originalbezeichnung im Abschluss",
+      "source_title": "Annual Report 2025",
+      "source_url": "https://offizielle-quelle.example/report",
+      "reason": "Kurze fachliche Begründung"
+    }}
+  ]
+}}
+```
+
+## Importierte Fakten
+
+```json
+{fact_json}
+```
+
+## Bereits durchgeführte lokale Plausibilitätschecks
+
+Diese Checks sind nur Hinweise und ersetzen die Primärquellenprüfung nicht.
+
+```json
+{check_json}
+```
+
+## Abschluss
+
+Prüfe alle Fakten. Erzeuge anschließend ausschließlich die angeforderte Datei `{result_filename}` im oben definierten JSON-Format. Unsichere Fälle als `UNKLAR` kennzeichnen; niemals raten.
+"""
+
+    return ReviewPackage(
+        filename=filename,
+        content=content.encode("utf-8"),
+        package_id=package_id,
+        years_requested=years,
+        fact_count=len(facts),
+        result_filename=result_filename,
+    )
+
+
+def import_chatgpt_review_result(
+    session: Session,
+    analysis: Analysis,
+    content: bytes | str,
+) -> AIReviewRun:
+    """Validate and persist a ChatGPT-generated review JSON without changing financial facts."""
+    ensure_editable(analysis)
     try:
-        response = client.responses.create(
-            model=selected_model,
-            tools=[{"type": "web_search"}],
-            tool_choice="auto",
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "financial_statement_review",
-                    "strict": True,
-                    "schema": REVIEW_SCHEMA,
-                },
-                "verbosity": "low",
-            },
-            include=["web_search_call.action.sources"],
-            store=False,
+        text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+        payload = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AIReviewError("Die hochgeladene Prüfergebnis-Datei ist kein gültiges UTF-8-JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise AIReviewError("Das Prüfergebnis muss ein JSON-Objekt sein.")
+    if payload.get("schema_version") != REVIEW_SCHEMA_VERSION:
+        raise AIReviewError(
+            f"Falsche Schema-Version. Erwartet wird {REVIEW_SCHEMA_VERSION}."
         )
-    except Exception as exc:  # SDK/API errors have changed class names over time.
-        raise AIReviewError(f"OpenAI-KI-Prüfung fehlgeschlagen: {exc}") from exc
 
-    output_text = getattr(response, "output_text", None)
-    if not output_text:
-        raise AIReviewError("Die KI-Prüfung lieferte keine strukturierte Textausgabe.")
-    try:
-        payload = json.loads(output_text)
-    except json.JSONDecodeError as exc:
-        raise AIReviewError("Die KI-Prüfung lieferte kein gültiges JSON.") from exc
+    years_raw = payload.get("years_requested")
+    if not isinstance(years_raw, int) or years_raw < 1 or years_raw > 10:
+        raise AIReviewError("`years_requested` fehlt oder ist ungültig.")
 
+    expected_package = build_chatgpt_review_package(session, analysis, years=years_raw)
+    if payload.get("package_id") != expected_package.package_id:
+        raise AIReviewError(
+            "Die Package-ID passt nicht zum aktuellen Snapshot. Wahrscheinlich wurde eine andere "
+            "Analyse/Revision geprüft oder die Finanzdaten wurden nach dem Export verändert."
+        )
+
+    company = payload.get("company")
+    if not isinstance(company, dict):
+        raise AIReviewError("Unternehmensidentität fehlt im Prüfergebnis.")
+    if str(company.get("ticker") or "").upper() != analysis.company.ticker.upper():
+        raise AIReviewError("Ticker im Prüfergebnis passt nicht zur ausgewählten Analyse.")
+    if str(company.get("analysis_as_of_date") or "") != analysis.as_of_date.isoformat():
+        raise AIReviewError("Analyse-Stichtag im Prüfergebnis passt nicht zur ausgewählten Analyse.")
+    if int(company.get("revision") or 0) != analysis.revision_number:
+        raise AIReviewError("Revision im Prüfergebnis passt nicht zur ausgewählten Analyse.")
+
+    facts = _review_facts(session, analysis, years_raw)
+    fact_by_id = {fact.id: fact for fact in facts}
     returned = payload.get("findings")
     if not isinstance(returned, list):
-        raise AIReviewError("Die KI-Prüfung enthielt keine Finding-Liste.")
+        raise AIReviewError("Das Prüfergebnis enthält keine gültige `findings`-Liste.")
 
-    fact_by_id = {fact.id: fact for fact in facts}
     returned_by_id: dict[int, dict[str, Any]] = {}
     for item in returned:
         if not isinstance(item, dict):
-            continue
+            raise AIReviewError("Jeder Eintrag in `findings` muss ein JSON-Objekt sein.")
         fact_id = item.get("fact_id")
-        if isinstance(fact_id, int) and fact_id in fact_by_id and fact_id not in returned_by_id:
-            returned_by_id[fact_id] = item
+        if not isinstance(fact_id, int) or fact_id not in fact_by_id:
+            raise AIReviewError(f"Unbekannte oder ungültige fact_id im Prüfergebnis: {fact_id!r}.")
+        if fact_id in returned_by_id:
+            raise AIReviewError(f"fact_id {fact_id} kommt im Prüfergebnis mehrfach vor.")
+        returned_by_id[fact_id] = item
 
     run = AIReviewRun(
         analysis_id=analysis.id,
-        model=selected_model,
-        years_requested=years,
+        model="chatgpt_file_review",
+        years_requested=years_raw,
         status="completed",
-        response_id=getattr(response, "id", None),
+        response_id=expected_package.package_id,
         summary=str(payload.get("summary") or ""),
         completed_at=datetime.now(UTC),
     )
@@ -236,16 +333,17 @@ def execute_ai_review(
                 "official_label": None,
                 "source_title": None,
                 "source_url": None,
-                "reason": "Die KI-Ausgabe enthielt für diesen eingereichten Fakt keinen Eintrag.",
+                "reason": "Das zurückgeladene ChatGPT-Ergebnis enthielt für diesen Fakt keinen Eintrag.",
             }
+
         official_value = _decimal(item.get("official_value"))
+        verdict = str(item.get("status") or "UNKLAR").upper()
+        if verdict not in VALID_VERDICTS:
+            verdict = "UNKLAR"
+
         deviation = None
         if official_value is not None and fact.value not in (None, Decimal("0")):
             deviation = abs(official_value - fact.value) / abs(fact.value) * Decimal("100")
-
-        verdict = str(item.get("status") or "UNKLAR").upper()
-        if verdict not in {"PASS", "WARN", "FAIL", "UNKLAR"}:
-            verdict = "UNKLAR"
 
         session.add(
             AIReviewFinding(
@@ -261,9 +359,9 @@ def execute_ai_review(
                 verdict=verdict,
                 provider=fact.provider,
                 provider_field=fact.provider_field,
-                official_label=item.get("official_label"),
-                source_title=item.get("source_title"),
-                source_url=item.get("source_url"),
+                official_label=(str(item.get("official_label")) if item.get("official_label") else None),
+                source_title=(str(item.get("source_title")) if item.get("source_title") else None),
+                source_url=(str(item.get("source_url")) if item.get("source_url") else None),
                 reason=str(item.get("reason") or ""),
             )
         )
@@ -315,10 +413,10 @@ def accept_ai_review_finding(
         currency=finding.currency,
         unit="currency",
         statement=finding.statement,
-        source_name=finding.source_title or finding.official_label or "KI-geprüfte Primärquelle",
+        source_name=finding.source_title or finding.official_label or "ChatGPT-geprüfte Primärquelle",
         source_url=finding.source_url,
         note=(
-            f"Vom Nutzer aus KI-Prüfung übernommen. {finding.reason or ''} "
+            f"Vom Nutzer aus ChatGPT-Dateiprüfung übernommen. {finding.reason or ''} "
             f"Importierter Wert: {finding.imported_value}."
         ).strip(),
     )
