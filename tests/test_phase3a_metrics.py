@@ -116,7 +116,7 @@ def test_phase3a_persists_versioned_metric_snapshots() -> None:
         ).all()
         assert result == {"ebit_margin": 3, "ebitda_margin": 3}
         assert len(rows) == 6
-        assert all(row.calculation_version == "3a-0.2" for row in rows)
+        assert all(row.calculation_version == "3a-0.3" for row in rows)
         assert all(row.inputs_hash for row in rows)
 
 
