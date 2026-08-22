@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -124,7 +124,7 @@ def complete_analysis(session: Session, analysis: Analysis) -> Analysis:
             f"Analyse kann aus Status {analysis.status.value} nicht abgeschlossen werden."
         )
     analysis.status = AnalysisStatus.COMPLETED
-    analysis.completed_at = datetime.utcnow()
+    analysis.completed_at = datetime.now(UTC)
     session.commit()
     return analysis
 
