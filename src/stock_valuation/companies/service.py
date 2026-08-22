@@ -81,8 +81,20 @@ def get_company(session: Session, company_id: int) -> Company | None:
     return session.get(Company, company_id)
 
 
-def get_company_by_ticker(session: Session, ticker: str) -> Company | None:
-    return session.scalar(select(Company).where(Company.ticker == ticker.strip().upper()))
+def get_company_by_ticker(
+    session: Session,
+    ticker: str,
+    *,
+    exchange: str | None = None,
+) -> Company | None:
+    query = select(Company).where(Company.ticker == ticker.strip().upper())
+    if exchange:
+        query = query.where(Company.exchange == exchange.strip())
+    return session.scalar(query)
+
+
+def get_company_by_isin(session: Session, isin: str) -> Company | None:
+    return session.scalar(select(Company).where(Company.isin == isin.strip().upper()))
 
 
 def get_or_create_company(
@@ -99,15 +111,24 @@ def get_or_create_company(
     industry: str | None = None,
 ) -> Company:
     normalized_ticker = ticker.strip().upper()
-    company = get_company_by_ticker(session, normalized_ticker)
+    normalized_isin = isin.strip().upper() if isin else None
+    normalized_exchange = exchange.strip() if exchange else None
+
+    company = get_company_by_isin(session, normalized_isin) if normalized_isin else None
+    if company is None:
+        company = get_company_by_ticker(
+            session,
+            normalized_ticker,
+            exchange=normalized_exchange,
+        )
     if company:
         return company
 
     company = Company(
         name=name.strip(),
         ticker=normalized_ticker,
-        isin=isin.strip().upper() if isin else None,
-        exchange=exchange.strip() if exchange else None,
+        isin=normalized_isin,
+        exchange=normalized_exchange,
         country=country.strip() if country else None,
         currency=currency.strip().upper(),
         provider_symbol=provider_symbol.strip().upper() if provider_symbol else None,
