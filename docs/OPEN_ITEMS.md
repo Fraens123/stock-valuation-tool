@@ -19,19 +19,22 @@ Für folgende Kennzahlen ist die Rohdatenbasis grundsätzlich vorhanden, die exa
 
 EBIT-Marge ist bereits aktiv und getestet.
 
-### 1.2 Datenblocker für EBITDA-Marge
+### 1.2 D&A / EBITDA-Marge – technisch geklärt
 
-`depreciation_amortization` ist im ASML-Primärquellen-Gate blockiert. Zu klären:
+Die D&A-Rohfelddiagnose hat den bisherigen Datenblocker aufgelöst:
 
-- geeignetes Alpha-Vantage-Rohfeld bzw. alternatives Mapping,
-- Vergleich gegen ASML D&A 2024/2025,
-- erst danach EBITDA-Marge freigeben.
+- Alpha Vantage `INCOME_STATEMENT.depreciationAndAmortization`
+  - 2025 = 1.025,9 Mio. EUR — exakter ASML-Treffer
+  - 2024 = 918,6 Mio. EUR — exakter ASML-Treffer
+- `CASH_FLOW.depreciationDepletionAndAmortization` bleibt nur Cross-Check, weil 2024 abweicht.
+
+Offen ist lokal nur noch, das neue D&A-Mapping einmal mit dem 1-Request-Refresh in den bestehenden Snapshot zu schreiben. Danach kann die EBITDA-Marge berechnet werden.
 
 ## 2. Noch offene Datenqualität
 
 Alpha Vantage wird feldweise und nicht pauschal freigegeben.
 
-Derzeit problematisch/blockiert:
+Derzeit weiterhin problematisch/blockiert:
 
 - `accounts_receivable`
 - `inventory`
@@ -39,7 +42,6 @@ Derzeit problematisch/blockiert:
 - `short_term_debt`
 - `operating_cash_flow`
 - `capital_expenditures`
-- `depreciation_amortization`
 - `cash_and_short_term_investments` als Cross-Check-Feld
 - weitere Felder, die im Feld-Gate FAIL/MISSING zeigen
 
@@ -178,6 +180,6 @@ Verbindlich in `docs/METHODOLOGY_OPEN_QUESTIONS.md` dokumentiert:
 Parallel arbeiten wir an zwei Strängen:
 
 1. **Buchmethodik:** Nutzer liefert die Formel-/Definitionsabschnitte für Kindle S. 94, 101, 107, 109, 111 und 114. Danach werden die restlichen Kapitel-2-Kennzahlen freigeschaltet.
-2. **Datenqualität:** D&A und die weiteren gesperrten Alpha-Vantage-Felder werden technisch untersucht und ggf. neu gemappt/ersetzt.
+2. **Datenqualität:** Nach dem gelösten D&A-Thema werden als Nächstes Forderungen, Vorräte, PP&E, Debt, Operating Cash Flow und CAPEX bereinigt bzw. alternative Quellen evaluiert.
 
 Keine spätere Bewertungslogik wird vorgezogen, solange dafür zentrale Rohdaten oder Buchdefinitionen noch nicht verifiziert sind.
