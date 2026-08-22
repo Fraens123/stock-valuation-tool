@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import ensure_editable
+from stock_valuation.data.resolution import load_preferred_financial_facts
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot, MetricSnapshot
 from stock_valuation.metrics.engine import (
     CALCULATION_VERSION,
@@ -98,20 +99,18 @@ def _annual_facts(
     session: Session,
     analysis: Analysis,
     required: set[str],
-    *,
-    provider: str,
 ) -> dict[object, dict[str, FinancialFactSnapshot]]:
-    facts = session.scalars(
-        select(FinancialFactSnapshot).where(
-            FinancialFactSnapshot.analysis_id == analysis.id,
-            FinancialFactSnapshot.provider == provider,
-            FinancialFactSnapshot.period_type == "FY",
-            FinancialFactSnapshot.metric.in_(required),
-            FinancialFactSnapshot.period_end <= analysis.as_of_date,
-        )
-    ).all()
+    """Load canonical stored facts with ASML primary-source priority per metric/year."""
+    facts = load_preferred_financial_facts(
+        session,
+        analysis.id,
+        metrics=required,
+        period_type="FY",
+    )
     by_period: dict[object, dict[str, FinancialFactSnapshot]] = {}
     for fact in facts:
+        if fact.period_end > analysis.as_of_date:
+            continue
         by_period.setdefault(fact.period_end, {})[fact.metric] = fact
     return by_period
 
@@ -138,12 +137,10 @@ def _require_approved(
 def calculate_asml_ebit_margin_series(
     session: Session,
     analysis: Analysis,
-    *,
-    provider: str = "alphavantage",
 ) -> list[MetricPoint]:
     required = {"revenue", "operating_income"}
     _require_approved(session, analysis, required, label="EBIT-Marge")
-    by_period = _annual_facts(session, analysis, required, provider=provider)
+    by_period = _annual_facts(session, analysis, required)
 
     points: list[MetricPoint] = []
     for period_end in sorted(by_period):
@@ -169,12 +166,10 @@ def calculate_asml_ebit_margin_series(
 def calculate_asml_ebitda_margin_series(
     session: Session,
     analysis: Analysis,
-    *,
-    provider: str = "alphavantage",
 ) -> list[MetricPoint]:
     required = {"revenue", "operating_income", "depreciation_amortization"}
     _require_approved(session, analysis, required, label="EBITDA-Marge")
-    by_period = _annual_facts(session, analysis, required, provider=provider)
+    by_period = _annual_facts(session, analysis, required)
 
     points: list[MetricPoint] = []
     for period_end in sorted(by_period):
