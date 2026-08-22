@@ -20,6 +20,44 @@ from .base import (
 )
 
 
+def extract_matching_annual_fields(
+    payload: dict[str, Any],
+    *,
+    statement: str,
+    keywords: tuple[str, ...],
+    max_reports: int = 2,
+) -> list[dict[str, Any]]:
+    """Return matching raw fields from the latest annual reports without interpreting them.
+
+    This helper is deliberately semantic-free. It is used for provider diagnostics so we can
+    inspect candidate raw fields before changing the normalisation mapping.
+    """
+    reports = payload.get("annualReports") or []
+    if not isinstance(reports, list):
+        return []
+
+    lowered_keywords = tuple(keyword.lower() for keyword in keywords)
+    rows: list[dict[str, Any]] = []
+    for report in reports[:max_reports]:
+        if not isinstance(report, dict):
+            continue
+        fiscal_date = report.get("fiscalDateEnding")
+        currency = report.get("reportedCurrency")
+        for field, value in report.items():
+            lowered_field = str(field).lower()
+            if any(keyword in lowered_field for keyword in lowered_keywords):
+                rows.append(
+                    {
+                        "statement": statement,
+                        "fiscal_date": fiscal_date,
+                        "reported_currency": currency,
+                        "field": field,
+                        "value": value,
+                    }
+                )
+    return rows
+
+
 class AlphaVantageProvider(FinancialDataProvider):
     """Alpha Vantage adapter for fundamentals testing.
 
@@ -27,9 +65,8 @@ class AlphaVantageProvider(FinancialDataProvider):
     BALANCE_SHEET and CASH_FLOW endpoints. Estimates use EARNINGS_ESTIMATES.
 
     The free tier currently has a daily quota and also asks users to spread requests
-    out. Full imports therefore pace calls. A one-request diagnostic probe is exposed
-    separately so rate-limit/access/symbol problems can be distinguished without
-    repeatedly spending four calls on a full import.
+    out. Full imports therefore pace calls. Diagnostic probes are exposed separately
+    so access/symbol/mapping problems can be inspected without modifying snapshots.
     """
 
     BASE_URL = "https://www.alphavantage.co/query"
@@ -124,6 +161,32 @@ class AlphaVantageProvider(FinancialDataProvider):
             "reported_currency": latest.get("reportedCurrency"),
             "latest_revenue": latest.get("totalRevenue"),
         }
+
+    def probe_depreciation_fields(self, symbol: str) -> list[dict[str, Any]]:
+        """Inspect D&A-like raw fields using exactly two requests and no persistence.
+
+        Both INCOME_STATEMENT and CASH_FLOW are inspected because normalized provider
+        taxonomies may expose depreciation/amortisation concepts in more than one statement.
+        Returned values remain raw strings; this method makes no decision about which field
+        should be used by the metrics engine.
+        """
+        keywords = ("depreci", "amorti", "depletion")
+        income = self._request("INCOME_STATEMENT", symbol=symbol)
+        cash_flow = self._request("CASH_FLOW", symbol=symbol)
+        return [
+            *extract_matching_annual_fields(
+                income,
+                statement="income_statement",
+                keywords=keywords,
+                max_reports=2,
+            ),
+            *extract_matching_annual_fields(
+                cash_flow,
+                statement="cash_flow",
+                keywords=keywords,
+                max_reports=2,
+            ),
+        ]
 
     def search_companies(self, query: str) -> list[dict[str, Any]]:
         data = self._request("SYMBOL_SEARCH", keywords=query)
