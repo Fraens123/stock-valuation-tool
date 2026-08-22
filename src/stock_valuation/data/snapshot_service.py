@@ -193,6 +193,47 @@ def sync_eodhd_snapshot(session: Session, analysis: Analysis, provider) -> tuple
     )
 
 
+def sync_alphavantage_financials(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    symbol: str,
+) -> int:
+    """Import only annual financial statements (3 Alpha Vantage requests)."""
+    ensure_editable(analysis)
+    if not symbol.strip():
+        raise ValueError("Für Alpha Vantage fehlt das Symbol.")
+    facts = provider.get_normalized_financials(symbol.strip(), period_type="FY")
+    return replace_financial_facts(
+        session,
+        analysis,
+        facts,
+        provider="alphavantage",
+        source_url="https://www.alphavantage.co/documentation/#fundamentals",
+    )
+
+
+def sync_alphavantage_estimates(
+    session: Session,
+    analysis: Analysis,
+    provider,
+    *,
+    symbol: str,
+) -> int:
+    """Import only analyst estimates (1 Alpha Vantage request)."""
+    ensure_editable(analysis)
+    if not symbol.strip():
+        raise ValueError("Für Alpha Vantage fehlt das Symbol.")
+    estimates = provider.get_normalized_estimates(symbol.strip())
+    return replace_estimates(
+        session,
+        analysis,
+        estimates,
+        provider="alphavantage",
+    )
+
+
 def sync_alphavantage_snapshot(
     session: Session,
     analysis: Analysis,
@@ -200,16 +241,20 @@ def sync_alphavantage_snapshot(
     *,
     symbol: str,
 ) -> tuple[int, int]:
-    if not symbol.strip():
-        raise ValueError("Für Alpha Vantage fehlt das Symbol.")
-    return _sync_provider_snapshot(
+    """Backward-compatible combined import. Prefer the separate V1 UI actions."""
+    fact_count = sync_alphavantage_financials(
         session,
         analysis,
         provider,
-        symbol=symbol.strip(),
-        provider_name="alphavantage",
-        source_url="https://www.alphavantage.co/documentation/#fundamentals",
+        symbol=symbol,
     )
+    estimate_count = sync_alphavantage_estimates(
+        session,
+        analysis,
+        provider,
+        symbol=symbol,
+    )
+    return fact_count, estimate_count
 
 
 def sync_sec_companyfacts(
