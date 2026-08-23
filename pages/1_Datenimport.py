@@ -27,15 +27,13 @@ from stock_valuation.analyses.input_service import (
     upsert_manual_financial_override,
 )
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
-from stock_valuation.companies.provider_symbols import get_provider_symbol, upsert_provider_symbol
+from stock_valuation.companies.provider_symbols import get_provider_symbol
 from stock_valuation.data.audit import run_deterministic_audit
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.resolution import load_preferred_financial_facts
-from stock_valuation.data.snapshot_service import (
-    sync_alphavantage_estimates,
-    sync_alphavantage_financials,
-)
+from stock_valuation.data.snapshot_service import sync_alphavantage_estimates
+from stock_valuation.data.source_router import sync_best_available_financials
 from stock_valuation.database.models import AnalysisStatus, EstimateSnapshot, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.ui.navigation import render_navigation
@@ -77,8 +75,9 @@ def _format_value(value: Decimal | None, currency: str | None) -> str:
 
 st.title("Finanzdaten")
 st.caption(
-    "Normaler Ablauf: Alpha Vantage laden → lokal plausibilisieren → optional mit ChatGPT gegen "
-    "offizielle Quellen prüfen → Abweichungen selbst übernehmen oder verwerfen."
+    "Historische Ist-Daten werden automatisch aus der besten verfügbaren strukturierten Quelle "
+    "geladen: **SEC → ESEF → optionaler Provider-Fallback**. Danach folgen Plausibilitäts- und "
+    "bei Bedarf ChatGPT-Mappingprüfung."
 )
 
 with get_session() as session:
@@ -103,84 +102,150 @@ with get_session() as session:
         provider="alphavantage",
         purpose="fundamentals",
     )
+    sec_identifier = get_provider_symbol(
+        session,
+        analysis.company,
+        provider="sec",
+        purpose="cik",
+    )
+    lei_identifier = get_provider_symbol(
+        session,
+        analysis.company,
+        provider="gleif",
+        purpose="lei",
+    )
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
     analysis_as_of_date = analysis.as_of_date
     company_ticker = analysis.company.ticker
+    company_currency = analysis.company.currency
 
 alpha_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
 alpha_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
+sec_user_agent_available = bool(os.getenv("SEC_USER_AGENT"))
 
 header = st.columns(5)
 header[0].metric("Unternehmen", analysis.company.name)
 header[1].metric("Ticker", company_ticker)
-header[2].metric("Fundamentals-Symbol", alpha_symbol or "—")
+header[2].metric("Währung", company_currency or "—")
 header[3].metric("Revision", f"R{analysis.revision_number}")
 header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
+
+with st.expander("Automatisch erkannte Daten-Identitäten", expanded=False):
+    st.write(f"**SEC CIK:** {sec_identifier.symbol if sec_identifier else 'noch nicht erkannt'}")
+    st.write(f"**LEI:** {lei_identifier.symbol if lei_identifier else 'noch nicht erkannt'}")
+    st.write(f"**Alpha-Vantage-Symbol:** {alpha_symbol if alpha_identifier else 'nicht benötigt / noch nicht hinterlegt'}")
 
 # -----------------------------------------------------------------------------
 # 1. Import
 # -----------------------------------------------------------------------------
-st.subheader("1. Daten laden")
-if not alpha_key_available:
-    st.warning("ALPHA_VANTAGE_API_KEY fehlt in der lokalen `.env`.")
-elif not editable:
+st.subheader("1. Finanzdaten laden")
+if not editable:
     st.info(
         "Diese Analyse ist abgeschlossen und eingefroren. Für aktuelle Daten zuerst eine neue "
         "Revision anlegen."
     )
 else:
     st.write(
-        "Ein Klick lädt GuV, Bilanz, Cashflow und Analystenschätzungen. "
-        "Das sind intern normalerweise **4 Alpha-Vantage-Requests**."
+        "Der Import versucht zuerst **offizielle strukturierte Daten**. SEC benötigt keinen API-Key, "
+        "aber einen lokalen `SEC_USER_AGENT`. Für europäische ESEF-Daten wird die LEI automatisch "
+        "über GLEIF gesucht; auch dafür ist kein API-Key nötig."
     )
-    if st.button("Daten laden / aktualisieren", type="primary", disabled=not alpha_symbol):
-        provider = AlphaVantageProvider()
+    if not sec_user_agent_available:
+        st.caption(
+            "SEC ist derzeit übersprungen, weil `SEC_USER_AGENT` in `.env` fehlt. ESEF/GLEIF wird trotzdem versucht."
+        )
+
+    allow_alpha_fallback = st.checkbox(
+        "Alpha Vantage nur als Fallback verwenden",
+        value=False,
+        help=(
+            "Nur aktivieren, wenn SEC/ESEF keine brauchbaren Daten liefern. Historische Daten sollen "
+            "nicht mehr von Alpha Vantage abhängen."
+        ),
+    )
+
+    if st.button("Finanzdaten laden / aktualisieren", type="primary"):
         try:
             with get_session() as session:
                 current = get_analysis(session, analysis_id)
                 if current is None:
                     raise ValueError("Analyse wurde nicht gefunden.")
-                with st.spinner(f"Lade Finanzabschlüsse für {alpha_symbol} …"):
-                    fact_count = sync_alphavantage_financials(
+                with st.spinner("Suche beste verfügbare Finanzdatenquelle …"):
+                    result = sync_best_available_financials(
                         session,
                         current,
-                        provider,
-                        symbol=alpha_symbol,
+                        allow_alpha_fallback=allow_alpha_fallback,
                     )
-                upsert_provider_symbol(
-                    session,
-                    current.company,
-                    provider="alphavantage",
-                    purpose="fundamentals",
-                    symbol=alpha_symbol,
-                    note="Erfolgreicher automatischer Finanzabschlussimport.",
+            st.session_state[f"source-router-{analysis_id}"] = {
+                "selected_source": result.selected_source,
+                "fact_count": result.fact_count,
+                "report_currency": result.report_currency,
+                "attempts": [
+                    {
+                        "Quelle": attempt.source,
+                        "Status": attempt.status,
+                        "Fakten": attempt.fact_count,
+                        "Identifikator": attempt.identifier,
+                        "Hinweis": attempt.message,
+                    }
+                    for attempt in result.attempts
+                ],
+            }
+            if result.success:
+                st.success(
+                    f"Historische Finanzdaten geladen: {result.fact_count} Fakten aus **{result.selected_source}**"
+                    + (f" · Berichtswährung {result.report_currency}" if result.report_currency else "")
+                    + "."
                 )
-            st.success(f"Finanzabschlüsse geladen: {fact_count} Datenpunkte gespeichert.")
+                st.rerun()
+            else:
+                st.error(
+                    "Keine ausreichend strukturierte Quelle konnte automatisch importiert werden. "
+                    "Die einzelnen Versuche stehen direkt darunter."
+                )
         except (ValueError, AnalysisFrozenError, ProviderError) as exc:
             st.error(str(exc))
-            st.stop()
 
-        try:
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse wurde nicht gefunden.")
-                with st.spinner("Lade Analystenschätzungen …"):
-                    estimate_count = sync_alphavantage_estimates(
-                        session,
-                        current,
-                        provider,
-                        symbol=alpha_symbol,
-                    )
-            if estimate_count:
-                st.success(f"Analystenschätzungen geladen: {estimate_count} Datensätze gespeichert.")
-            else:
-                st.info("Finanzabschlüsse gespeichert; aktuell keine Estimates geliefert.")
-        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-            st.warning(
-                "Finanzabschlüsse wurden gespeichert, die Analystenschätzungen aber nicht: " + str(exc)
-            )
-        st.rerun()
+    router_state = st.session_state.get(f"source-router-{analysis_id}")
+    if router_state:
+        st.caption(
+            f"Letzter Importpfad: {router_state.get('selected_source') or 'keine Quelle ausgewählt'} · "
+            f"{router_state.get('fact_count', 0)} Fakten"
+        )
+        attempts = router_state.get("attempts") or []
+        if attempts:
+            with st.expander("Quellen-Router anzeigen", expanded=router_state.get("selected_source") is None):
+                st.dataframe(pd.DataFrame(attempts), width="stretch", hide_index=True)
+
+    st.markdown("#### Analystenschätzungen – optional")
+    st.caption(
+        "SEC und ESEF enthalten veröffentlichte Ist-Daten, aber keinen Analystenkonsens. "
+        "Schätzungen werden deshalb getrennt behandelt."
+    )
+    if alpha_key_available:
+        if st.button("Analystenschätzungen über Alpha Vantage laden"):
+            provider = AlphaVantageProvider()
+            try:
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse wurde nicht gefunden.")
+                    with st.spinner(f"Lade Analystenschätzungen für {alpha_symbol} …"):
+                        estimate_count = sync_alphavantage_estimates(
+                            session,
+                            current,
+                            provider,
+                            symbol=alpha_symbol,
+                        )
+                if estimate_count:
+                    st.success(f"Analystenschätzungen geladen: {estimate_count} Datensätze.")
+                else:
+                    st.info("Der Provider hat aktuell keine importierbaren Estimates geliefert.")
+                st.rerun()
+            except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+                st.warning("Analystenschätzungen konnten nicht geladen werden: " + str(exc))
+    else:
+        st.caption("Kein Alpha-Vantage-Key hinterlegt; historische Finanzdaten funktionieren trotzdem.")
 
 with get_session() as session:
     facts = session.scalars(
@@ -215,6 +280,7 @@ else:
     summary[3].metric("Quellen", len(providers))
     summary[4].metric("Bestätigte Korrekturen", len(overrides))
 
+    st.caption("Gespeicherte Quellen: " + ", ".join(providers))
     with st.expander("Rohdaten anzeigen", expanded=False):
         st.dataframe(
             pd.DataFrame(
@@ -232,7 +298,7 @@ else:
                     for fact in facts
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -272,15 +338,15 @@ else:
                         for item in audit_checks
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
-    st.markdown("#### ChatGPT-Prüfung gegen offizielle Quellen")
+    st.markdown("#### ChatGPT-Prüfung / semantischer Cross-Check")
     st.write(
-        "Diese Prüfung verwendet **keinen OpenAI-API-Key**. Das Tool erstellt ein Prüfpaket, "
-        "das du in deinem normalen ChatGPT hochlädst. ChatGPT recherchiert die offiziellen Quellen "
-        "und gibt eine JSON-Ergebnisdatei zurück, die hier wieder eingelesen wird."
+        "Das Prüfpaket bleibt bewusst erhalten. Bei SEC/ESEF stammen die Zahlen bereits aus offiziellen "
+        "Filings; ChatGPT kontrolliert dann vor allem **Feldsemantik, ungewöhnliche Mappings, Restatements "
+        "und Definitionskonflikte**. Bei Fallback-Providern dient es zusätzlich als Zahlen-Cross-Check."
     )
 
     review_years = st.selectbox(
@@ -318,7 +384,7 @@ else:
 
         st.info(
             "**In ChatGPT:** Datei hochladen und schreiben: „Führe die Prüfung aus und erstelle die "
-            "angeforderte JSON-Ergebnisdatei.“ Danach die von ChatGPT erzeugte `.json`-Datei hier hochladen."
+            "angeforderte JSON-Ergebnisdatei.“ Danach die erzeugte `.json`-Datei hier hochladen."
         )
 
         uploaded_review = st.file_uploader(
@@ -329,10 +395,7 @@ else:
         )
         if uploaded_review is not None:
             st.caption(f"Ausgewählt: `{uploaded_review.name}`")
-            if st.button(
-                "3. Prüfergebnis einlesen",
-                disabled=not editable,
-            ):
+            if st.button("3. Prüfergebnis einlesen", disabled=not editable):
                 try:
                     with get_session() as session:
                         current = get_analysis(session, analysis_id)
@@ -394,7 +457,7 @@ else:
                         for row in visible
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -411,7 +474,7 @@ else:
             st.markdown("##### Korrekturvorschläge entscheiden")
             st.caption(
                 "**Übernehmen** legt einen bestätigten Override an. **Verwerfen** behält den "
-                "bisher verwendeten Wert. Der Alpha-Vantage-Originalwert bleibt in beiden Fällen erhalten."
+                "bisher verwendeten Wert. Der ursprüngliche Quellenwert bleibt in beiden Fällen erhalten."
             )
             for finding in sorted(
                 pending,
@@ -425,11 +488,7 @@ else:
                     c2.metric("Offiziell", _format_value(finding.official_value, finding.currency))
                     c3.metric(
                         "Abweichung",
-                        (
-                            f"{float(finding.deviation_pct):.3f} %"
-                            if finding.deviation_pct is not None
-                            else "—"
-                        ),
+                        f"{float(finding.deviation_pct):.3f} %" if finding.deviation_pct is not None else "—",
                     )
                     st.write(f"**Offizielle Bezeichnung:** {finding.official_label or '—'}")
                     st.write(f"**Begründung:** {finding.reason or '—'}")
@@ -528,7 +587,7 @@ else:
                         for row in manual_rows
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             removal_options = {f"{row.period_end.year} · {row.metric}": row for row in manual_rows}
@@ -592,6 +651,6 @@ else:
                 for item in visible_estimates
             ]
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
