@@ -14,6 +14,7 @@ from stock_valuation.validation.service import metric_validation_gates, validate
 
 PRIMARY_SOURCE_PROVIDERS = {
     "asml_primary",
+    "esef_xbrl_json",
     "esef_ixbrl",
     "sec_companyfacts",
 }
@@ -198,8 +199,6 @@ def _state_for_fact(
 
     if verdict in {"WARN", "FAIL"}:
         if finding.decision == "accepted":
-            # Normally source resolution already returns the resulting manual_override. If not,
-            # blocking here is safer than silently using the old provider value.
             reason = "Prüfkorrektur wurde akzeptiert, aber der bestätigte Override ist nicht bevorzugt auflösbar."
         elif finding.decision == "rejected":
             reason = (
