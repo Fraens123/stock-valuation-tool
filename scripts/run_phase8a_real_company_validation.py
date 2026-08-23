@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -78,13 +78,13 @@ TARGETS = (
 
 
 def main() -> int:
-    load_dotenv(ROOT / ".env")
+    runtime_env = _load_runtime_environment()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     DIAGNOSTICS.mkdir(exist_ok=True)
     if DB_PATH.exists():
         DB_PATH.unlink()
 
-    preflight = _environment_preflight()
+    preflight = _environment_preflight(runtime_env)
     provider_failures: list[dict[str, Any]] = []
     engine_blockers: list[str] = []
     environment_blockers = list(preflight["environment_blockers"])
@@ -125,8 +125,6 @@ def main() -> int:
                     "market_snapshot_id": state.market_snapshot_id if state is not None else None,
                 }
 
-        decision = _decision(companies, provider_failures, engine_blockers)
-
     asml_long_history = (
         {
             "status": "NOT_RUN_ENVIRONMENT_BLOCKED",
@@ -137,12 +135,25 @@ def main() -> int:
         if environment_blockers
         else _asml_long_history(history_rows)
     )
+    if not environment_blockers:
+        if asml_long_history.get("status") == "FAIL_LONG_HISTORY_PIPELINE":
+            missing = ", ".join(asml_long_history.get("missing_required_metrics", ()))
+            engine_blockers.append(
+                "ASML LONG_HISTORY: required core metric history below 5Y"
+                + (f" ({missing})" if missing else "")
+            )
+        decision = _decision(companies, provider_failures, engine_blockers, asml_long_history)
     audit = {
         "decision": decision,
         "validation_mode": "REAL_COMPANY_ISOLATED_DB",
         "analysis_as_of_date": ANALYSIS_AS_OF_DATE.isoformat(),
         "validation_db": str(DB_PATH.relative_to(ROOT)),
         "production_uses_diagnostics_csv": False,
+        "dotenv_path_found": preflight["dotenv_path_found"],
+        "SEC_USER_AGENT_configured": preflight["configured"]["SEC_USER_AGENT"],
+        "SEC_USER_AGENT_source": preflight["SEC_USER_AGENT_SOURCE"],
+        "ALPHA_VANTAGE_API_KEY_configured": preflight["configured"]["ALPHA_VANTAGE_API_KEY"],
+        "ALPHA_VANTAGE_API_KEY_source": preflight["ALPHA_VANTAGE_API_KEY_SOURCE"],
         "environment": preflight,
         "companies": companies,
         "asml_long_history": asml_long_history,
@@ -159,10 +170,72 @@ def main() -> int:
     _write_outputs(audit, company_results, stage_results, history_rows)
     if decision == "GO - REAL COMPANY END-TO-END VALIDATION PASSED":
         _update_end_to_end_audit_go(audit)
+    else:
+        _update_end_to_end_audit_not_go(audit)
     return 0
 
 
-def _environment_preflight() -> dict[str, Any]:
+def _load_runtime_environment() -> dict[str, Any]:
+    keys = ("SEC_USER_AGENT", "ALPHA_VANTAGE_API_KEY")
+    candidates = []
+    for path in (ROOT / ".env", ROOT.parent / ".env"):
+        if path not in candidates:
+            candidates.append(path)
+    found = find_dotenv(filename=".env", usecwd=True)
+    if found:
+        found_path = Path(found)
+        if found_path not in candidates:
+            candidates.append(found_path)
+
+    dotenv_status = {
+        str(path): {
+            "exists": path.exists(),
+            "keys": {
+                key: {
+                    "present": False,
+                    "non_empty": False,
+                }
+                for key in keys
+            },
+        }
+        for path in candidates
+    }
+    loaded_sources: dict[str, str] = {}
+    for key in keys:
+        process_value = os.getenv(key)
+        if process_value is not None and process_value.strip():
+            loaded_sources[key] = "PROCESS_ENV"
+            continue
+        if process_value is not None and not process_value.strip():
+            os.environ.pop(key, None)
+        loaded_sources[key] = "NOT_AVAILABLE"
+        for path in candidates:
+            if not path.exists():
+                continue
+            values = dotenv_values(path)
+            present = key in values
+            value = values.get(key)
+            non_empty = value is not None and str(value).strip() != ""
+            dotenv_status[str(path)]["keys"][key] = {"present": present, "non_empty": non_empty}
+            if non_empty:
+                os.environ[key] = str(value)
+                loaded_sources[key] = "DOTENV"
+                break
+    return {
+        "repo_root": str(ROOT),
+        "current_working_directory": str(Path.cwd()),
+        "expected_dotenv_path": str(ROOT / ".env"),
+        "dotenv_path_found": any(item["exists"] for item in dotenv_status.values()),
+        "dotenv_candidates": dotenv_status,
+        "sources": loaded_sources,
+        "process_after_load": {
+            key: {"configured": bool(os.getenv(key)), "non_empty": bool(os.getenv(key) and os.getenv(key, "").strip())}
+            for key in keys
+        },
+    }
+
+
+def _environment_preflight(runtime_env: dict[str, Any]) -> dict[str, Any]:
     configured = {
         "SEC_USER_AGENT": bool(os.getenv("SEC_USER_AGENT")),
         "ALPHA_VANTAGE_API_KEY": bool(os.getenv("ALPHA_VANTAGE_API_KEY")),
@@ -173,7 +246,14 @@ def _environment_preflight() -> dict[str, Any]:
     blockers = []
     if not configured["SEC_USER_AGENT"]:
         blockers.append("ENVIRONMENT_BLOCKED: SEC_USER_AGENT missing")
-    return {"configured": configured, "environment_blockers": blockers}
+    return {
+        "configured": configured,
+        "dotenv_path_found": runtime_env["dotenv_path_found"],
+        "SEC_USER_AGENT_SOURCE": runtime_env["sources"].get("SEC_USER_AGENT", "NOT_AVAILABLE"),
+        "ALPHA_VANTAGE_API_KEY_SOURCE": runtime_env["sources"].get("ALPHA_VANTAGE_API_KEY", "NOT_AVAILABLE"),
+        "runtime_environment": runtime_env,
+        "environment_blockers": blockers,
+    }
 
 
 def _run_company(
@@ -430,26 +510,34 @@ def _stage_rows(ticker: str, state) -> list[dict[str, Any]]:
 
 
 def _history_coverage_rows(ticker: str, state) -> list[dict[str, Any]]:
-    rows = []
+    rows_by_metric: dict[str, dict[str, Any]] = {}
+    base_years: dict[str, set[int]] = {}
+    for facts in state.stages["CALCULATION"].payload.get("base_facts", {}).values():
+        for fact in facts:
+            if fact.get("value") is not None:
+                base_years.setdefault(fact["metric"], set()).add(int(fact["fiscal_year"]))
+    for metric, years_set in base_years.items():
+        rows_by_metric[metric] = _coverage_row(ticker, metric, sorted(years_set))
+
     series = state.stages["HISTORICAL_ANALYSIS"].payload.get("series", {})
     for metric, points in series.items():
         years = sorted(int(item["fiscal_year"]) for item in points if item.get("status") == "AVAILABLE" and item.get("value") is not None)
-        missing = []
-        if years:
-            missing = sorted(set(range(min(years), max(years) + 1)) - set(years))
-        rows.append(
-            {
-                "ticker": ticker,
-                "metric": metric,
-                "available_fiscal_years": " ".join(str(year) for year in years),
-                "year_count": len(years),
-                "earliest_year": min(years) if years else "",
-                "latest_year": max(years) if years else "",
-                "missing_years": " ".join(str(year) for year in missing),
-                "status": "AVAILABLE" if years else "UNAVAILABLE",
-            }
-        )
-    return rows
+        rows_by_metric[metric] = _coverage_row(ticker, metric, years)
+    return [rows_by_metric[key] for key in sorted(rows_by_metric)]
+
+
+def _coverage_row(ticker: str, metric: str, years: list[int]) -> dict[str, Any]:
+    missing = sorted(set(range(min(years), max(years) + 1)) - set(years)) if years else []
+    return {
+        "ticker": ticker,
+        "metric": metric,
+        "available_fiscal_years": " ".join(str(year) for year in years),
+        "year_count": len(years),
+        "earliest_year": min(years) if years else "",
+        "latest_year": max(years) if years else "",
+        "missing_years": " ".join(str(year) for year in missing),
+        "status": "AVAILABLE" if years else "UNAVAILABLE",
+    }
 
 
 def _listing_context(state) -> dict[str, Any]:
@@ -469,22 +557,44 @@ def _listing_context(state) -> dict[str, Any]:
 
 
 def _asml_long_history(history_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    required = {
+        "revenue",
+        "operating_income",
+        "net_income",
+        "operating_cash_flow",
+        "capital_expenditures",
+        "depreciation_amortization",
+        "free_cash_flow",
+    }
     core = {
         row["metric"]: row
         for row in history_rows
         if row["ticker"] == "ASML"
-        and row["metric"] in {"revenue", "operating_income", "net_income", "operating_cash_flow", "free_cash_flow", "ebitda"}
+        and row["metric"] in required
     }
-    counts = [int(row["year_count"]) for row in core.values()]
+    missing_metrics = sorted(required - set(core))
+    counts = [int(core.get(metric, {}).get("year_count", 0)) for metric in required]
     min_count = min(counts) if counts else 0
-    status = "PASS_10Y" if min_count >= 10 else "PARTIAL_PASS" if min_count >= 5 else "FAIL"
-    return {"status": status, "metrics": core, "minimum_core_year_count": min_count}
+    status = "PASS_10Y" if min_count >= 10 else "PARTIAL_PASS_5PLUS" if min_count >= 5 else "FAIL_LONG_HISTORY_PIPELINE"
+    return {
+        "status": status,
+        "metrics": core,
+        "missing_required_metrics": missing_metrics,
+        "minimum_core_year_count": min_count,
+    }
 
 
-def _decision(companies: dict[str, Any], provider_failures: list[dict[str, Any]], engine_blockers: list[str]) -> str:
+def _decision(
+    companies: dict[str, Any],
+    provider_failures: list[dict[str, Any]],
+    engine_blockers: list[str],
+    asml_long_history: dict[str, Any],
+) -> str:
     if provider_failures and len(companies) < len(TARGETS):
         return "VALIDATION INCONCLUSIVE - ENVIRONMENT / PROVIDER BLOCKED"
     if engine_blockers:
+        return "NO-GO - REAL COMPANY END-TO-END VALIDATION"
+    if asml_long_history.get("status") == "FAIL_LONG_HISTORY_PIPELINE":
         return "NO-GO - REAL COMPANY END-TO-END VALIDATION"
     if set(companies) == {target.ticker for target in TARGETS}:
         return "GO - REAL COMPANY END-TO-END VALIDATION PASSED"
@@ -620,6 +730,34 @@ def _update_end_to_end_audit_go(audit: dict[str, Any]) -> None:
     if md.exists():
         text = md.read_text(encoding="utf-8")
         text = text.replace("NO-GO - END-TO-END ANALYSIS WORKFLOW V1", data["decision"])
+        md.write_text(text, encoding="utf-8")
+
+
+def _update_end_to_end_audit_not_go(audit: dict[str, Any]) -> None:
+    path = DIAGNOSTICS / "END_TO_END_WORKFLOW_AUDIT.json"
+    if not path.exists():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["decision"] = "NO-GO - END-TO-END ANALYSIS WORKFLOW V1"
+    data["blockers"] = audit.get("engine_blockers", ()) or audit.get("environment_blockers", ())
+    data["phase8a_validation"] = {
+        "decision": audit["decision"],
+        "validation_db": audit["validation_db"],
+        "companies": list(audit["companies"]),
+        "asml_long_history": audit["asml_long_history"],
+    }
+    path.write_text(canonical_json(data), encoding="utf-8")
+    md = DIAGNOSTICS / "END_TO_END_WORKFLOW_AUDIT.md"
+    if md.exists():
+        text = md.read_text(encoding="utf-8")
+        text = text.replace(
+            "GO - END-TO-END ANALYSIS WORKFLOW V1 PRODUCTION READY / FROZEN",
+            "NO-GO - END-TO-END ANALYSIS WORKFLOW V1",
+        )
+        text = text.replace(
+            "GO – END-TO-END ANALYSIS WORKFLOW V1 PRODUCTION READY / FROZEN",
+            "NO-GO - END-TO-END ANALYSIS WORKFLOW V1",
+        )
         md.write_text(text, encoding="utf-8")
 
 
