@@ -6,7 +6,9 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from stock_valuation.data.metric_requirements import metric_policy
 from stock_valuation.data.resolution import load_preferred_financial_facts
+from stock_valuation.data.semantic_policy import SemanticMappingDecision, semantic_mapping_policy
 from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot
 from stock_valuation.validation.service import metric_validation_gates, validate_asml_primary_source
@@ -23,19 +25,6 @@ PRIMARY_SOURCE_PROVIDERS = {
     "sec_filing_text_candidate",
 }
 
-# A primary source proves provenance, but not automatically that one XBRL concept or extracted
-# filing-table row has exactly the same economic scope as our internal field. These combinations
-# therefore require an explicit semantic PASS (or a confirmed manual override) before calculations.
-PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
-    ("sec_companyfacts", "short_term_debt"),
-    ("edgartools", "short_term_debt"),
-    ("sec_filing_xbrl", "short_term_debt"),
-    ("sec_companyfacts", "depreciation_amortization"),
-    ("edgartools", "depreciation_amortization"),
-    ("sec_filing_xbrl", "depreciation_amortization"),
-    ("esef_xbrl_json", "depreciation_amortization"),
-    ("esef_ixbrl", "depreciation_amortization"),
-}
 PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED = {
     "sec_filing_extension",
     "sec_filing_text_candidate",
@@ -81,6 +70,8 @@ class PreferredDataState:
     reason: str
     review_verdict: str | None = None
     review_decision: str | None = None
+    semantic_policy_decision: str | None = None
+    semantic_policy_version: str | None = None
 
     @property
     def definition(self) -> str | None:
@@ -225,11 +216,33 @@ def _state_for_fact(
             reason="Vom Nutzer bestätigter Override mit erhaltener Provider-Provenienz.",
         )
 
-    if (
-        ((fact.provider or ""), fact.metric) in PRIMARY_SEMANTIC_REVIEW_REQUIRED
-        or (fact.provider or "") in PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED
-    ):
+    if (fact.provider or "") in PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED:
         return _semantic_primary_state(fact, finding)
+
+    if _is_primary_source(fact) and _needs_semantic_gate(fact.metric):
+        if finding is not None:
+            return _semantic_primary_state(fact, finding)
+        mapping_policy = semantic_mapping_policy(fact.provider, fact.provider_field, fact.metric)
+        if mapping_policy.decision == SemanticMappingDecision.SAFE_STANDARD_MAPPING:
+            return PreferredDataState(
+                fact=fact,
+                quality_status="safe_standard_mapping",
+                calculation_ready=True,
+                reason=(
+                    f"Versionierte Semantic-Mapping-Policy {mapping_policy.policy_version}: "
+                    f"{mapping_policy.reason}"
+                ),
+                semantic_policy_decision=mapping_policy.decision.value,
+                semantic_policy_version=mapping_policy.policy_version,
+            )
+        return PreferredDataState(
+            fact=fact,
+            quality_status="primary_semantic_review_required",
+            calculation_ready=False,
+            reason=mapping_policy.reason,
+            semantic_policy_decision=mapping_policy.decision.value,
+            semantic_policy_version=mapping_policy.policy_version,
+        )
 
     if _is_primary_source(fact):
         return PreferredDataState(
@@ -294,7 +307,14 @@ def _state_for_fact(
         reason=finding.reason or f"ChatGPT-Prüfung: {verdict}.",
         review_verdict=verdict,
         review_decision=finding.decision,
-    )
+        )
+
+
+def _needs_semantic_gate(metric: str) -> bool:
+    try:
+        return metric_policy(metric).needs_semantic_gate
+    except KeyError:
+        return False
 
 
 def load_preferred_data_states(

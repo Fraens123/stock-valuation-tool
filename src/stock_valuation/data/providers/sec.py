@@ -453,6 +453,8 @@ def _best_entries_for_aggregate_metric(
             continue
         if period_end in total_by_end:
             continue
+        if metric == "depreciation_amortization" and not _has_complete_d_and_a_components(rows):
+            continue
         total = sum((_decimal(row[3].get("val")) or Decimal("0")) for row in rows)
         unit = rows[0][2]
         field = "+".join(f"{taxonomy}:{concept}" for taxonomy, concept, _, _ in rows)
@@ -473,6 +475,14 @@ def _best_entries_for_aggregate_metric(
     output = dict(total_by_end)
     output.update(aggregated)
     return [output[key] for key in sorted(output)]
+
+
+def _has_complete_d_and_a_components(rows: list[tuple[str, str, str, dict[str, Any]]]) -> bool:
+    fields = {f"{taxonomy}:{concept_name}" for taxonomy, concept_name, _, _ in rows}
+    return (
+        {"us-gaap:Depreciation", "us-gaap:AmortizationOfIntangibleAssets"}.issubset(fields)
+        or {"ifrs-full:DepreciationExpense", "ifrs-full:AmortisationExpense"}.issubset(fields)
+    )
 
 
 def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinancialFact]:

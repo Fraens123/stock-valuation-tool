@@ -79,6 +79,46 @@ def test_original_filing_supplement_is_primary_but_debt_keeps_semantic_gate() ->
         assert states["short_term_debt"].calculation_ready is False
 
 
+def test_safe_short_term_debt_and_ppe_standard_mappings_are_calculation_ready() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        company = get_or_create_company(
+            session,
+            name="Example Corp",
+            ticker="EXM",
+            currency="EUR",
+        )
+        analysis = create_analysis(session, company=company, as_of_date=date(2026, 8, 23))
+        _add(
+            session,
+            analysis.id,
+            "short_term_debt",
+            "sec_companyfacts",
+            "25",
+            provider_field="us-gaap:DebtCurrent",
+        )
+        _add(
+            session,
+            analysis.id,
+            "ppe_net",
+            "sec_companyfacts",
+            "100",
+            provider_field="us-gaap:PropertyPlantAndEquipmentNet",
+        )
+        session.commit()
+
+        states = {
+            state.fact.metric: state
+            for state in load_preferred_data_states(session, analysis.id)
+        }
+
+        assert states["short_term_debt"].quality_status == "safe_standard_mapping"
+        assert states["short_term_debt"].calculation_ready is True
+        assert states["ppe_net"].quality_status == "safe_standard_mapping"
+        assert states["ppe_net"].calculation_ready is True
+
+
 def test_companyfacts_wins_when_same_period_also_exists_in_filing_supplement() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

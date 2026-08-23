@@ -123,3 +123,74 @@ def test_sec_normalizer_keeps_higher_priority_tag_when_same_period_has_multiple_
     assert len(facts) == 1
     assert facts[0].value == Decimal("1000")
     assert facts[0].provider_field == "us-gaap:Revenues"
+
+
+def test_sec_normalizer_uses_complete_d_and_a_total_concept() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "DepreciationAndAmortization": {
+                    "units": {"USD": [_entry(100, "2025-12-31", "2026-02-01")]}
+                }
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "depreciation_amortization"]
+
+    assert len(facts) == 1
+    assert facts[0].value == Decimal("100")
+    assert facts[0].provider_field == "us-gaap:DepreciationAndAmortization"
+
+
+def test_sec_normalizer_aggregates_complete_d_and_a_components() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Depreciation": {
+                    "units": {"USD": [_entry(70, "2025-12-31", "2026-02-01")]}
+                },
+                "AmortizationOfIntangibleAssets": {
+                    "units": {"USD": [_entry(30, "2025-12-31", "2026-02-01")]}
+                },
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "depreciation_amortization"]
+
+    assert len(facts) == 1
+    assert facts[0].value == Decimal("100")
+    assert facts[0].provider_field == "aggregation:us-gaap:Depreciation+us-gaap:AmortizationOfIntangibleAssets"
+
+
+def test_sec_normalizer_does_not_create_d_and_a_from_depreciation_only() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Depreciation": {
+                    "units": {"USD": [_entry(70, "2025-12-31", "2026-02-01")]}
+                }
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "depreciation_amortization"]
+
+    assert facts == []
+
+
+def test_sec_normalizer_does_not_create_d_and_a_from_amortization_only() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "AmortizationOfIntangibleAssets": {
+                    "units": {"USD": [_entry(30, "2025-12-31", "2026-02-01")]}
+                }
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "depreciation_amortization"]
+
+    assert facts == []

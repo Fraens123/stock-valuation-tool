@@ -103,3 +103,41 @@ def test_sec_d_and_a_requires_matching_semantic_pass() -> None:
         )[0]
         assert state.quality_status == "primary_reviewed_pass"
         assert state.calculation_ready is True
+
+
+def test_safe_standard_d_and_a_mapping_is_calculation_ready_without_per_fact_review() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis, fact = _setup(session)
+        fact.provider_field = "us-gaap:DepreciationAndAmortization"
+        session.commit()
+
+        state = load_preferred_data_states(
+            session,
+            analysis.id,
+            metrics=["depreciation_amortization"],
+        )[0]
+
+        assert state.quality_status == "safe_standard_mapping"
+        assert state.semantic_policy_decision == "SAFE_STANDARD_MAPPING"
+        assert state.calculation_ready is True
+
+
+def test_unknown_d_and_a_standard_mapping_stays_review_required() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis, fact = _setup(session)
+        fact.provider_field = "us-gaap:DepreciationAndOtherNoncashItems"
+        session.commit()
+
+        state = load_preferred_data_states(
+            session,
+            analysis.id,
+            metrics=["depreciation_amortization"],
+        )[0]
+
+        assert state.quality_status == "primary_semantic_review_required"
+        assert state.semantic_policy_decision == "REVIEW_REQUIRED"
+        assert state.calculation_ready is False

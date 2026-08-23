@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stock_valuation.analyses.service import complete_analysis
+from stock_valuation.data.metric_requirements import MetricRequirement, metric_policy
 from stock_valuation.data.preferred_data import load_preferred_data_states
 from stock_valuation.database.models import (
     Analysis,
@@ -158,24 +159,24 @@ def refresh_local_analysis_stages(session: Session, analysis: Analysis) -> Analy
     if analysis.status == AnalysisStatus.COMPLETED:
         return build_analysis_state(session, analysis)
     financial = _refresh_financial_data_stage(session, analysis)
-    if financial.status == READY:
+    if financial.status in {READY, REVIEW_REQUIRED}:
         calculation = _refresh_calculation_stage(session, analysis)
     else:
         calculation = _blocked_stage("CALCULATION", CALCULATION_ENGINE_VERSION, financial.blockers)
-    if calculation.status == READY:
+    if calculation.status in {READY, REVIEW_REQUIRED}:
         historical = _refresh_historical_stage(session, analysis, calculation)
     else:
         historical = _blocked_stage("HISTORICAL_ANALYSIS", HISTORICAL_ANALYSIS_VERSION, calculation.blockers)
-    if historical.status == READY:
+    if historical.status in {READY, REVIEW_REQUIRED}:
         quality = _refresh_quality_stage(session, analysis, calculation, historical)
     else:
         quality = _blocked_stage("BUSINESS_QUALITY", QUALITY_ENGINE_VERSION, historical.blockers)
     market = _refresh_market_stage(session, analysis)
-    if calculation.status == READY and historical.status == READY and quality.status == READY:
+    if calculation.status in {READY, REVIEW_REQUIRED} and historical.status in {READY, REVIEW_REQUIRED} and quality.status == READY:
         assumptions = _refresh_assumption_stage(session, analysis, calculation, historical, quality)
     else:
         assumptions = _blocked_stage("ASSUMPTIONS", ASSUMPTION_ENGINE_VERSION, ("Calculation, Historical und Quality muessen bereit sein.",))
-    if market.status == READY and assumptions.status in {READY_FOR_PREVIEW, READY, REVIEW_REQUIRED}:
+    if market.status in {READY, REVIEW_REQUIRED} and assumptions.status in {READY_FOR_PREVIEW, READY, REVIEW_REQUIRED}:
         _refresh_valuation_stage(session, analysis, calculation, historical, quality, assumptions, market)
     return build_analysis_state(session, analysis)
 
@@ -215,6 +216,14 @@ def _refresh_financial_data_stage(session: Session, analysis: Analysis) -> Stage
     states = load_preferred_data_states(session, analysis.id, metrics=BASE_FINANCIAL_METRICS, period_type="FY")
     ready = [item for item in states if item.calculation_ready and item.fact.period_end <= analysis.as_of_date]
     years = sorted({item.fact.period_end.year for item in ready})
+    review_items = [
+        item
+        for item in states
+        if item.fact.period_end <= analysis.as_of_date
+        and not item.calculation_ready
+        and _is_core_required_input(item.fact.metric)
+        and item.quality_status in {"primary_semantic_review_required", "review_stale"}
+    ]
     blockers = tuple(
         f"{item.fact.period_end.year} {item.fact.metric}: {item.quality_status}"
         for item in states
@@ -226,9 +235,16 @@ def _refresh_financial_data_stage(session: Session, analysis: Analysis) -> Stage
         "ready_fact_count": len(ready),
         "years": years,
         "blockers": blockers[:20],
+        "review_required": tuple(
+            f"{item.fact.period_end.year} {item.fact.metric}: {item.quality_status}"
+            for item in review_items[:50]
+        ),
         "metric_count": len({item.fact.metric for item in ready}),
     }
-    status = READY if ready and len(years) >= 2 else BLOCKED
+    if ready and len(years) >= 2 and review_items:
+        status = REVIEW_REQUIRED
+    else:
+        status = READY if ready and len(years) >= 2 else BLOCKED
     inputs_hash = canonical_hash(
         [
             (
@@ -267,12 +283,17 @@ def _refresh_calculation_stage(session: Session, analysis: Analysis) -> StageSta
         "results": [asdict(item) for item in results],
         "warnings": _result_issues(results),
     }
-    available_core = [
+    available = {item.metric_id for item in results if item.status == AVAILABLE}
+    review_sensitive_missing = [
         item
         for item in results
-        if item.metric_id in {"free_cash_flow", "ebitda", "net_debt"} and item.status == AVAILABLE
+        if item.metric_id in {"ebitda", "ebitda_margin", "net_debt", "net_debt_to_ebitda"}
+        and item.status != AVAILABLE
     ]
-    status = READY if by_year and available_core else BLOCKED
+    if by_year and "free_cash_flow" in available and review_sensitive_missing:
+        status = REVIEW_REQUIRED
+    else:
+        status = READY if by_year and "free_cash_flow" in available else BLOCKED
     inputs_hash = canonical_hash(payload["base_facts"])
     row = persist_stage_snapshot(
         session,
@@ -660,7 +681,7 @@ def _stage_from_market_record(row: MarketDataSnapshotRecord) -> StageState:
     snapshot = _market_snapshot_from_record(row)
     metrics = derive_market_metrics(snapshot)
     market_cap, enterprise_value = metrics
-    status = READY if market_cap.status == AVAILABLE else REVIEW_REQUIRED
+    status = READY if market_cap.status == AVAILABLE and enterprise_value.status == AVAILABLE else REVIEW_REQUIRED
     payload = {
         "snapshot_id": row.snapshot_id,
         "price": row.price,
@@ -675,6 +696,11 @@ def _stage_from_market_record(row: MarketDataSnapshotRecord) -> StageState:
         "security_type": row.security_type,
         "payload": json.loads(row.payload_json),
         "derived_metrics": [asdict(item) for item in metrics],
+        "availability": {
+            "market_cap": "MARKET_CAP_READY" if market_cap.status == AVAILABLE else market_cap.status,
+            "enterprise_value": "EV_READY" if enterprise_value.status == AVAILABLE else "EV_REVIEW_REQUIRED",
+            "enterprise_value_reason": tuple(enterprise_value.issues),
+        },
     }
     return StageState(
         "MARKET_DATA",
@@ -688,6 +714,13 @@ def _stage_from_market_record(row: MarketDataSnapshotRecord) -> StageState:
         technically_available=True,
         review_required=status != READY,
     )
+
+
+def _is_core_required_input(metric: str) -> bool:
+    try:
+        return metric_policy(metric).requirement == MetricRequirement.REQUIRED
+    except KeyError:
+        return False
 
 
 def _market_snapshot_from_record(row: MarketDataSnapshotRecord) -> MarketDataSnapshot:

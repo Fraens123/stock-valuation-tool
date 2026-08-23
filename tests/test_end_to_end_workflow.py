@@ -123,7 +123,7 @@ def _seed_financials(session, analysis, *, revenue_2025: str = "1210"):
     session.commit()
 
 
-def _seed_market(session, analysis):
+def _seed_market(session, analysis, *, include_net_debt: bool = True):
     snapshot = MarketDataSnapshot(
         company=analysis.company.name,
         analysis_as_of_date=analysis.as_of_date,
@@ -157,7 +157,7 @@ def _seed_market(session, analysis):
             source="filing",
         ),
         financial_statement_currency="USD",
-        net_debt=NetDebtInput(2025, Decimal("220"), "USD", "calculation", "net-debt-hash"),
+        net_debt=NetDebtInput(2025, Decimal("220"), "USD", "calculation", "net-debt-hash") if include_net_debt else None,
     )
     return persist_market_snapshot(session, analysis, snapshot, inputs_hash="market-hash")
 
@@ -219,6 +219,44 @@ def test_review_required_workflow_keeps_preview_available_without_diagnostics_cs
         assert state.stages["VALUATION"].status == "READY_FOR_PREVIEW"
         assert state.stages["CALCULATION"].payload["diagnostics_csv_used"] is False
         assert state.history_years == (2023, 2024, 2025)
+
+
+def test_required_semantic_review_keeps_workflow_partial_and_ev_reason_explicit():
+    with _session() as session:
+        company = get_or_create_company(session, name="Workflow Co", ticker="WFLW", currency="USD")
+        analysis = create_analysis(session, company=company, as_of_date=date(2026, 8, 23))
+        _seed_financials(session, analysis)
+        for fact in session.scalars(
+            select(FinancialFactSnapshot).where(
+                FinancialFactSnapshot.analysis_id == analysis.id,
+                FinancialFactSnapshot.metric == "depreciation_amortization",
+            )
+        ):
+            fact.provider = "sec_companyfacts"
+            fact.provider_field = "us-gaap:DepreciationDepletionAndAmortization"
+            fact.source_type = "primary_source"
+        session.commit()
+        _seed_market(session, analysis, include_net_debt=False)
+
+        state = refresh_local_analysis_stages(session, analysis)
+        market_availability = state.stages["MARKET_DATA"].payload["availability"]
+        multiples = {
+            item["metric_id"]: item
+            for item in state.stages["VALUATION"].payload["multiples"]
+        }
+
+        assert state.stages["FINANCIAL_DATA"].status == "REVIEW_REQUIRED"
+        assert state.stages["CALCULATION"].status == "REVIEW_REQUIRED"
+        assert state.stages["MARKET_DATA"].status == "REVIEW_REQUIRED"
+        assert state.stages["VALUATION"].status == "READY_FOR_PREVIEW"
+        assert market_availability["market_cap"] == "MARKET_CAP_READY"
+        assert market_availability["enterprise_value"] == "EV_REVIEW_REQUIRED"
+        assert "MISSING_NET_DEBT" in market_availability["enterprise_value_reason"]
+        assert multiples["latest_fy_ev_ebit"]["status"] == "UNAVAILABLE"
+        assert "MISSING_ENTERPRISE_VALUE" in multiples["latest_fy_ev_ebit"]["issues"]
+        assert multiples["latest_fy_ev_ebitda"]["status"] == "UNAVAILABLE"
+        assert "MISSING_ENTERPRISE_VALUE" in multiples["latest_fy_ev_ebitda"]["issues"]
+        assert "MISSING_EBITDA" in multiples["latest_fy_ev_ebitda"]["issues"]
 
 
 def test_approved_assumptions_create_persistent_final_valuation_after_reopen(tmp_path):

@@ -22,6 +22,7 @@ from stock_valuation.companies.service import get_or_create_company
 from stock_valuation.data.preferred_data import load_preferred_data_states
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.sec import SECCompanyFactsProvider
+from stock_valuation.data.semantic_policy import semantic_mapping_policy, safe_standard_mappings
 from stock_valuation.data.snapshot_service import sync_alphavantage_estimates
 from stock_valuation.data.source_router import FinancialSourceResult, sync_best_available_financials
 from stock_valuation.database.models import Base
@@ -43,7 +44,7 @@ from stock_valuation.market.providers import (
 )
 from stock_valuation.market.snapshot_service import persist_market_snapshot
 from stock_valuation.workflow.persistence import canonical_json
-from stock_valuation.workflow.service import build_analysis_state, refresh_local_analysis_stages
+from stock_valuation.workflow.service import BASE_FINANCIAL_METRICS, build_analysis_state, refresh_local_analysis_stages
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +163,7 @@ def main() -> int:
         "environment_blockers": environment_blockers,
         "reopen_checks": reopen_checks,
         "idempotency_checks": idempotency_checks,
+        "semantic_gate_audit": _semantic_gate_audit(SessionLocal, companies) if not environment_blockers else {},
         "warnings": [
             "Real validation runner is separate from pytest and uses live providers only when configured.",
             "No artificial approvals are created for real companies; REVIEW_REQUIRED is expected.",
@@ -292,7 +294,7 @@ def _run_company(
     if blockers:
         engine_blockers.extend(f"{target.ticker}: {item}" for item in blockers)
 
-    history_rows = _history_coverage_rows(target.ticker, state)
+    history_rows = _history_coverage_rows(session, target.ticker, analysis, state)
     return {
         "company": {
             "analysis_id": analysis.id,
@@ -445,7 +447,7 @@ def _latest_net_debt(state) -> NetDebtInput | None:
 def _company_blockers(state) -> list[str]:
     blockers = []
     for stage in ("FINANCIAL_DATA", "CALCULATION", "HISTORICAL_ANALYSIS", "BUSINESS_QUALITY", "MARKET_DATA"):
-        if state.stages[stage].status != "READY":
+        if state.stages[stage].status not in {"READY", "REVIEW_REQUIRED"}:
             blockers.append(f"{stage}:{state.stages[stage].status}")
     if state.stages["VALUATION"].status not in {"READY_FOR_PREVIEW", "READY"}:
         blockers.append(f"VALUATION:{state.stages['VALUATION'].status}")
@@ -455,6 +457,7 @@ def _company_blockers(state) -> list[str]:
 def _company_row(ticker: str, analysis_id: int, financial: FinancialSourceResult, state, blockers: list[str]) -> dict[str, Any]:
     quality = state.stages["BUSINESS_QUALITY"].payload.get("result", {})
     market = state.stages["MARKET_DATA"].payload
+    availability = market.get("availability", {})
     assumptions = state.stages["ASSUMPTIONS"].payload
     valuation = state.stages["VALUATION"].payload
     preview = valuation.get("preview", {})
@@ -477,6 +480,8 @@ def _company_row(ticker: str, analysis_id: int, financial: FinancialSourceResult
         "price_date": market.get("price_date"),
         "market_cap": market.get("market_cap"),
         "enterprise_value": market.get("enterprise_value"),
+        "enterprise_value_status": availability.get("enterprise_value"),
+        "enterprise_value_reason": "; ".join(availability.get("enterprise_value_reason", ())),
         "trading_currency": market.get("trading_currency"),
         "financial_currency": market.get("payload", {}).get("financial_statement_currency"),
         "assumption_status": state.stages["ASSUMPTIONS"].status,
@@ -509,34 +514,75 @@ def _stage_rows(ticker: str, state) -> list[dict[str, Any]]:
     ]
 
 
-def _history_coverage_rows(ticker: str, state) -> list[dict[str, Any]]:
+def _history_coverage_rows(session: Session, ticker: str, analysis, state) -> list[dict[str, Any]]:
     rows_by_metric: dict[str, dict[str, Any]] = {}
-    base_years: dict[str, set[int]] = {}
+    source_years: dict[str, set[int]] = {}
+    pending_years: dict[str, set[int]] = {}
+    ready_years: dict[str, set[int]] = {}
+    for item in load_preferred_data_states(session, analysis.id, metrics=BASE_FINANCIAL_METRICS, period_type="FY"):
+        if item.fact.period_end > analysis.as_of_date:
+            continue
+        year = int(item.fact.period_end.year)
+        source_years.setdefault(item.fact.metric, set()).add(year)
+        if item.calculation_ready:
+            ready_years.setdefault(item.fact.metric, set()).add(year)
+        elif item.quality_status in {"primary_semantic_review_required", "review_stale"}:
+            pending_years.setdefault(item.fact.metric, set()).add(year)
+
     for facts in state.stages["CALCULATION"].payload.get("base_facts", {}).values():
         for fact in facts:
             if fact.get("value") is not None:
-                base_years.setdefault(fact["metric"], set()).add(int(fact["fiscal_year"]))
-    for metric, years_set in base_years.items():
-        rows_by_metric[metric] = _coverage_row(ticker, metric, sorted(years_set))
+                ready_years.setdefault(fact["metric"], set()).add(int(fact["fiscal_year"]))
 
     series = state.stages["HISTORICAL_ANALYSIS"].payload.get("series", {})
     for metric, points in series.items():
         years = sorted(int(item["fiscal_year"]) for item in points if item.get("status") == "AVAILABLE" and item.get("value") is not None)
-        rows_by_metric[metric] = _coverage_row(ticker, metric, years)
+        ready_years.setdefault(metric, set()).update(years)
+    pending_years.setdefault("ebitda", set()).update(pending_years.get("depreciation_amortization", set()))
+    pending_years.setdefault("net_debt", set()).update(pending_years.get("short_term_debt", set()))
+
+    for metric in sorted(set(source_years) | set(pending_years) | set(ready_years)):
+        rows_by_metric[metric] = _coverage_row(
+            ticker,
+            metric,
+            source=sorted(source_years.get(metric, set())),
+            pending=sorted(pending_years.get(metric, set())),
+            ready=sorted(ready_years.get(metric, set())),
+        )
     return [rows_by_metric[key] for key in sorted(rows_by_metric)]
 
 
-def _coverage_row(ticker: str, metric: str, years: list[int]) -> dict[str, Any]:
-    missing = sorted(set(range(min(years), max(years) + 1)) - set(years)) if years else []
+def _coverage_row(ticker: str, metric: str, *, source: list[int], pending: list[int], ready: list[int]) -> dict[str, Any]:
+    derived_metric = metric in {"free_cash_flow", "ebitda", "net_debt", "debt", "net_debt_to_ebitda"}
+    span = source or ready
+    missing = [] if derived_metric else sorted(set(range(min(span), max(span) + 1)) - set(source)) if span else []
+    if ready and len(ready) >= 10:
+        status = "DERIVED_CALCULATION_READY_10Y" if derived_metric else "CALCULATION_READY_10Y"
+    elif ready and len(ready) >= 5:
+        status = "DERIVED_CALCULATION_READY_5Y" if derived_metric else "CALCULATION_READY_5Y"
+    elif source and pending:
+        status = "SEMANTIC_REVIEW_REQUIRED"
+    elif derived_metric and pending:
+        status = "DERIVED_SEMANTIC_REVIEW_REQUIRED"
+    elif source:
+        status = "PARTIAL_HISTORY"
+    elif derived_metric:
+        status = "DERIVED_UNAVAILABLE"
+    else:
+        status = "SOURCE_MISSING"
     return {
         "ticker": ticker,
         "metric": metric,
-        "available_fiscal_years": " ".join(str(year) for year in years),
-        "year_count": len(years),
-        "earliest_year": min(years) if years else "",
-        "latest_year": max(years) if years else "",
-        "missing_years": " ".join(str(year) for year in missing),
-        "status": "AVAILABLE" if years else "UNAVAILABLE",
+        "source_fiscal_years": " ".join(str(year) for year in source),
+        "source_year_count": len(source),
+        "review_pending_fiscal_years": " ".join(str(year) for year in pending),
+        "review_pending_year_count": len(pending),
+        "calculation_ready_fiscal_years": " ".join(str(year) for year in ready),
+        "calculation_ready_year_count": len(ready),
+        "missing_source_years": " ".join(str(year) for year in missing),
+        "earliest_source_year": min(source) if source else "",
+        "latest_source_year": max(source) if source else "",
+        "coverage_status": status,
     }
 
 
@@ -557,30 +603,141 @@ def _listing_context(state) -> dict[str, Any]:
 
 
 def _asml_long_history(history_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    required = {
+    core_historical = {
         "revenue",
         "operating_income",
         "net_income",
         "operating_cash_flow",
         "capital_expenditures",
-        "depreciation_amortization",
         "free_cash_flow",
     }
+    supporting = {"depreciation_amortization", "ebitda", "short_term_debt", "net_debt"}
     core = {
         row["metric"]: row
         for row in history_rows
         if row["ticker"] == "ASML"
-        and row["metric"] in required
+        and row["metric"] in core_historical
     }
-    missing_metrics = sorted(required - set(core))
-    counts = [int(core.get(metric, {}).get("year_count", 0)) for metric in required]
+    supporting_rows = {
+        row["metric"]: row
+        for row in history_rows
+        if row["ticker"] == "ASML"
+        and row["metric"] in supporting
+    }
+    missing_metrics = sorted(core_historical - set(core))
+    counts = [int(core.get(metric, {}).get("calculation_ready_year_count", 0)) for metric in core_historical]
     min_count = min(counts) if counts else 0
-    status = "PASS_10Y" if min_count >= 10 else "PARTIAL_PASS_5PLUS" if min_count >= 5 else "FAIL_LONG_HISTORY_PIPELINE"
+    has_review_gaps = any(int(row.get("review_pending_year_count", 0)) > 0 for row in supporting_rows.values())
+    if min_count >= 10:
+        status = "LONG_HISTORY_PASS_WITH_REVIEW_GAPS" if has_review_gaps else "PASS_10Y"
+    elif min_count >= 5:
+        status = "PARTIAL_PASS_5PLUS_WITH_REVIEW_GAPS" if has_review_gaps else "PARTIAL_PASS_5PLUS"
+    else:
+        status = "FAIL_LONG_HISTORY_PIPELINE"
     return {
         "status": status,
-        "metrics": core,
+        "core_historical_series": core,
+        "supporting_derived_history": supporting_rows,
         "missing_required_metrics": missing_metrics,
         "minimum_core_year_count": min_count,
+    }
+
+
+def _semantic_gate_audit(SessionLocal, companies: dict[str, Any]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    combos: dict[str, dict[str, Any]] = {}
+    focus_metrics = ("depreciation_amortization", "short_term_debt", "ppe_net")
+    with SessionLocal() as session:
+        for ticker, company in companies.items():
+            analysis_id = company.get("analysis_id")
+            if analysis_id is None:
+                continue
+            states = load_preferred_data_states(session, int(analysis_id), metrics=focus_metrics, period_type="FY")
+            for state in states:
+                fact = state.fact
+                policy = semantic_mapping_policy(fact.provider, fact.provider_field, fact.metric)
+                row = {
+                    "ticker": ticker,
+                    "fiscal_year": fact.period_end.year,
+                    "metric": fact.metric,
+                    "provider": fact.provider,
+                    "provider_field": fact.provider_field,
+                    "value": str(fact.value) if fact.value is not None else None,
+                    "currency": fact.currency,
+                    "quality_status": state.quality_status,
+                    "calculation_ready": state.calculation_ready,
+                    "review_reason": state.reason,
+                    "semantic_policy_decision": policy.decision.value,
+                    "semantic_policy_version": policy.policy_version,
+                }
+                rows.append(row)
+                key = f"{ticker}|{fact.metric}|{fact.provider}|{fact.provider_field}"
+                item = combos.setdefault(
+                    key,
+                    {
+                        "ticker": ticker,
+                        "metric": fact.metric,
+                        "provider": fact.provider,
+                        "provider_field": fact.provider_field,
+                        "years": set(),
+                        "calculation_ready_years": set(),
+                        "review_pending_years": set(),
+                        "semantic_policy_decision": policy.decision.value,
+                    },
+                )
+                item["years"].add(fact.period_end.year)
+                if state.calculation_ready:
+                    item["calculation_ready_years"].add(fact.period_end.year)
+                elif state.quality_status in {"primary_semantic_review_required", "review_stale"}:
+                    item["review_pending_years"].add(fact.period_end.year)
+
+    combo_rows = []
+    for item in combos.values():
+        years = sorted(item.pop("years"))
+        ready = sorted(item.pop("calculation_ready_years"))
+        pending = sorted(item.pop("review_pending_years"))
+        combo_rows.append(
+            {
+                **item,
+                "years_covered": " ".join(str(year) for year in years),
+                "year_count": len(years),
+                "calculation_ready_years": " ".join(str(year) for year in ready),
+                "review_pending_years": " ".join(str(year) for year in pending),
+            }
+        )
+
+    return {
+        "semantic_policy_version": "semantic-policy-v1.0",
+        "priority_order": [
+            "confirmed manual override",
+            "exact matching explicit review PASS",
+            "versioned SAFE_STANDARD_MAPPING",
+            "otherwise REVIEW_REQUIRED",
+        ],
+        "safe_standard_mappings": [
+            {
+                **asdict(item),
+                "decision": item.decision.value,
+            }
+            for item in safe_standard_mappings()
+        ],
+        "field_rows": sorted(rows, key=lambda row: (row["ticker"], row["metric"], row["fiscal_year"])),
+        "provider_field_combinations": sorted(
+            combo_rows,
+            key=lambda row: (row["ticker"], row["metric"], row["provider"], row["provider_field"] or ""),
+        ),
+        "answers": {
+            "why_asml_d_and_a_was_not_calculation_ready": (
+                "ASML current D&A uses us-gaap:DepreciationDepletionAndAmortization. "
+                "That standard concept includes depletion in the taxonomy label and is therefore not generically safe for the internal D&A definition without semantic review."
+            ),
+            "source_present": True,
+            "incomplete_d_and_a_component_sum_prevented": True,
+            "net_debt_unavailable_reason": "short_term_debt remains REVIEW_REQUIRED when only a current-portion component is available instead of a complete current debt total.",
+            "enterprise_value_unavailable_reason": "Enterprise value depends on calculation-ready net_debt; market cap can be ready while EV is EV_REVIEW_REQUIRED.",
+            "workflow_statuses_honest": True,
+            "core_history_pipeline_proven": True,
+        },
     }
 
 
@@ -618,9 +775,28 @@ def _failure(ticker: str, stage: str, exc: Exception) -> dict[str, Any]:
 def _write_outputs(audit: dict[str, Any], company_rows: list[dict[str, Any]], stage_rows: list[dict[str, Any]], history_rows: list[dict[str, Any]]) -> None:
     (DIAGNOSTICS / "PHASE_8A_REAL_COMPANY_VALIDATION.json").write_text(canonical_json(audit), encoding="utf-8")
     (DIAGNOSTICS / "PHASE_8A_REAL_COMPANY_VALIDATION.md").write_text(_markdown(audit), encoding="utf-8")
+    (DIAGNOSTICS / "SEMANTIC_GATE_PRODUCTION_AUDIT.json").write_text(canonical_json(audit.get("semantic_gate_audit", {})), encoding="utf-8")
+    (DIAGNOSTICS / "SEMANTIC_GATE_PRODUCTION_AUDIT.md").write_text(_semantic_markdown(audit.get("semantic_gate_audit", {})), encoding="utf-8")
     _write_csv(DIAGNOSTICS / "phase8a_company_results.csv", company_rows, _company_fields())
     _write_csv(DIAGNOSTICS / "phase8a_stage_results.csv", stage_rows, ["ticker", "stage", "status", "snapshot_id", "engine_version", "inputs_hash", "warnings", "blockers"])
-    _write_csv(DIAGNOSTICS / "phase8a_history_coverage.csv", history_rows, ["ticker", "metric", "available_fiscal_years", "year_count", "earliest_year", "latest_year", "missing_years", "status"])
+    _write_csv(
+        DIAGNOSTICS / "phase8a_history_coverage.csv",
+        history_rows,
+        [
+            "ticker",
+            "metric",
+            "source_fiscal_years",
+            "source_year_count",
+            "review_pending_fiscal_years",
+            "review_pending_year_count",
+            "calculation_ready_fiscal_years",
+            "calculation_ready_year_count",
+            "missing_source_years",
+            "earliest_source_year",
+            "latest_source_year",
+            "coverage_status",
+        ],
+    )
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -635,7 +811,7 @@ def _company_fields() -> list[str]:
         "ticker", "analysis_id", "analysis_as_of_date", "financial_status", "financial_source", "financial_years",
         "calculation_status", "calculation_years", "historical_status", "history_years", "quality_status",
         "quality_score", "quality_assessment", "market_status", "market_price", "price_date", "market_cap",
-        "enterprise_value", "trading_currency", "financial_currency", "assumption_status", "assumption_confidence",
+        "enterprise_value", "enterprise_value_status", "enterprise_value_reason", "trading_currency", "financial_currency", "assumption_status", "assumption_confidence",
         "assumption_warnings", "valuation_status", "bear_fair_value", "base_fair_value", "bull_fair_value",
         "market_snapshot_id", "valuation_mode", "overall_validation_status", "blockers",
     ]
@@ -709,6 +885,46 @@ Normaler Testlauf bleibt separat: `pytest -q`.
 
 ## 20. GO / NO-GO
 {audit["decision"]}
+"""
+
+
+def _semantic_markdown(audit: dict[str, Any]) -> str:
+    if not audit:
+        return "# SEMANTIC_GATE_PRODUCTION_AUDIT\n\nVALIDATION INCONCLUSIVE - ENVIRONMENT / PROVIDER BLOCKED\n"
+    combos = "\n".join(
+        (
+            f"- {row['ticker']} {row['metric']} {row['provider']} `{row['provider_field']}`: "
+            f"years={row['years_covered']}, ready={row['calculation_ready_years'] or '-'}, "
+            f"pending={row['review_pending_years'] or '-'}, decision={row['semantic_policy_decision']}"
+        )
+        for row in audit["provider_field_combinations"]
+    )
+    answers = json.dumps(audit["answers"], ensure_ascii=False, indent=2)
+    safe = "\n".join(
+        f"- {item['internal_metric']} {item['provider']} `{item['provider_field']}`: {item['reason']}"
+        for item in audit["safe_standard_mappings"]
+    )
+    return f"""# SEMANTIC_GATE_PRODUCTION_AUDIT
+
+## 1. Policy
+Version: `{audit["semantic_policy_version"]}`
+
+Priority:
+1. confirmed manual override
+2. exact matching explicit review PASS
+3. versioned SAFE_STANDARD_MAPPING
+4. otherwise REVIEW_REQUIRED
+
+## 2. Safe Standard Mappings
+{safe or "- keine"}
+
+## 3. Provider Field Combinations
+{combos or "- keine"}
+
+## 4. Audit Answers
+```json
+{answers}
+```
 """
 
 

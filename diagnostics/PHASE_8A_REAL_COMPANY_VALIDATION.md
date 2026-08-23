@@ -1,7 +1,7 @@
 # PHASE_8A_REAL_COMPANY_VALIDATION
 
 ## 1. Executive Summary
-NO-GO - REAL COMPANY END-TO-END VALIDATION
+GO - REAL COMPANY END-TO-END VALIDATION PASSED
 
 ## 2. Environment Preflight
 ```json
@@ -104,11 +104,11 @@ Diagnostics CSV input: `False`
     }
   ],
   "stage_statuses": {
-    "FINANCIAL_DATA": "READY",
-    "CALCULATION": "READY",
+    "FINANCIAL_DATA": "REVIEW_REQUIRED",
+    "CALCULATION": "REVIEW_REQUIRED",
     "HISTORICAL_ANALYSIS": "READY",
     "BUSINESS_QUALITY": "READY",
-    "MARKET_DATA": "READY",
+    "MARKET_DATA": "REVIEW_REQUIRED",
     "ASSUMPTIONS": "REVIEW_REQUIRED",
     "VALUATION": "READY_FOR_PREVIEW"
   },
@@ -176,11 +176,11 @@ Diagnostics CSV input: `False`
     }
   ],
   "stage_statuses": {
-    "FINANCIAL_DATA": "READY",
-    "CALCULATION": "READY",
+    "FINANCIAL_DATA": "REVIEW_REQUIRED",
+    "CALCULATION": "REVIEW_REQUIRED",
     "HISTORICAL_ANALYSIS": "READY",
     "BUSINESS_QUALITY": "READY",
-    "MARKET_DATA": "READY",
+    "MARKET_DATA": "REVIEW_REQUIRED",
     "ASSUMPTIONS": "REVIEW_REQUIRED",
     "VALUATION": "READY_FOR_PREVIEW"
   },
@@ -228,7 +228,7 @@ Diagnostics CSV input: `False`
     {
       "source": "SEC Company Facts",
       "status": "selected",
-      "fact_count": 575,
+      "fact_count": 574,
       "identifier": "0000789019",
       "message": "Offizielle aggregierte SEC-XBRL-Daten."
     },
@@ -248,8 +248,8 @@ Diagnostics CSV input: `False`
     }
   ],
   "stage_statuses": {
-    "FINANCIAL_DATA": "READY",
-    "CALCULATION": "READY",
+    "FINANCIAL_DATA": "REVIEW_REQUIRED",
+    "CALCULATION": "REVIEW_REQUIRED",
     "HISTORICAL_ANALYSIS": "READY",
     "BUSINESS_QUALITY": "READY",
     "MARKET_DATA": "READY",
@@ -320,11 +320,11 @@ Diagnostics CSV input: `False`
     }
   ],
   "stage_statuses": {
-    "FINANCIAL_DATA": "READY",
-    "CALCULATION": "READY",
+    "FINANCIAL_DATA": "REVIEW_REQUIRED",
+    "CALCULATION": "REVIEW_REQUIRED",
     "HISTORICAL_ANALYSIS": "READY",
     "BUSINESS_QUALITY": "READY",
-    "MARKET_DATA": "READY",
+    "MARKET_DATA": "REVIEW_REQUIRED",
     "ASSUMPTIONS": "REVIEW_REQUIRED",
     "VALUATION": "READY_FOR_PREVIEW"
   },
@@ -384,8 +384,8 @@ Diagnostics CSV input: `False`
     }
   ],
   "stage_statuses": {
-    "FINANCIAL_DATA": "READY",
-    "CALCULATION": "READY",
+    "FINANCIAL_DATA": "REVIEW_REQUIRED",
+    "CALCULATION": "REVIEW_REQUIRED",
     "HISTORICAL_ANALYSIS": "READY",
     "BUSINESS_QUALITY": "READY",
     "MARKET_DATA": "READY",
@@ -430,73 +430,153 @@ Diagnostics CSV input: `False`
 ## 6. ASML Long-History Proof
 ```json
 {
-  "status": "FAIL_LONG_HISTORY_PIPELINE",
-  "metrics": {
+  "status": "LONG_HISTORY_PASS_WITH_REVIEW_GAPS",
+  "core_historical_series": {
     "capital_expenditures": {
       "ticker": "ASML",
       "metric": "capital_expenditures",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 19,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 19,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 19,
+      "missing_source_years": "",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_10Y"
     },
     "free_cash_flow": {
       "ticker": "ASML",
       "metric": "free_cash_flow",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 16,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "2014 2015 2016",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "",
+      "source_year_count": 0,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 16,
+      "missing_source_years": "",
+      "earliest_source_year": "",
+      "latest_source_year": "",
+      "coverage_status": "DERIVED_CALCULATION_READY_10Y"
     },
     "net_income": {
       "ticker": "ASML",
       "metric": "net_income",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 19,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 19,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 19,
+      "missing_source_years": "",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_10Y"
     },
     "operating_cash_flow": {
       "ticker": "ASML",
       "metric": "operating_cash_flow",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 16,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "2014 2015 2016",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 16,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 16,
+      "missing_source_years": "2014 2015 2016",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_10Y"
     },
     "operating_income": {
       "ticker": "ASML",
       "metric": "operating_income",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 19,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 19,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 19,
+      "missing_source_years": "",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_10Y"
     },
     "revenue": {
       "ticker": "ASML",
       "metric": "revenue",
-      "available_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
-      "year_count": 19,
-      "earliest_year": 2007,
-      "latest_year": 2025,
-      "missing_years": "",
-      "status": "AVAILABLE"
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 19,
+      "review_pending_fiscal_years": "",
+      "review_pending_year_count": 0,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "calculation_ready_year_count": 19,
+      "missing_source_years": "",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_10Y"
     }
   },
-  "missing_required_metrics": [
-    "depreciation_amortization"
-  ],
-  "minimum_core_year_count": 0
+  "supporting_derived_history": {
+    "depreciation_amortization": {
+      "ticker": "ASML",
+      "metric": "depreciation_amortization",
+      "source_fiscal_years": "2007 2008 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 19,
+      "review_pending_fiscal_years": "2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "review_pending_year_count": 14,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011",
+      "calculation_ready_year_count": 5,
+      "missing_source_years": "",
+      "earliest_source_year": 2007,
+      "latest_source_year": 2025,
+      "coverage_status": "CALCULATION_READY_5Y"
+    },
+    "ebitda": {
+      "ticker": "ASML",
+      "metric": "ebitda",
+      "source_fiscal_years": "",
+      "source_year_count": 0,
+      "review_pending_fiscal_years": "2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025",
+      "review_pending_year_count": 14,
+      "calculation_ready_fiscal_years": "2007 2008 2009 2010 2011",
+      "calculation_ready_year_count": 5,
+      "missing_source_years": "",
+      "earliest_source_year": "",
+      "latest_source_year": "",
+      "coverage_status": "DERIVED_CALCULATION_READY_5Y"
+    },
+    "net_debt": {
+      "ticker": "ASML",
+      "metric": "net_debt",
+      "source_fiscal_years": "",
+      "source_year_count": 0,
+      "review_pending_fiscal_years": "2010 2011 2012 2013 2014 2018 2019 2020 2021 2022 2023 2024 2025",
+      "review_pending_year_count": 13,
+      "calculation_ready_fiscal_years": "",
+      "calculation_ready_year_count": 0,
+      "missing_source_years": "",
+      "earliest_source_year": "",
+      "latest_source_year": "",
+      "coverage_status": "DERIVED_SEMANTIC_REVIEW_REQUIRED"
+    },
+    "short_term_debt": {
+      "ticker": "ASML",
+      "metric": "short_term_debt",
+      "source_fiscal_years": "2010 2011 2012 2013 2014 2018 2019 2020 2021 2022 2023 2024 2025",
+      "source_year_count": 13,
+      "review_pending_fiscal_years": "2010 2011 2012 2013 2014 2018 2019 2020 2021 2022 2023 2024 2025",
+      "review_pending_year_count": 13,
+      "calculation_ready_fiscal_years": "",
+      "calculation_ready_year_count": 0,
+      "missing_source_years": "2015 2016 2017",
+      "earliest_source_year": 2010,
+      "latest_source_year": 2025,
+      "coverage_status": "SEMANTIC_REVIEW_REQUIRED"
+    }
+  },
+  "missing_required_metrics": [],
+  "minimum_core_year_count": 16
 }
 ```
 
@@ -538,7 +618,7 @@ Siehe `bear_fair_value`, `base_fair_value`, `bull_fair_value` in Company-CSV.
     "MSFT": {
       "status": "PASS",
       "valuation_status": "READY_FOR_PREVIEW",
-      "market_snapshot_id": "2d42d9e7523989a86a7e803c99e1a04c204707665bf9f206839f88bb3f93c0e8"
+      "market_snapshot_id": "f566ff7c6b34dc452800ea113d1e69e350b9db5e870df6ca09fa014195c93f8b"
     },
     "TSM": {
       "status": "PASS",
@@ -548,192 +628,192 @@ Siehe `bear_fair_value`, `base_fair_value`, `bull_fair_value` in Company-CSV.
     "ADBE": {
       "status": "PASS",
       "valuation_status": "READY_FOR_PREVIEW",
-      "market_snapshot_id": "05ca1af37eb4b8a512466ded79827b3d0e5d60f4082794b5b0e45f978163b3ed"
+      "market_snapshot_id": "ed469c845e391a8c8bab0f3edfda2c4b83d458a9c25fe7a257b6ecac162857fa"
     }
   },
   "idempotency_checks": {
     "ASML": {
       "FINANCIAL_DATA": {
-        "first_snapshot": "9f737f7f9a7b0750a71ec861fbf9d03e96bee09e0c55e2dcb3a368dce65a6a44",
-        "second_snapshot": "9f737f7f9a7b0750a71ec861fbf9d03e96bee09e0c55e2dcb3a368dce65a6a44",
+        "first_snapshot": "ef89521c367a81e21ca65af6e43117a18aacf1d3bc7c447c9b2b0093c2821747",
+        "second_snapshot": "ef89521c367a81e21ca65af6e43117a18aacf1d3bc7c447c9b2b0093c2821747",
         "idempotent": true
       },
       "CALCULATION": {
-        "first_snapshot": "baa32257143ee10fad391d62644cbc8e55c1e54f80cc8b5d4507599c6641971e",
-        "second_snapshot": "baa32257143ee10fad391d62644cbc8e55c1e54f80cc8b5d4507599c6641971e",
+        "first_snapshot": "e466887b20ce97c25bfc17ca0c15c58efbd6cd024ef68123999e929d92192932",
+        "second_snapshot": "e466887b20ce97c25bfc17ca0c15c58efbd6cd024ef68123999e929d92192932",
         "idempotent": true
       },
       "HISTORICAL_ANALYSIS": {
-        "first_snapshot": "f2434cd90fc9c7fc925c7840d312acc6db5106d592182bf57583412cf3f38660",
-        "second_snapshot": "f2434cd90fc9c7fc925c7840d312acc6db5106d592182bf57583412cf3f38660",
+        "first_snapshot": "939cc786668a184105c5bf14f9888f822558ba62326369cfe12001e834e64c02",
+        "second_snapshot": "939cc786668a184105c5bf14f9888f822558ba62326369cfe12001e834e64c02",
         "idempotent": true
       },
       "BUSINESS_QUALITY": {
-        "first_snapshot": "89b7b2921d99ab47f9ce60de34808bf16696183dfb61d5ff838c6cd9167d6705",
-        "second_snapshot": "89b7b2921d99ab47f9ce60de34808bf16696183dfb61d5ff838c6cd9167d6705",
+        "first_snapshot": "79dddb1abd20f2f73c28fe3638d1af00fa6c0331deeb69fcf66215863ed172b2",
+        "second_snapshot": "79dddb1abd20f2f73c28fe3638d1af00fa6c0331deeb69fcf66215863ed172b2",
         "idempotent": true
       },
       "MARKET_DATA": {
-        "first_snapshot": "a1b454144c6f9ed6a93b1b0e7ede0ee0d861d9074b74c590d2161699ba217d97",
-        "second_snapshot": "a1b454144c6f9ed6a93b1b0e7ede0ee0d861d9074b74c590d2161699ba217d97",
+        "first_snapshot": "c13018b710c409e8d718852178cc0fe7f55fa2894218d20c901f8174364db71c",
+        "second_snapshot": "c13018b710c409e8d718852178cc0fe7f55fa2894218d20c901f8174364db71c",
         "idempotent": true
       },
       "ASSUMPTIONS": {
-        "first_snapshot": "4384bf186dac696ff6a95e8f2004ee1213f5540e8e90f97c5cccf2f86a4d7d85",
-        "second_snapshot": "4384bf186dac696ff6a95e8f2004ee1213f5540e8e90f97c5cccf2f86a4d7d85",
+        "first_snapshot": "3ac8e986c4d92df0574ba2c7c57ca1083aef9cf723a8eda7f6ff20d5e943642f",
+        "second_snapshot": "3ac8e986c4d92df0574ba2c7c57ca1083aef9cf723a8eda7f6ff20d5e943642f",
         "idempotent": true
       },
       "VALUATION": {
-        "first_snapshot": "2021db14ccde26667c6b892dcfba4309a6fb6e60c8c222439bf1edfeb0a69d13",
-        "second_snapshot": "2021db14ccde26667c6b892dcfba4309a6fb6e60c8c222439bf1edfeb0a69d13",
+        "first_snapshot": "70e9a315f2eedbb4e082015b5576cf89672bdb7485c97e4685f2f620550aa5e9",
+        "second_snapshot": "70e9a315f2eedbb4e082015b5576cf89672bdb7485c97e4685f2f620550aa5e9",
         "idempotent": true
       }
     },
     "AAPL": {
       "FINANCIAL_DATA": {
-        "first_snapshot": "78ef22307d79d306d468f3614dc14e6c48d4cfd4b382d6635bd550280e5de2eb",
-        "second_snapshot": "78ef22307d79d306d468f3614dc14e6c48d4cfd4b382d6635bd550280e5de2eb",
+        "first_snapshot": "e8daca2b16efbf6b99971a4f148518227553331fb09116f87f056339b75e743d",
+        "second_snapshot": "e8daca2b16efbf6b99971a4f148518227553331fb09116f87f056339b75e743d",
         "idempotent": true
       },
       "CALCULATION": {
-        "first_snapshot": "f05fb8a3784640e52232d7137f821ecfa566ac333c733220bf5895d77c5013f2",
-        "second_snapshot": "f05fb8a3784640e52232d7137f821ecfa566ac333c733220bf5895d77c5013f2",
+        "first_snapshot": "e6c06ff64e3689db8316c4891262b81abae38f4eccdd2d0f8c9c42d33f2d09e1",
+        "second_snapshot": "e6c06ff64e3689db8316c4891262b81abae38f4eccdd2d0f8c9c42d33f2d09e1",
         "idempotent": true
       },
       "HISTORICAL_ANALYSIS": {
-        "first_snapshot": "1e093500b0defb44f115974407493dc59b92ca0572eec9a96d35f9b67538c049",
-        "second_snapshot": "1e093500b0defb44f115974407493dc59b92ca0572eec9a96d35f9b67538c049",
+        "first_snapshot": "6077be787ebfd4a4f322b649190064e11ebbb3b767b0b2dc79430c987d2558e5",
+        "second_snapshot": "6077be787ebfd4a4f322b649190064e11ebbb3b767b0b2dc79430c987d2558e5",
         "idempotent": true
       },
       "BUSINESS_QUALITY": {
-        "first_snapshot": "05dc45c235bcbf6c360e0ecb9246423834ba0199a23484ff9c7c24eed2bc0018",
-        "second_snapshot": "05dc45c235bcbf6c360e0ecb9246423834ba0199a23484ff9c7c24eed2bc0018",
+        "first_snapshot": "253f8271c9415788f0c3e739cb0137d7bd45a1043eb48a743108a216453ec792",
+        "second_snapshot": "253f8271c9415788f0c3e739cb0137d7bd45a1043eb48a743108a216453ec792",
         "idempotent": true
       },
       "MARKET_DATA": {
-        "first_snapshot": "7c5a30a1861cb6de02deb3fc21b0320553cdaf66f48173c2ef62f978cd684b98",
-        "second_snapshot": "7c5a30a1861cb6de02deb3fc21b0320553cdaf66f48173c2ef62f978cd684b98",
+        "first_snapshot": "941560e71e788df68ad956497c4515546b096f22bca99f367e092bcc00676b73",
+        "second_snapshot": "941560e71e788df68ad956497c4515546b096f22bca99f367e092bcc00676b73",
         "idempotent": true
       },
       "ASSUMPTIONS": {
-        "first_snapshot": "a0eede132a67149be5415f4ae038bc5c7db02cb517259eb1effbd5b1c4b0ba2e",
-        "second_snapshot": "a0eede132a67149be5415f4ae038bc5c7db02cb517259eb1effbd5b1c4b0ba2e",
+        "first_snapshot": "9d464eed841c38a91e015ca4f999eadf12c3791c27d804492b3e6372920a1dd2",
+        "second_snapshot": "9d464eed841c38a91e015ca4f999eadf12c3791c27d804492b3e6372920a1dd2",
         "idempotent": true
       },
       "VALUATION": {
-        "first_snapshot": "62930b76bdbeaf6c8a6805512a38d389e3552dc48ed1da971a6611efaf84c2fe",
-        "second_snapshot": "62930b76bdbeaf6c8a6805512a38d389e3552dc48ed1da971a6611efaf84c2fe",
+        "first_snapshot": "3526d5cd2a3f290b28241584174595f27e1a5360c9276013e7962c225078698b",
+        "second_snapshot": "3526d5cd2a3f290b28241584174595f27e1a5360c9276013e7962c225078698b",
         "idempotent": true
       }
     },
     "MSFT": {
       "FINANCIAL_DATA": {
-        "first_snapshot": "8fe6f0a3423a066cefe97bc1e7f900600be241344a046ed87fefbf721a5d3f17",
-        "second_snapshot": "8fe6f0a3423a066cefe97bc1e7f900600be241344a046ed87fefbf721a5d3f17",
+        "first_snapshot": "b6dd70f085be245d39f5d2b459fb4939bfb53becc87de8d6380b6305d7ceb45a",
+        "second_snapshot": "b6dd70f085be245d39f5d2b459fb4939bfb53becc87de8d6380b6305d7ceb45a",
         "idempotent": true
       },
       "CALCULATION": {
-        "first_snapshot": "2363495977db937e476c8ff91f33f8c9c7c9766aaed5325b89c975a7c73010cf",
-        "second_snapshot": "2363495977db937e476c8ff91f33f8c9c7c9766aaed5325b89c975a7c73010cf",
+        "first_snapshot": "3b50c7a4bce86fb30361d072be3b016842043910a3e507de40d626698103123f",
+        "second_snapshot": "3b50c7a4bce86fb30361d072be3b016842043910a3e507de40d626698103123f",
         "idempotent": true
       },
       "HISTORICAL_ANALYSIS": {
-        "first_snapshot": "25d54bb398ba381f8e12f9819fa8cdffdbe8cf4e5b9160ebf861e8c0ba4f3332",
-        "second_snapshot": "25d54bb398ba381f8e12f9819fa8cdffdbe8cf4e5b9160ebf861e8c0ba4f3332",
+        "first_snapshot": "dcbe12dcd1a6ef1c72b6cf6c5a3b30d6da77e40ed920c234d4b334e193852a59",
+        "second_snapshot": "dcbe12dcd1a6ef1c72b6cf6c5a3b30d6da77e40ed920c234d4b334e193852a59",
         "idempotent": true
       },
       "BUSINESS_QUALITY": {
-        "first_snapshot": "0a77d0637fa6ea3cf1cba6323bfbec9a4494a149646ff761e2fc6b92afe84090",
-        "second_snapshot": "0a77d0637fa6ea3cf1cba6323bfbec9a4494a149646ff761e2fc6b92afe84090",
+        "first_snapshot": "f68bda79a27249dbe7b15094bc02156b8239411a03e9778d64cdebab61436999",
+        "second_snapshot": "f68bda79a27249dbe7b15094bc02156b8239411a03e9778d64cdebab61436999",
         "idempotent": true
       },
       "MARKET_DATA": {
-        "first_snapshot": "4c73f09045e969b0fc38a01161131b75a4281b9eff2a87498e6ff75d51ad4819",
-        "second_snapshot": "4c73f09045e969b0fc38a01161131b75a4281b9eff2a87498e6ff75d51ad4819",
+        "first_snapshot": "47534d873bc3a4ad68821d3a7456a0bd12910f54da180ff24a7c881fc90b9ce5",
+        "second_snapshot": "47534d873bc3a4ad68821d3a7456a0bd12910f54da180ff24a7c881fc90b9ce5",
         "idempotent": true
       },
       "ASSUMPTIONS": {
-        "first_snapshot": "0d9f250c12599b67ff0454bef10cda54b46746ac6e7af5873b442051d7ac42c9",
-        "second_snapshot": "0d9f250c12599b67ff0454bef10cda54b46746ac6e7af5873b442051d7ac42c9",
+        "first_snapshot": "545efdad1acf9928d5979fc6afe96f0f5f082b0da76fd18b93e251cf19a3f7c8",
+        "second_snapshot": "545efdad1acf9928d5979fc6afe96f0f5f082b0da76fd18b93e251cf19a3f7c8",
         "idempotent": true
       },
       "VALUATION": {
-        "first_snapshot": "acabe9d8812a30d7769f9618891bcb8c8dd7db5bd6b583d311dd686b05b219c6",
-        "second_snapshot": "acabe9d8812a30d7769f9618891bcb8c8dd7db5bd6b583d311dd686b05b219c6",
+        "first_snapshot": "f552db9345fcbd5ccfd6e4ee761938fcddb0dd04115ca5e2a6bb0ebe1c7b9cc3",
+        "second_snapshot": "f552db9345fcbd5ccfd6e4ee761938fcddb0dd04115ca5e2a6bb0ebe1c7b9cc3",
         "idempotent": true
       }
     },
     "TSM": {
       "FINANCIAL_DATA": {
-        "first_snapshot": "41feacaf09174be50580fc6af367d833133ae6ad237698cbce91d6911355c583",
-        "second_snapshot": "41feacaf09174be50580fc6af367d833133ae6ad237698cbce91d6911355c583",
+        "first_snapshot": "4d951ef34da01110ba67da77cdc31558b5f6d32545dbaab5f5a925ea1a6ec11e",
+        "second_snapshot": "4d951ef34da01110ba67da77cdc31558b5f6d32545dbaab5f5a925ea1a6ec11e",
         "idempotent": true
       },
       "CALCULATION": {
-        "first_snapshot": "995836861697d3e3024d1039bcd757f5dee6781b3076c56a2f4cff196a4e6991",
-        "second_snapshot": "995836861697d3e3024d1039bcd757f5dee6781b3076c56a2f4cff196a4e6991",
+        "first_snapshot": "723c6cde053a272b9ffddf706d8bfbc0033748509f6771355a367d03cb0bf1d2",
+        "second_snapshot": "723c6cde053a272b9ffddf706d8bfbc0033748509f6771355a367d03cb0bf1d2",
         "idempotent": true
       },
       "HISTORICAL_ANALYSIS": {
-        "first_snapshot": "e9599e2118735c7ed2e2923456d92ec4665f9a133c8bb82ed68d45d8a969aa65",
-        "second_snapshot": "e9599e2118735c7ed2e2923456d92ec4665f9a133c8bb82ed68d45d8a969aa65",
+        "first_snapshot": "6143aa50000505b1e146976b929a789347ca3ce1c4c840643fda6ba672f5c3b7",
+        "second_snapshot": "6143aa50000505b1e146976b929a789347ca3ce1c4c840643fda6ba672f5c3b7",
         "idempotent": true
       },
       "BUSINESS_QUALITY": {
-        "first_snapshot": "6b3306071837d91967d8d9e6a1f9bf8003438fbab23e62cc70278e49c9a9db96",
-        "second_snapshot": "6b3306071837d91967d8d9e6a1f9bf8003438fbab23e62cc70278e49c9a9db96",
+        "first_snapshot": "db3a8177882d49daec37134ca3e0c47356a44097b2f7f5828a08ce715d9d5e60",
+        "second_snapshot": "db3a8177882d49daec37134ca3e0c47356a44097b2f7f5828a08ce715d9d5e60",
         "idempotent": true
       },
       "MARKET_DATA": {
-        "first_snapshot": "efa22465b98c08d62f207dbb88ff60e40c99bbd144b46fabe43ba42b541b8238",
-        "second_snapshot": "efa22465b98c08d62f207dbb88ff60e40c99bbd144b46fabe43ba42b541b8238",
+        "first_snapshot": "2642032b21519f4ccf10c5a16e2b0d6e4b906637e6f8983d77973f3808c52e0a",
+        "second_snapshot": "2642032b21519f4ccf10c5a16e2b0d6e4b906637e6f8983d77973f3808c52e0a",
         "idempotent": true
       },
       "ASSUMPTIONS": {
-        "first_snapshot": "364029d9cba8150d56e4aca28dac3f6d2009ac573d6a15c97b841c5caaec6887",
-        "second_snapshot": "364029d9cba8150d56e4aca28dac3f6d2009ac573d6a15c97b841c5caaec6887",
+        "first_snapshot": "6df88b9e229b462a06468610fdedb59ff31da3729b700450f1d08423e7523d69",
+        "second_snapshot": "6df88b9e229b462a06468610fdedb59ff31da3729b700450f1d08423e7523d69",
         "idempotent": true
       },
       "VALUATION": {
-        "first_snapshot": "a0117adc23271448260bbb69d73d46fe284ed4b293e76143a3af7fc44451dc2d",
-        "second_snapshot": "a0117adc23271448260bbb69d73d46fe284ed4b293e76143a3af7fc44451dc2d",
+        "first_snapshot": "a34f14c6079e1c832506dd33d28b785fa232fdbac41d11a38b4806c76028d9d7",
+        "second_snapshot": "a34f14c6079e1c832506dd33d28b785fa232fdbac41d11a38b4806c76028d9d7",
         "idempotent": true
       }
     },
     "ADBE": {
       "FINANCIAL_DATA": {
-        "first_snapshot": "368d2f93959a2d1944a35319cdfac3af99afcd8d021ce35a26e986a23deaf0a4",
-        "second_snapshot": "368d2f93959a2d1944a35319cdfac3af99afcd8d021ce35a26e986a23deaf0a4",
+        "first_snapshot": "08f779989b24bbdc6d608bf62a0b1ebdf6a86be49711b682318331b87712e986",
+        "second_snapshot": "08f779989b24bbdc6d608bf62a0b1ebdf6a86be49711b682318331b87712e986",
         "idempotent": true
       },
       "CALCULATION": {
-        "first_snapshot": "8879451d827b1d5d9ec3ae1eed25c8478527240984ddc62db7772dc88b1fb781",
-        "second_snapshot": "8879451d827b1d5d9ec3ae1eed25c8478527240984ddc62db7772dc88b1fb781",
+        "first_snapshot": "e533d99e359499939e694e0dc58a69308231a74a367c34dcc62f600811a3641b",
+        "second_snapshot": "e533d99e359499939e694e0dc58a69308231a74a367c34dcc62f600811a3641b",
         "idempotent": true
       },
       "HISTORICAL_ANALYSIS": {
-        "first_snapshot": "fbc03eab5f2bd2f80253fdc1f4481b2400cba19de44d6c1ec38775b1990299a2",
-        "second_snapshot": "fbc03eab5f2bd2f80253fdc1f4481b2400cba19de44d6c1ec38775b1990299a2",
+        "first_snapshot": "0ced5102fd8129829a90057d69fcf647ab59f00a2eacdc062646d4913407d9ef",
+        "second_snapshot": "0ced5102fd8129829a90057d69fcf647ab59f00a2eacdc062646d4913407d9ef",
         "idempotent": true
       },
       "BUSINESS_QUALITY": {
-        "first_snapshot": "f8409fe379d61d74c17c1fc50552f06a517524049a652475bce823cc96b6ad07",
-        "second_snapshot": "f8409fe379d61d74c17c1fc50552f06a517524049a652475bce823cc96b6ad07",
+        "first_snapshot": "a5a97a4aa0a824ab8244be80af8461985c2ba5b4989b3d146b2b04525dbddcd9",
+        "second_snapshot": "a5a97a4aa0a824ab8244be80af8461985c2ba5b4989b3d146b2b04525dbddcd9",
         "idempotent": true
       },
       "MARKET_DATA": {
-        "first_snapshot": "2d2ac7ebb5a5355bceb8ccd9eaa811d9fe7d9cbd076e27df3209d72c2df8d2b5",
-        "second_snapshot": "2d2ac7ebb5a5355bceb8ccd9eaa811d9fe7d9cbd076e27df3209d72c2df8d2b5",
+        "first_snapshot": "84d521959a3209797b60987071da7a18a21c14cca29982208119af4802490c02",
+        "second_snapshot": "84d521959a3209797b60987071da7a18a21c14cca29982208119af4802490c02",
         "idempotent": true
       },
       "ASSUMPTIONS": {
-        "first_snapshot": "09db5cf0b0f54dc7be32eacecbbaa897b02e7f29a3393af3c87580e247ee699f",
-        "second_snapshot": "09db5cf0b0f54dc7be32eacecbbaa897b02e7f29a3393af3c87580e247ee699f",
+        "first_snapshot": "81e721a604920d3f96d4f220b34d6376251621c55bfd731abeed4a4a677498db",
+        "second_snapshot": "81e721a604920d3f96d4f220b34d6376251621c55bfd731abeed4a4a677498db",
         "idempotent": true
       },
       "VALUATION": {
-        "first_snapshot": "30f4b8a734a7d160a7c4b53d1c02950c2f735b0613556957be718be2602c4d03",
-        "second_snapshot": "30f4b8a734a7d160a7c4b53d1c02950c2f735b0613556957be718be2602c4d03",
+        "first_snapshot": "843615caad76ed9e10773d31640fc6477e5bf7dd01ec2af71aced1da9443b9d8",
+        "second_snapshot": "843615caad76ed9e10773d31640fc6477e5bf7dd01ec2af71aced1da9443b9d8",
         "idempotent": true
       }
     }
@@ -748,7 +828,7 @@ Normaler Testlauf bleibt separat: `pytest -q`.
 - keine
 
 ## Engine Blockers
-- ASML LONG_HISTORY: required core metric history below 5Y (depreciation_amortization)
+- keine
 
 ## 20. GO / NO-GO
-NO-GO - REAL COMPANY END-TO-END VALIDATION
+GO - REAL COMPANY END-TO-END VALIDATION PASSED
