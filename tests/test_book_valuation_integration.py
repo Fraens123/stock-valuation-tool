@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from stock_valuation.analyses.service import create_analysis, get_or_create_company
 from stock_valuation.book_valuation.persistence import upsert_book_assumption
 from stock_valuation.book_valuation.service import BOOK_VALUATION_STAGE, build_book_valuation_for_analysis
-from stock_valuation.database.models import AnalysisStageSnapshot, Base
+from stock_valuation.database.models import AnalysisStageSnapshot, Base, FinancialFactSnapshot
 from stock_valuation.ui.analysis_view_model import build_analysis_view_model
 from stock_valuation.workflow.models import AnalysisState, StageState
 
@@ -106,6 +106,10 @@ def test_book_service_computes_real_values_and_persists_snapshot() -> None:
             "individuality_addon": "2",
             "risk_free_rate": "0.032",
             "margin_of_safety": "0.5",
+            "growth_rate": "0.03",
+            "terminal_growth_rate": "0.02",
+            "projection_years": "3",
+            "forecast_net_income": "130",
         }.items():
             upsert_book_assumption(session, analysis, key=key, value=Decimal(value))
         for key in ("rivalry_existing_competitors", "threat_new_entrants", "supplier_power", "buyer_power", "threat_substitutes"):
@@ -132,7 +136,22 @@ def test_book_result_is_rendered_by_view_model() -> None:
     with _session() as session:
         company = get_or_create_company(session, name="Example", ticker="EXM", currency="EUR")
         analysis = create_analysis(session, company=company, as_of_date=date(2026, 8, 23))
-        upsert_book_assumption(session, analysis, key="fair_pe", value=Decimal("16"))
+        for key, value in {
+            "base_pe": "7.5",
+            "financial_stability_addon": "2",
+            "market_position_addon": "2.2",
+            "profitability_multiplier": "2",
+            "growth_addon": "0.8",
+            "individuality_addon": "2",
+            "forecast_net_income": "130",
+            "growth_rate": "0.03",
+            "terminal_growth_rate": "0.02",
+            "projection_years": "3",
+            "margin_of_safety": "0.5",
+        }.items():
+            upsert_book_assumption(session, analysis, key=key, value=Decimal(value))
+        for key in ("rivalry_existing_competitors", "threat_new_entrants", "supplier_power", "buyer_power", "threat_substitutes"):
+            upsert_book_assumption(session, analysis, key=key, value=Decimal("3"), unit="points")
         upsert_book_assumption(session, analysis, key="risk_free_rate", value=Decimal("0.032"))
         state = _workflow_state(
             analysis,

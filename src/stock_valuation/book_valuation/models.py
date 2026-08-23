@@ -14,6 +14,12 @@ NOT_MEANINGFUL = "NOT_MEANINGFUL"
 REVIEW_REQUIRED = "REVIEW_REQUIRED"
 INVALID_ASSUMPTION = "INVALID_ASSUMPTION"
 
+AUTOMATIC = "AUTOMATISCH_ERMITTELT"
+SUGGESTED = "EMPFOHLENER_STARTWERT"
+MANUAL_CONFIRMED = "MANUELL_BESTAETIGT"
+MANUAL_OVERRIDE = "MANUELL_UEBERSCHRIEBEN"
+MISSING = "FEHLT"
+
 
 @dataclass(frozen=True)
 class BookValue:
@@ -98,6 +104,37 @@ class MultiplicatorMethodResult:
 
 
 @dataclass(frozen=True)
+class BookAssumptionState:
+    key: str
+    label: str
+    value: Decimal | None
+    unit: str
+    status: str
+    scenario: str
+    suggestion: Decimal | None = None
+    source: str | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class BookDCFScenarioResult:
+    scenario: str
+    label: str
+    owner_earnings_base: BookValue
+    growth_rate: BookValue
+    projection_years: BookValue
+    fair_pe: BookValue
+    risk_free_rate: BookValue
+    discount_rate: BookValue
+    terminal_growth_rate: BookValue
+    present_value_owner_earnings_sum: BookValue
+    present_value_terminal_value: BookValue
+    fair_value_per_share: BookValue
+    fair_value_after_safety_margin: BookValue
+    market_price: BookValue
+
+
+@dataclass(frozen=True)
 class BookValuationAnalysisResult:
     method_version: str
     owner_earnings_history: tuple[OwnerEarningsYear, ...]
@@ -108,6 +145,8 @@ class BookValuationAnalysisResult:
     multiplicator_method_result: MultiplicatorMethodResult
     market_inputs: dict[str, Any]
     manual_inputs: dict[str, Any]
+    assumption_states: dict[str, BookAssumptionState]
+    scenario_results: dict[str, BookDCFScenarioResult]
     values: dict[str, BookValue]
     warnings: tuple[str, ...]
     review_required: bool

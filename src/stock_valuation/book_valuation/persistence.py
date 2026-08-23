@@ -21,6 +21,7 @@ def upsert_book_assumption(
     note: str | None = None,
     scenario: str = "base",
     unit: str | None = None,
+    source_type: str | None = None,
 ) -> ValuationAssumption:
     row = session.scalar(
         select(ValuationAssumption).where(
@@ -40,7 +41,7 @@ def upsert_book_assumption(
         session.add(row)
     row.value = value
     row.unit = unit
-    row.source_type = BOOK_VALUATION_VERSION
+    row.source_type = source_type or BOOK_VALUATION_VERSION
     row.note = note
     session.commit()
     return row
@@ -55,3 +56,16 @@ def load_book_assumptions(session: Session, analysis: Analysis, *, scenario: str
         )
     ).all()
     return {row.key: row for row in rows}
+
+
+def load_all_book_assumptions(session: Session, analysis: Analysis) -> dict[str, dict[str, ValuationAssumption]]:
+    rows = session.scalars(
+        select(ValuationAssumption).where(
+            ValuationAssumption.analysis_id == analysis.id,
+            ValuationAssumption.method == METHOD,
+        )
+    ).all()
+    grouped: dict[str, dict[str, ValuationAssumption]] = {}
+    for row in rows:
+        grouped.setdefault(row.scenario or "base", {})[row.key] = row
+    return grouped

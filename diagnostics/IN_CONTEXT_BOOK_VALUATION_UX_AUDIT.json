@@ -1,0 +1,108 @@
+{
+  "phase": "PHASE 9C",
+  "title": "IN-CONTEXT BOOK VALUATION UX AUDIT",
+  "date": "2026-08-23",
+  "decision": "GO - EXCEL-/BUCH-WORKFLOW PRAKTISCH NUTZBAR V1",
+  "in_context_inputs": {
+    "status": "PASS",
+    "owner_earnings": [
+      "intangible_purchases_by_year",
+      "explicit_zero_confirmation_by_year",
+      "depreciation_amortization_by_year"
+    ],
+    "enterprise_value": [
+      "short_term_debt_override_at_ev_block"
+    ],
+    "discount_rate": [
+      "ecb_10y_aaa_load_button_in_dcf_step_2",
+      "manual_risk_free_override_in_dcf_step_2"
+    ],
+    "multiplicator_method": [
+      "visible_base_pe",
+      "visible_forecast_net_income",
+      "visible_pe_addons",
+      "porter_scores_with_notes"
+    ],
+    "book_dcf": [
+      "bear",
+      "base",
+      "bull"
+    ]
+  },
+  "real_asml_manual_inputs_still_needed": [
+    "intangible_purchases",
+    "risk_free_rate_if_no_ecb_fact_saved",
+    "forecast_net_income",
+    "base_pe_and_pe_addons",
+    "book_dcf_scenarios",
+    "net_debt_or_short_term_debt_for_ev"
+  ],
+  "risk_free_rate": {
+    "status": "PASS",
+    "stored_metric": "risk_free_rate_eur_aaa_10y",
+    "stored_statement": "market",
+    "service_reads_financial_fact_snapshot": true,
+    "eur_currency_guard": true,
+    "manual_override_supported": true
+  },
+  "silent_defaults": {
+    "status": "PASS",
+    "base_pe_7_5_not_used_until_confirmed": true,
+    "zero_addons_not_used_until_confirmed": true,
+    "profitability_multiplier_1_not_used_until_confirmed": true,
+    "growth_terminal_projection_safety_not_used_until_confirmed": true,
+    "forecast_net_income_latest_actual_fallback_removed": true,
+    "terminal_value_discount_rate_zero_fallback_removed": true
+  },
+  "multiplicator_workflow": {
+    "status": "PASS",
+    "steps": [
+      "Sockel-KGV",
+      "Finanzielle Stabilitaet",
+      "Marktposition",
+      "Rentabilitaet",
+      "Wachstum",
+      "Individualitaet",
+      "Faires KGV",
+      "Fairer Aktienkurs"
+    ]
+  },
+  "book_dcf_scenarios": {
+    "status": "PASS",
+    "scenario_keys": [
+      "bear",
+      "base",
+      "bull"
+    ],
+    "persistence": "ValuationAssumption.scenario",
+    "reopen_test": "PASS"
+  },
+  "summary": {
+    "status": "PASS",
+    "market_information_separated_from_review_issues": true,
+    "storage_note_visible": true,
+    "technical_details_kept_separate": true
+  },
+  "info_references": {
+    "status": "PASS_WITH_REVIEW_GAPS",
+    "fields": [
+      "book_chapter",
+      "book_page",
+      "excel_location",
+      "reference_status"
+    ],
+    "unknown_references_are_explicit": true,
+    "invented_pages": false
+  },
+  "tests": {
+    "status": "PASS",
+    "command": "pytest -q",
+    "result": "236 passed in 2.64s"
+  },
+  "app_smoke": {
+    "status": "PASS",
+    "command": "streamlit run app.py --server.headless true --server.port 8516 --browser.gatherUsageStats false",
+    "http_status": 200
+  },
+  "next_step": "Manual ASML app test with in-context inputs and reopen persistence check."
+}

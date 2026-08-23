@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 import streamlit as st
 
+from stock_valuation.analyses.input_service import store_risk_free_rate, upsert_manual_financial_override
 from stock_valuation.analyses.service import get_analysis
 from stock_valuation.book_valuation.persistence import load_book_assumptions, upsert_book_assumption
 from stock_valuation.book_valuation.service import build_book_valuation_for_analysis
+from stock_valuation.data.providers.ecb import ECBRiskFreeRateProvider
 from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.market.refresh_service import market_refresh_missing_reason, refresh_market_snapshot_for_analysis
@@ -50,6 +53,14 @@ def _render_info(entry: InfoEntry) -> None:
         if text:
             st.markdown(f"**{heading}**")
             st.write(text)
+    st.markdown("**Buchbezug**")
+    if entry.reference_status == "KNOWN" and (entry.book_chapter or entry.book_page):
+        st.write(f"Kapitel: {entry.book_chapter or 'nicht angegeben'}")
+        st.write(f"Seite: {entry.book_page or 'nicht angegeben'}")
+    else:
+        st.write("Buchseite: noch nicht zugeordnet")
+    st.markdown("**Excel-Bezug**")
+    st.write(entry.excel_location or "noch nicht zugeordnet")
 
 
 def _point_label(label: str, info_key: str) -> None:
@@ -80,6 +91,106 @@ def _parse_decimal(raw: str) -> Decimal:
         return Decimal(raw.strip().replace(",", "."))
     except (InvalidOperation, AttributeError) as exc:
         raise ValueError("Bitte einen gültigen Zahlenwert eingeben.") from exc
+
+
+def _source_fields(prefix: str, *, default_source: str = "Aktienfinder") -> tuple[str, str]:
+    source_choice = st.selectbox(
+        "Quelle",
+        ["Aktienfinder", "Geschaeftsbericht", "Unternehmenswebsite", "andere"],
+        index=0,
+        key=f"{prefix}-source-choice",
+    )
+    source_free = st.text_input(
+        "Freie Quellenbezeichnung",
+        value="" if source_choice != "andere" else default_source,
+        key=f"{prefix}-source-free",
+    )
+    source = source_free.strip() or source_choice
+    note = st.text_area("Kommentar / Begruendung", key=f"{prefix}-note")
+    return source, note
+
+
+def _save_financial_override_form(
+    *,
+    label: str,
+    metric: str,
+    fiscal_year: int,
+    statement: str,
+    unit: str = "currency",
+    default_value: str = "",
+    button_label: str = "Speichern",
+) -> None:
+    editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    with st.form(f"financial-override-{metric}-{fiscal_year}-{button_label}"):
+        st.write(f"**{label} {fiscal_year}**")
+        value_raw = st.text_input("Wert", value=default_value)
+        currency = st.text_input("Waehrung", value=analysis.company.currency)
+        source, note = _source_fields(f"financial-override-{metric}-{fiscal_year}-{button_label}")
+        submitted = st.form_submit_button(button_label, disabled=not editable)
+    if submitted:
+        try:
+            value = _parse_decimal(value_raw)
+            with get_session() as session:
+                fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                if fresh is not None:
+                    upsert_manual_financial_override(
+                        session,
+                        fresh,
+                        metric=metric,
+                        period_end=date(fiscal_year, 12, 31),
+                        value=value,
+                        currency=currency.strip() or fresh.company.currency,
+                        unit=unit,
+                        statement=statement,
+                        source_name=source,
+                        note=note,
+                    )
+            st.success("Wert gespeichert.")
+            st.rerun()
+        except (ValueError, InvalidOperation) as exc:
+            st.error(str(exc))
+
+
+def _save_book_assumption_form(
+    *,
+    label: str,
+    key: str,
+    unit: str,
+    scenario: str = "base",
+    suggestion: Decimal | None = None,
+    saved_value: str = "",
+    saved_note: str = "",
+    button_label: str = "Speichern",
+) -> None:
+    editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    with st.form(f"book-assumption-{scenario}-{key}"):
+        st.write(f"**{label}**")
+        if suggestion is not None and not saved_value:
+            st.caption(f"Vorschlag: {suggestion}. Status: noch nicht bestaetigt.")
+        value = st.text_input("Wert", value=saved_value)
+        source, note = _source_fields(f"book-assumption-{scenario}-{key}", default_source="Eigene Annahme")
+        if saved_note:
+            st.caption(f"Gespeicherter Kommentar: {saved_note}")
+        submitted = st.form_submit_button(button_label, disabled=not editable)
+    if submitted:
+        try:
+            with get_session() as session:
+                fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                if fresh is not None:
+                    upsert_book_assumption(
+                        session,
+                        fresh,
+                        key=key,
+                        value=_parse_decimal(value),
+                        note=f"Quelle: {source}. {note.strip() or 'Manuell bestaetigt.'}",
+                        unit=unit,
+                        scenario=scenario,
+                        source_type="MANUALLY_CONFIRMED",
+                    )
+            st.success("Annahme gespeichert.")
+            st.rerun()
+        except (ValueError, InvalidOperation) as exc:
+            st.error(str(exc))
 
 
 def _render_metric_table(section_key: str, years: list[int]) -> None:
@@ -114,6 +225,33 @@ def _render_market_and_multiples(years: list[int]) -> None:
                 st.warning(point.reason)
     for note in vm.market_notes:
         st.caption(note)
+    with st.expander("Enterprise Value Ansatz pruefen"):
+        st.write("Enterprise Value = Marktkapitalisierung + kurzfristige Finanzschulden + langfristige Finanzschulden - liquide Mittel.")
+        st.write("Wenn Nettoverschuldung nicht freigegeben ist, fehlen EV, EV/EBIT, EV/EBITDA, EV/Umsatz und EV/FCF bewusst.")
+        market_payload = state.stages["MARKET_DATA"].payload
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Baustein": "Aktienkurs", "Wert": market_payload.get("price") or "Nicht verfuegbar", "Status": "Information"},
+                    {"Baustein": "Anzahl Aktien", "Wert": market_payload.get("shares_outstanding") or "Nicht verfuegbar", "Status": "Information"},
+                    {"Baustein": "Marktkapitalisierung", "Wert": market_payload.get("market_cap") or "Nicht verfuegbar", "Status": status_label("AVAILABLE") if market_payload.get("market_cap") else status_label("UNAVAILABLE")},
+                    {"Baustein": "Nettoverschuldung", "Wert": market_payload.get("net_debt") or "Nicht verfuegbar", "Status": issue_label("MISSING_NET_DEBT") if not market_payload.get("enterprise_value") else status_label("AVAILABLE")},
+                    {"Baustein": "Enterprise Value", "Wert": market_payload.get("enterprise_value") or "Nicht verfuegbar", "Status": issue_label("MISSING_NET_DEBT") if not market_payload.get("enterprise_value") else status_label("AVAILABLE")},
+                ]
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+        if not market_payload.get("enterprise_value"):
+            latest_years = available_years(vm, default=1)
+            fiscal_year = latest_years[-1] if latest_years else analysis.as_of_date.year
+            _save_financial_override_form(
+                label="Kurzfristige Finanzschulden",
+                metric="short_term_debt",
+                fiscal_year=fiscal_year,
+                statement="balance_sheet",
+                button_label="Kurzfristige Finanzschulden speichern",
+            )
     if state.stages["MARKET_DATA"].status in {"UNAVAILABLE", "NOT_RUN"}:
         st.info("Marktdaten wurden für diese Analyse noch nicht geladen.")
     with st.expander("Marktdaten aktualisieren"):
@@ -206,6 +344,29 @@ def _render_dcf() -> None:
                     if fresh is not None:
                         upsert_book_assumption(session, fresh, key=key, value=Decimal(value.replace(",", ".")), note=note or "Manuell bestätigt.", unit="currency")
                 st.rerun()
+    with st.expander("Owner-Earnings-Werte direkt am Verwendungsort ergaenzen"):
+        st.caption("Gespeichert wird erst nach Klick auf Speichern oder Bestaetigen. Eingetippte, aber nicht gespeicherte Werte gehen beim Schliessen verloren.")
+        for owner_row in book_valuation.owner_earnings_history[-5:]:
+            st.markdown(f"**Geschaeftsjahr {owner_row.fiscal_year}**")
+            if "MISSING_INTANGIBLE_PURCHASES" in owner_row.owner_earnings_capex.issues or "MISSING_OWNER_EARNINGS_CAPEX" in owner_row.owner_earnings.issues:
+                st.write("Kaeufe immaterieller Anlagewerte fehlen. Wenn die Quelle keinen separaten Wert ausweist, kann fuer genau dieses Jahr 0 bestaetigt werden.")
+                _save_financial_override_form(
+                    label="Kaeufe immaterieller Anlagewerte",
+                    metric="intangible_purchases",
+                    fiscal_year=owner_row.fiscal_year,
+                    statement="cash_flow",
+                    default_value="0",
+                    button_label=f"Wert fuer {owner_row.fiscal_year} speichern",
+                )
+            if "MISSING_DEPRECIATION_AMORTIZATION" in owner_row.depreciation_amortization.issues or "MISSING_DEPRECIATION_AMORTIZATION" in owner_row.owner_earnings.issues:
+                st.write("Abschreibungen fehlen oder muessen geprueft werden.")
+                _save_financial_override_form(
+                    label="Abschreibungen und Amortisation",
+                    metric="depreciation_amortization",
+                    fiscal_year=owner_row.fiscal_year,
+                    statement="cash_flow",
+                    button_label=f"Abschreibungen fuer {owner_row.fiscal_year} speichern",
+                )
     st.subheader("2. Bestimmung des Diskontierungsfaktors")
     for key in ("fair_pe", "cost_of_equity"):
         _info_button(key)
@@ -221,6 +382,28 @@ def _render_dcf() -> None:
         ("Eigenkapitalkosten", book_valuation.discount_rate_result.cost_of_equity, "cost_of_equity"),
     ]
     st.dataframe(pd.DataFrame({"Kennzahl": label, "Wert": _book_text(value), "Status": _book_status(value)} for label, value, _ in discount_rows), width="stretch", hide_index=True)
+    with st.expander("Risikofreien Zins hier laden oder ueberschreiben"):
+        st.write("Bei EUR-Bewertungen wird der ECB Euro-area AAA 10Y Zinssatz verwendet. Bei anderer Bewertungswaehrung muss der Zins manuell geprueft werden.")
+        if st.button("ECB 10Y AAA Zins laden", disabled=analysis.company.currency != "EUR"):
+            try:
+                observation = ECBRiskFreeRateProvider().get_latest_eur_aaa_10y()
+                with get_session() as session:
+                    fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                    if fresh is not None:
+                        store_risk_free_rate(session, fresh, observation)
+                st.success("ECB-Zins gespeichert.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"ECB-Zins konnte nicht geladen werden: {exc}")
+        saved_risk_free = book_valuation.manual_inputs.get("risk_free_rate", {})
+        _save_book_assumption_form(
+            label="Eigenen risikofreien Zins verwenden",
+            key="risk_free_rate",
+            unit="decimal_ratio",
+            saved_value=saved_risk_free.get("value") or "",
+            saved_note=saved_risk_free.get("note") or "",
+            button_label="Risikofreien Zins speichern",
+        )
     st.subheader("3. Bestimmung der Ewigen Rente")
     _info_button("terminal_value")
     row = next((item for item in vm.assumption_rows if item["key"] == "terminal_growth_rate"), None)
@@ -255,6 +438,42 @@ def _render_dcf() -> None:
         st.info("Noch keine Bewertungsvorschau verfügbar.")
     st.subheader("Annahmen prüfen")
     _render_assumption_actions()
+
+    st.subheader("Excel-/Buch-DCF-Szenarien")
+    if book_valuation.scenario_results:
+        labels = {key: item.label for key, item in book_valuation.scenario_results.items()}
+        scenario_table = []
+        scenario_metrics = [
+            ("Owner Earnings Basis", "owner_earnings_base"),
+            ("Wachstum", "growth_rate"),
+            ("Diskontierungszins", "discount_rate"),
+            ("Ewiges Wachstum", "terminal_growth_rate"),
+            ("PV Owner Earnings", "present_value_owner_earnings_sum"),
+            ("PV Ewige Rente", "present_value_terminal_value"),
+            ("Fairer Aktienkurs", "fair_value_per_share"),
+            ("Wert nach Sicherheitsmarge", "fair_value_after_safety_margin"),
+            ("Aktueller Kurs", "market_price"),
+        ]
+        for label, attr in scenario_metrics:
+            row_data = {"Kennzahl": label}
+            for scenario_key, scenario in book_valuation.scenario_results.items():
+                row_data[labels[scenario_key]] = _book_text(getattr(scenario, attr))
+            scenario_table.append(row_data)
+        st.dataframe(pd.DataFrame(scenario_table), width="stretch", hide_index=True)
+    with st.expander("Excel-/Buch-Szenarien bearbeiten"):
+        scenario_labels = {"bear": "Pessimistisch", "base": "Basis", "bull": "Optimistisch"}
+        for scenario_key, scenario_label in scenario_labels.items():
+            st.markdown(f"**{scenario_label}**")
+            cols = st.columns(3)
+            with cols[0]:
+                _save_book_assumption_form(label="Owner Earnings Basis", key="base_owner_earnings", unit="currency", scenario=scenario_key)
+                _save_book_assumption_form(label="Wachstumsrate", key="growth_rate", unit="decimal_ratio", scenario=scenario_key, suggestion=Decimal("0.03"))
+            with cols[1]:
+                _save_book_assumption_form(label="Planungszeitraum", key="projection_years", unit="years", scenario=scenario_key, suggestion=Decimal("5"))
+                _save_book_assumption_form(label="Ewige Wachstumsrate", key="terminal_growth_rate", unit="decimal_ratio", scenario=scenario_key, suggestion=Decimal("0.02"))
+            with cols[2]:
+                _save_book_assumption_form(label="Faires KGV", key="fair_pe", unit="multiple", scenario=scenario_key)
+                _save_book_assumption_form(label="Sicherheitsmarge", key="margin_of_safety", unit="decimal_ratio", scenario=scenario_key, suggestion=Decimal("0.5"))
 
 
 def _render_assumption_actions() -> None:
@@ -328,6 +547,46 @@ def _render_quality() -> None:
     section = next(item for item in vm.sections if item.key == "quality")
     st.header(section.title)
     st.caption(section.intro)
+    st.subheader("12. Multiplikatorenmethode")
+    st.caption("Vorschlaege sind Startwerte. Sie werden erst nach Uebernehmen oder Speichern als echte Annahme verwendet.")
+    mult = book_valuation.multiplicator_method_result
+    mult_rows = [
+        ("A. Sockel-KGV", mult.base_pe),
+        ("B. Finanzielle Stabilitaet", mult.financial_stability_addon),
+        ("C. Marktposition", mult.market_position_addon),
+        ("D. Rentabilitaet", mult.profitability_multiplier),
+        ("E. Wachstum", mult.growth_addon),
+        ("F. Individualitaet", mult.individuality_addon),
+        ("G. Faires KGV", mult.fair_pe),
+        ("H. Fairer Aktienkurs", mult.fair_price_per_share),
+    ]
+    st.dataframe(
+        pd.DataFrame({"Schritt": label, "Wert": _book_text(value), "Status": _book_status(value)} for label, value in mult_rows),
+        width="stretch",
+        hide_index=True,
+    )
+    base_state = book_valuation.assumption_states.get("base_pe")
+    forecast_state = book_valuation.assumption_states.get("forecast_net_income")
+    cols = st.columns(2)
+    with cols[0]:
+        _save_book_assumption_form(
+            label="Sockel-KGV",
+            key="base_pe",
+            unit="multiple",
+            suggestion=base_state.suggestion if base_state else Decimal("7.5"),
+            saved_value=str(base_state.value) if base_state and base_state.value is not None else "",
+            saved_note=base_state.note or "" if base_state else "",
+            button_label="Sockel-KGV uebernehmen",
+        )
+    with cols[1]:
+        _save_book_assumption_form(
+            label="Prognostizierter Jahresueberschuss",
+            key="forecast_net_income",
+            unit="currency",
+            saved_value=str(forecast_state.value) if forecast_state and forecast_state.value is not None else "",
+            saved_note=forecast_state.note or "" if forecast_state else "",
+            button_label="Prognosewert speichern",
+        )
     rows = [
         {
             "Baustein": point.label,
@@ -404,12 +663,21 @@ def _render_summary() -> None:
     st.header("13. Zusammenfassung")
     _info_button("summary")
     checks = []
+    info_notes = []
     if state.stages["FINANCIAL_DATA"].status == "REVIEW_REQUIRED":
         checks.append("Einzelne Finanzdaten benötigen noch eine semantische Prüfung.")
     if vm.market_notes:
-        checks.extend(vm.market_notes)
+        for note in vm.market_notes:
+            if "Unternehmenswert" in note or "Nettoverschuldung" in note:
+                checks.append(note)
+            else:
+                info_notes.append(note)
     if state.stages["ASSUMPTIONS"].status == "REVIEW_REQUIRED":
         checks.append("Bewertungsannahmen müssen noch geprüft oder freigegeben werden.")
+    if info_notes:
+        st.subheader("Informationen")
+        for item in info_notes:
+            st.write(f"- {item}")
     if checks:
         st.subheader("Was sollte geprüft werden?")
         for item in checks:
@@ -417,6 +685,7 @@ def _render_summary() -> None:
     if vm.scenario_rows:
         st.subheader("Bewertungsbandbreite")
         st.dataframe(pd.DataFrame(vm.scenario_rows), width="stretch", hide_index=True)
+    st.info("Gespeichert werden alle Werte, nachdem du auf Speichern, Bestaetigen oder Uebernehmen geklickt hast. Nur eingetippte, aber nicht gespeicherte Werte gehen beim Schliessen verloren.")
     st.write("Keine Kauf-, Halte- oder Verkaufsempfehlung.")
 
 

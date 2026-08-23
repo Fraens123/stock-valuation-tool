@@ -14,6 +14,10 @@ class InfoEntry:
     history: str | None = None
     data_basis: str | None = None
     methodology_note: str | None = None
+    book_chapter: str | None = None
+    book_page: str | None = None
+    excel_location: str | None = None
+    reference_status: str = "UNKNOWN"
 
 
 def _entry(title: str, meaning: str, **kwargs) -> InfoEntry:
