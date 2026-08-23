@@ -21,7 +21,7 @@ Standardreihenfolge:
 2. ESEF/xBRL-JSON
 3. Alpha Vantage nur als expliziter Fallback
 
-Der Router mischt keine unterschiedlichen Rechnungslegungsbasen feldweise zu einem scheinbar einheitlichen Abschluss.
+Innerhalb der SEC-Quellenfamilie gibt es gezielte Ergänzungsstufen aus dem originalen Filing. Der Router mischt keine unterschiedlichen Rechnungslegungsbasen feldweise zu einem scheinbar einheitlichen Abschluss.
 
 ### 3. SEC Company Facts
 
@@ -29,14 +29,12 @@ Der Router mischt keine unterschiedlichen Rechnungslegungsbasen feldweise zu ein
 - Ticker-/CIK-Verzeichnis und Company Facts werden gecacht
 - Standardkonzepte aus `us-gaap` und `ifrs-full`
 - alternative Standardkonzepte werden pro Periodenende aufgelöst
-- Company Extensions werden nicht automatisch geraten
+- Company Extensions werden nicht automatisch als korrekt angenommen
 - `short_term_debt` bleibt semantisch gated
 
-### 4. SEC Original-Filing-Fallback
+### 4. SEC Original-Filing- und Extension-Fallback
 
-Siehe `docs/SEC_FILING_FALLBACK.md`.
-
-Neue generische Ergänzung:
+Generischer Ablauf:
 
 ```text
 Company Facts
@@ -46,18 +44,24 @@ SEC Submissions
 Originales 10-K / 20-F / 40-F
   ↓
 XBRL-Instanz aus Filing-Archiv
-  ↓
-Standardtag sicher → sec_filing_xbrl ergänzen
-kein Standardtag → offen / Extension- oder Textprüfung erforderlich
+  ├─ erlaubter Standardtag → sec_filing_xbrl automatisch ergänzen
+  └─ kein Standardtag
+       ↓
+     firmeneigene XBRL-Tags + Labels durchsuchen
+       ↓
+     plausiblen Kandidaten als sec_filing_extension speichern
+       ↓
+     bis semantischem ChatGPT-PASS blockiert
 ```
 
 Regeln:
 - nur Lücken werden ergänzt; Company Facts gewinnt bei identischem Metric/Period-Paar,
-- Filing- und Submissions-Daten werden lokal gecacht,
+- Filing-, Submissions- und Label-Linkbase-Daten werden lokal gecacht,
 - Amendments werden berücksichtigt, dürfen aber den vollständigen ursprünglichen Bericht nicht verdecken,
-- keine automatische Extension-Zuordnung,
+- ein Extension-Kandidat ist **keine automatische fachliche Freigabe**,
+- Extension-Kandidaten speichern Originalkonzept, Label soweit vorhanden, Wert, Periode, Quelle und weitere plausible Alternativen,
 - kein fehlender Wert wird als Null erfunden,
-- `short_term_debt` bleibt auch aus `sec_filing_xbrl` bis zur semantischen Freigabe blockiert.
+- `short_term_debt` darf nicht blind aus einem einzelnen Kandidaten als vollständig angenommen oder aus beliebigen Komponenten automatisch summiert werden.
 
 ### 5. ESEF
 
@@ -70,11 +74,23 @@ Regeln:
 ### 6. Preferred Data
 
 - Source Resolution und Calculation Readiness sind getrennt.
-- `sec_filing_xbrl` ist offizielle Primärquelle, aber niedriger priorisiert als `sec_companyfacts`.
+- Reihenfolge innerhalb SEC: `sec_companyfacts` → `sec_filing_xbrl` → `sec_filing_extension`.
+- `sec_filing_extension` ist immer bis zu einem exakt passenden semantischen PASS blockiert.
 - manuelle Overrides bleiben höchste Korrekturebene.
 - bekannte semantisch mehrdeutige Primärquellenfelder bleiben blockiert.
 
-### 7. 10-Jahres-Mapping-Check
+### 7. ChatGPT-Dateiprüfung
+
+Der normale bestehende Prüfpaket-Workflow löst jetzt auch historische Extension-Fälle:
+
+- die ausgewählten 2/3/5 aktuellen Geschäftsjahre werden vollständig geprüft,
+- zusätzlich werden offene `sec_filing_extension`-Kandidaten aus dem 10-Jahres-Fenster automatisch angehängt,
+- der Nutzer muss dafür nicht 10 komplette Jahre tief prüfen,
+- bei Extension-Kandidaten ist `PASS` nur bei exakt gleicher wirtschaftlicher Semantik erlaubt,
+- bei zu engem/breitem Kandidaten `FAIL`/`UNKLAR`,
+- wenn z. B. `short_term_debt` aus mehreren offiziellen Komponenten besteht, kann ein sicherer Gesamtwert als `FAIL`-Korrektur vorgeschlagen und anschließend als auditiertes Override übernommen werden.
+
+### 8. 10-Jahres-Mapping-Check
 
 `src/stock_valuation/data/history_mapping_audit.py`
 
@@ -88,41 +104,44 @@ Prüft automatisch und ohne Netzwerk:
 - echte mehrere Geschäftsjahresenden.
 
 Status:
-- `PASS`: vollständig und technisch stabil,
-- `REVIEW`: vollständig, aber Mappingänderung,
-- `GAP`: mindestens ein Jahr fehlt.
+- `PASS`: vollständig und technisch stabil bzw. ein Extension-Wechsel wurde semantisch aufgelöst,
+- `REVIEW`: vollständig, aber Mappingänderung noch nicht fachlich aufgelöst,
+- `GAP`: mindestens ein Jahr hat noch gar keinen brauchbaren Kandidaten/Wert.
 
-`sec_companyfacts` und `sec_filing_xbrl` gelten als eine SEC-Quellenfamilie. Ein zusätzlicher Opening-/Restatement-Stichtag erzeugt keinen False Positive, wenn der normale Geschäftsjahresendwert vorhanden ist.
+`sec_companyfacts`, `sec_filing_xbrl` und `sec_filing_extension` gelten als eine SEC-Quellenfamilie. Ein zusätzlicher Opening-/Restatement-Stichtag erzeugt keinen False Positive, wenn der normale Geschäftsjahresendwert vorhanden ist.
 
-### 8. Kennzahlen-UX
+### 9. Kennzahlen-UX
 
 - aktive Kennzahlen synchronisieren sich automatisch aus Preferred Data,
 - kein manueller Berechnungsbutton,
 - methodisch offene Kennzahlen bleiben eingeklappt,
 - Mapping-Auffälligkeiten werden auf derselben Kennzahlen-Seite angezeigt.
 
-### 9. Cache / Entwicklung
+### 10. Cache / Entwicklung
 
 - Alpha Vantage, SEC, SEC-Filings, GLEIF und ESEF verwenden lokale Caches unter `data/cache/`,
 - Cache ist gitignored,
-- Offline-Replay bleibt nur im Code/Test und ist aus der normalen UI entfernt.
+- Offline-Replay bleibt nur im Code/Test und ist aus der normalen UI entfernt,
+- alte und neue Prüfpaket-Überschriften bleiben im Offline-Replay kompatibel.
 
 ## Neue/angepasste Tests in diesem Block
 
 - `tests/test_sec_filing_provider.py`
-  - Standardfakten aus Original-XBRL-Instanz
-  - dimensionale und Company-Extension-Fakten werden nicht automatisch übernommen
-  - `short_term_debt` bleibt ein roher Standardfakt für das spätere semantische Gate
 - `tests/test_source_router_sec_filing.py`
-  - Company-Facts-Lücke wird als separate `sec_filing_xbrl`-Primärquelle ergänzt
 - `tests/test_sec_filing_preferred_data.py`
-  - Company Facts gewinnt bei gleicher Periode
-  - Filing-OCF ist calculation-ready
-  - Filing-`short_term_debt` bleibt blockiert
 - `tests/test_history_mapping_fiscal_year_end.py`
-  - Opening Balance im selben Kalenderjahr ist kein zweites FY
-  - Company Facts und Filing-Fallback sind eine Quellenfamilie
-- bestehende Router-/SEC-/History-/Preferred-Data-Tests bleiben bestehen.
+- `tests/test_sec_extension_provider.py`
+  - Company-Extension-Kandidaten für Dividend/OCF/Short-Term-Debt
+  - offensichtlich falsches Dividendenkonzept (`declared`) wird verworfen
+  - Label-Linkbase-Parsing
+- `tests/test_source_router_sec_extension.py`
+  - Extension-Kandidat wird gespeichert, aber Preferred Data blockiert ihn vor Review
+- `tests/test_ai_review_extension_candidate.py`
+  - alter Extension-Kandidat wird automatisch an ein kurzes aktuelles Review-Paket angehängt
+  - passender PASS macht ihn calculation-ready
+- `tests/test_history_mapping_extension_review.py`
+  - Extension-Tagwechsel ist vor Review `REVIEW`, nach passendem PASS `PASS`
+- bestehende Router-/SEC-/History-/Preferred-Data-/Offline-Replay-Tests bleiben bestehen.
 
 **Wichtig:** Dieser Stand darf erst nach lokalem `pytest -q` als grün bezeichnet werden.
 
@@ -135,21 +154,18 @@ Status:
 5. Im Quellen-Router prüfen:
    - `SEC Company Facts`
    - `SEC Original-Filing`
-   - Anzahl ergänzter Standardfakten
-   - Anzahl offen gebliebener Extension-/Textfälle
-6. Danach `Kennzahlen` öffnen und 10-Jahres-Mapping erneut prüfen.
-7. Erwartete ASML-Schwerpunkte aus dem bisherigen Audit:
-   - `operating_cash_flow` 2016: Filing-Fallback sollte prüfen, ob ein Standardtag ergänzt werden kann,
-   - `short_term_debt` 2016/2017: Standardfakt darf ergänzt werden, bleibt aber semantisch gated,
-   - `dividends_paid` 2019–2025: wenn nur Company-Extension/Textzeile vorhanden ist, muss die Lücke sichtbar offen bleiben,
-   - `shareholders_equity` 2018: Opening-/Restatement-Instant soll keinen falschen Doppel-FY-Hinweis mehr erzeugen.
-8. Danach dieselbe Architektur an mindestens einem weiteren SEC-Unternehmen (z. B. Microsoft) und anschließend einem ESEF-Unternehmen testen.
+   - `SEC Extension-Mapping`
+   - Anzahl gefundener Kandidaten / weiterhin offener Fälle
+6. Normales ChatGPT-Prüfpaket mit 3 Jahren herunterladen. Ältere Extension-Kandidaten werden automatisch ergänzt.
+7. Prüfpaket in ChatGPT prüfen lassen und JSON wieder importieren.
+8. `Kennzahlen` → 10-Jahres-Mapping prüfen. Ziel ist: alle automatisch oder semantisch lösbaren Fälle schließen; echte nicht belegbare Werte bleiben sichtbar offen statt erfunden zu werden.
+9. Danach dieselbe Architektur an mindestens einem weiteren SEC-Unternehmen und anschließend einem ESEF-Unternehmen testen.
 
 ## Bewusst offene Grenzen
 
 - SEC + ESEF sind keine vollständige Weltabdeckung.
-- Company Extensions werden noch nicht automatisch semantisch auf interne Felder gemappt.
-- Ein gezielter Review-Workflow für verbleibende Filing-Extension-Kandidaten ist der nächste mögliche Datenqualitätsblock, falls der Live-Test solche Lücken bestätigt.
+- Ein Company-Extension-Kandidat kann trotz gutem Namen wirtschaftlich falsch/zu eng/zu breit sein; deshalb bleibt der Review zwingend.
+- Wenn weder Standard-XBRL noch ein ausreichend plausibler Extension-Kandidat existiert, bleibt der Wert offen und benötigt offiziellen Text-/Tabellenbeleg oder manuellen Override.
 - Analystenschätzungen benötigen weiterhin separaten Provider oder manuelle Daten.
 - Aktienkurs/Marktdaten bleiben eine getrennte Aufgabe.
 
