@@ -1,6 +1,6 @@
 # Current Task
 
-## Phase 2 – generischer offizieller Quellen-Router
+## Phase 2 – generischer offizieller Quellen-Router und historische Datenqualität
 
 Historische Ist-Daten dürfen nicht mehr von Alpha Vantage als Pflichtquelle abhängen. ASML bleibt ein Referenzfall, aber die normale Suche/Importlogik muss für beliebige Unternehmen funktionieren.
 
@@ -89,7 +89,38 @@ Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
 - manuelle Overrides bleiben höchste praktische Korrekturebene
 - Primärquellenwerte mit bekannter semantischer Mehrdeutigkeit können blockiert bleiben
 
-### 8. Cache / Entwicklung
+### 8. Generischer 10-Jahres-Mapping-Check
+
+- `src/stock_valuation/data/history_mapping_audit.py`
+- arbeitet ausschließlich auf dem gespeicherten Snapshot; kein Netzwerk/API-Request
+- keine Unternehmens-Sonderlogik
+- prüft standardmäßig die letzten 10 Geschäftsjahre je importiertem internem Feld
+- prüft:
+  - Jahresabdeckung/Lücken
+  - Original-XBRL-/Provider-Feld
+  - Tagwechsel und Wechseljahr
+  - zugrunde liegende Quelle
+  - Berichtswährung
+  - Taxonomie (`us-gaap`, `ifrs-full` bzw. Provider-Taxonomie)
+  - mehrere Geschäftsjahres-Enden innerhalb desselben Kalenderjahres
+- Status:
+  - `PASS`: 10/10 und technisch unverändertes Mapping
+  - `REVIEW`: vollständige Serie, aber Tag-/Quellen-/Währungs-/Taxonomiewechsel oder doppeltes Geschäftsjahresende
+  - `GAP`: mindestens ein Jahr fehlt
+- Tagwechsel sind ausdrücklich **kein automatischer Fehler**; sie lösen nur fachliche Prüfung aus.
+- manuelle Overrides werden für die Mapping-Kontinuität nicht anstelle der zugrunde liegenden Originalquelle verwendet.
+- Anzeige ist automatisch auf `Kennzahlen`; kein zusätzlicher Berechnungs-/Prüfbutton.
+- stabile Detailzeilen sind standardmäßig eingeklappt, Auffälligkeiten werden automatisch aufgeklappt.
+
+### 9. Kennzahlen-UX
+
+- aktive Kennzahlen werden beim Öffnen der Seite automatisch aus Preferred Data synchronisiert
+- kein manueller Button `Aktive Kennzahlen aus Preferred Data berechnen`
+- identische Input-Hashes führen zu keinem unnötigen Datenbank-Rewrite
+- methodisch noch offene Kennzahlen bleiben eingeklappt
+- `primary_reviewed_pass` wird in der Preferred-Data-Zusammenfassung korrekt als geprüfte Primärquelle gezählt
+
+### 10. Cache / Entwicklung
 
 - Alpha-Vantage-Cache bleibt erhalten
 - SEC/GLEIF/ESEF verwenden ebenfalls lokale Caches unter `data/cache/`
@@ -103,35 +134,34 @@ Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
 - `tests/test_company_discovery.py`
 - `tests/test_source_router.py`
 - `tests/test_preferred_data.py` erweitert um semantisches SEC-Schuldengate
+- `tests/test_history_mapping_audit.py`
+  - stabile 10-Jahres-Serie
+  - Tagwechsel als REVIEW
+  - fehlendes Jahr als GAP
+  - Quellen-/Währungs-/Taxonomiewechsel
+  - manueller Override verdeckt die Original-Mappingserie nicht
+  - ältere Jahre außerhalb des 10-Jahres-Fensters beeinflussen den Status nicht
 - bestehende SEC-/ESEF-/Alpha-/Replay-Tests bleiben bestehen
 
-**Wichtig:** Die Tests dieses neuen Blocks müssen jetzt lokal mit `pytest -q` ausgeführt werden. Aktueller Stand darf erst danach als grün bezeichnet werden.
+**Wichtig:** Neue Tests dieses Blocks müssen lokal mit `pytest -q` ausgeführt werden. Aktueller Stand darf erst danach als grün bezeichnet werden.
 
 ## Nächster Live-Abnahmetest
 
 1. `git pull`
-2. `.env` prüfen:
-   ```text
-   SEC_USER_AGENT=Vorname Nachname email@example.com
-   ```
-3. `pytest -q`
-4. `streamlit run app.py`
-5. bestehende Entwicklungsunternehmen bei Bedarf löschen
-6. nacheinander echte Fälle testen:
-   - Microsoft – erwarteter primärer SEC-Weg
-   - ASML – SEC oder ESEF abhängig von strukturierter Abdeckung
-   - Siemens – ESEF/GLEIF-Fall; Registry-Abdeckung kann lückenhaft sein
-   - LVMH – ESEF/GLEIF-Fall
-7. je Fall prüfen:
-   - korrekte Unternehmensidentität
-   - CIK/LEI
-   - gewählte Quelle
-   - Anzahl Geschäftsjahre/Fakten
-   - Währung
-   - Rohfeld-Provenienz
-   - lokale Plausibilitätschecks
-   - Preferred-Data-Status
-8. danach ChatGPT-Prüfpaket für 2–3 Jahre erzeugen und semantische Mappings prüfen.
+2. `pytest -q`
+3. `streamlit run app.py`
+4. ASML R1 auf `Kennzahlen` öffnen
+5. 10-Jahres-Mapping prüfen:
+   - Prüffenster 2016–2025
+   - Anzahl stabile Felder
+   - Anzahl `prüfen`
+   - Anzahl Lücken
+   - auffällige Mapping-Verläufe/Wechseljahre
+6. danach dieselbe Logik an weiteren Unternehmen testen:
+   - Microsoft – SEC US-GAAP
+   - Siemens – ESEF/IFRS, soweit Registry-Abdeckung vorhanden
+   - LVMH – ESEF/IFRS, soweit Registry-Abdeckung vorhanden
+7. bei Tagwechseln nicht automatisch korrigieren; zuerst fachliche Semantik/Primärquelle prüfen.
 
 ## Bekannte Grenzen / bewusst noch offen
 
@@ -143,6 +173,7 @@ Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
 - Aktienkurs/Marktlisting und historische Rechnungslegungsdaten bleiben getrennte Aufgaben.
 - ISIN/LEI/CIK/Ticker-Mapping kann weiter verbessert werden.
 - Source Router mischt bewusst nicht automatisch Provider feldweise; spätere Cross-Checks können mehrere Quellen parallel speichern.
+- Der 10-Jahres-Mapping-Check erkennt technische Kontinuität/Änderungen, aber erklärt einen Tagwechsel nicht automatisch als wirtschaftlich gleichwertig. Dafür bleibt semantische Prüfung erforderlich.
 
 ## Noch offene Kapitel-2-Methodik
 
