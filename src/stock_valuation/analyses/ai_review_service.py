@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -16,7 +16,11 @@ from stock_valuation.analyses.service import ensure_editable
 from stock_valuation.data.audit import run_deterministic_audit
 from stock_valuation.data.preferred_data import FIELD_DEFINITIONS
 from stock_valuation.data.resolution import load_preferred_financial_facts
-from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
+from stock_valuation.database.ai_review_models import (
+    AIReviewFinding,
+    AIReviewPackageSnapshot,
+    AIReviewRun,
+)
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot
 
 
@@ -136,6 +140,52 @@ def _package_payload(
 def _package_id(payload: dict[str, Any]) -> str:
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _store_review_package_snapshot(
+    session: Session,
+    analysis: Analysis,
+    *,
+    package_id: str,
+    payload: dict[str, Any],
+    content: str,
+    result_filename: str,
+) -> None:
+    existing = session.scalar(
+        select(AIReviewPackageSnapshot).where(AIReviewPackageSnapshot.package_id == package_id)
+    )
+    if existing is not None:
+        return
+    session.add(
+        AIReviewPackageSnapshot(
+            analysis_id=analysis.id,
+            package_id=package_id,
+            schema_version=REVIEW_SCHEMA_VERSION,
+            years_requested=int(payload["years_requested"]),
+            payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            content_markdown=content,
+            result_filename=result_filename,
+        )
+    )
+    session.commit()
+
+
+def _load_package_snapshot(
+    session: Session,
+    package_id: str,
+) -> tuple[AIReviewPackageSnapshot, dict[str, Any]] | None:
+    row = session.scalar(
+        select(AIReviewPackageSnapshot).where(AIReviewPackageSnapshot.package_id == package_id)
+    )
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row.payload_json)
+    except json.JSONDecodeError as exc:
+        raise AIReviewError("Gespeicherter Review-Package-Snapshot ist beschädigt.") from exc
+    if not isinstance(payload, dict):
+        raise AIReviewError("Gespeicherter Review-Package-Snapshot hat kein gültiges JSON-Objekt.")
+    return row, payload
 
 
 def build_chatgpt_review_package(
@@ -304,6 +354,15 @@ Diese Checks sind nur Hinweise und ersetzen die Primärquellenprüfung nicht.
 Prüfe alle Fakten. Erzeuge anschließend ausschließlich die angeforderte Datei `{result_filename}` im oben definierten JSON-Format. Unsichere Fälle als `UNKLAR` kennzeichnen; niemals raten.
 """
 
+    _store_review_package_snapshot(
+        session,
+        analysis,
+        package_id=package_id,
+        payload=payload,
+        content=content,
+        result_filename=result_filename,
+    )
+
     return ReviewPackage(
         filename=filename,
         content=content.encode("utf-8"),
@@ -338,12 +397,20 @@ def import_chatgpt_review_result(
     if not isinstance(years_raw, int) or years_raw < 1 or years_raw > 10:
         raise AIReviewError("`years_requested` fehlt oder ist ungültig.")
 
-    expected_package = build_chatgpt_review_package(session, analysis, years=years_raw)
-    if payload.get("package_id") != expected_package.package_id:
+    package_id = str(payload.get("package_id") or "")
+    stored_package = _load_package_snapshot(session, package_id)
+    if stored_package is None:
         raise AIReviewError(
-            "Die Package-ID passt nicht zum aktuellen Snapshot. Wahrscheinlich wurde eine andere "
-            "Analyse/Revision geprüft oder die Finanzdaten wurden nach dem Export verändert."
+            "Die Package-ID ist nicht als exportierter Review-Snapshot bekannt. Bitte das Ergebnis "
+            "gegen das exakt exportierte Pruefpaket einlesen oder ein neues Paket erzeugen."
         )
+    package_row, package_payload = stored_package
+    if package_row.analysis_id != analysis.id:
+        raise AIReviewError("Die Package-ID gehoert nicht zur ausgewaehlten Analyse.")
+    if package_payload.get("schema_version") != REVIEW_SCHEMA_VERSION:
+        raise AIReviewError("Gespeicherter Review-Snapshot hat eine falsche Schema-Version.")
+    if package_payload.get("years_requested") != years_raw:
+        raise AIReviewError("`years_requested` passt nicht zum exportierten Review-Snapshot.")
 
     company = payload.get("company")
     if not isinstance(company, dict):
@@ -355,8 +422,15 @@ def import_chatgpt_review_result(
     if int(company.get("revision") or 0) != analysis.revision_number:
         raise AIReviewError("Revision im Prüfergebnis passt nicht zur ausgewählten Analyse.")
 
-    facts = _review_facts(session, analysis, years_raw)
-    fact_by_id = {fact.id: fact for fact in facts}
+    snapshot_facts = package_payload.get("facts")
+    if not isinstance(snapshot_facts, list):
+        raise AIReviewError("Gespeicherter Review-Snapshot enthaelt keine Faktenliste.")
+    fact_by_id: dict[int, dict[str, Any]] = {}
+    for fact in snapshot_facts:
+        if not isinstance(fact, dict) or not isinstance(fact.get("fact_id"), int):
+            raise AIReviewError("Gespeicherter Review-Snapshot enthaelt ungueltige Fakten.")
+        fact_by_id[fact["fact_id"]] = fact
+
     returned = payload.get("findings")
     if not isinstance(returned, list):
         raise AIReviewError("Das Prüfergebnis enthält keine gültige `findings`-Liste.")
@@ -372,13 +446,23 @@ def import_chatgpt_review_result(
             raise AIReviewError(f"fact_id {fact_id} kommt im Prüfergebnis mehrfach vor.")
         returned_by_id[fact_id] = item
 
+    try:
+        current_package = build_chatgpt_review_package(session, analysis, years=years_raw)
+        package_is_stale = current_package.package_id != package_id
+    except AIReviewError:
+        package_is_stale = True
+    package_row.status = "stale_imported" if package_is_stale else "imported"
+
     run = AIReviewRun(
         analysis_id=analysis.id,
         model="chatgpt_file_review",
         years_requested=years_raw,
-        status="completed",
-        response_id=expected_package.package_id,
-        summary=str(payload.get("summary") or ""),
+        status="completed_stale_snapshot" if package_is_stale else "completed",
+        response_id=package_id,
+        summary=(
+            str(payload.get("summary") or "")
+            + (" [Review wurde gegen einen inzwischen stale Snapshot importiert.]" if package_is_stale else "")
+        ).strip(),
         completed_at=datetime.now(UTC),
     )
     session.add(run)
@@ -401,24 +485,30 @@ def import_chatgpt_review_result(
         if verdict not in VALID_VERDICTS:
             verdict = "UNKLAR"
 
+        imported_value = _decimal(fact.get("value"))
+        try:
+            period_end = date.fromisoformat(str(fact.get("period_end") or ""))
+        except ValueError as exc:
+            raise AIReviewError("Gespeicherter Review-Snapshot enthaelt ein ungueltiges period_end.") from exc
+
         deviation = None
-        if official_value is not None and fact.value not in (None, Decimal("0")):
-            deviation = abs(official_value - fact.value) / abs(fact.value) * Decimal("100")
+        if official_value is not None and imported_value not in (None, Decimal("0")):
+            deviation = abs(official_value - imported_value) / abs(imported_value) * Decimal("100")
 
         session.add(
             AIReviewFinding(
                 run_id=run.id,
                 analysis_id=analysis.id,
-                period_end=fact.period_end,
-                statement=fact.statement,
-                metric=fact.metric,
-                imported_value=fact.value,
+                period_end=period_end,
+                statement=str(fact.get("statement") or ""),
+                metric=str(fact.get("metric") or ""),
+                imported_value=imported_value,
                 official_value=official_value,
-                currency=fact.currency,
+                currency=(str(fact.get("currency")) if fact.get("currency") else None),
                 deviation_pct=deviation,
                 verdict=verdict,
-                provider=fact.provider,
-                provider_field=fact.provider_field,
+                provider=(str(fact.get("provider")) if fact.get("provider") else None),
+                provider_field=(str(fact.get("provider_field")) if fact.get("provider_field") else None),
                 official_label=(
                     str(item.get("official_label")) if item.get("official_label") else None
                 ),

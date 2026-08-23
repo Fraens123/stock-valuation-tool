@@ -13,6 +13,7 @@ DEFAULT_PROVIDER_PRIORITY: tuple[str, ...] = (
     "asml_primary",
     "esef_xbrl_json",
     "esef_ixbrl",
+    "edgartools",
     "sec_companyfacts",
     "sec_filing_xbrl",
     "sec_filing_extension",

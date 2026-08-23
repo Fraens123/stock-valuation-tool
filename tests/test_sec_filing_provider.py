@@ -1,7 +1,12 @@
 from datetime import date
 from decimal import Decimal
 
-from stock_valuation.data.providers.sec_filing import parse_xbrl_instance
+from stock_valuation.data.providers.sec_filing import (
+    SECFilingFallbackProvider,
+    SECFilingRef,
+    parse_xbrl_instance,
+)
+from stock_valuation.data.types import NormalizedFinancialFact
 
 
 XBRL = """<?xml version="1.0" encoding="UTF-8"?>
@@ -73,3 +78,57 @@ def test_original_filing_parser_keeps_short_term_debt_as_raw_standard_fact() -> 
 
     assert debt.value == Decimal("247")
     assert debt.provider_field == "us-gaap:LongTermDebtCurrent"
+
+
+def _base_fact(metric: str, value: int) -> NormalizedFinancialFact:
+    return NormalizedFinancialFact(
+        statement="income_statement",
+        metric=metric,
+        period_end=date(2024, 12, 31),
+        period_type="FY",
+        value=Decimal(value),
+        provider_value=Decimal(value),
+        currency="EUR",
+        unit="currency",
+        provider="sec_companyfacts",
+        provider_field=f"us-gaap:{metric}",
+    )
+
+
+class LatestFilingProvider(SECFilingFallbackProvider):
+    def __init__(self) -> None:
+        pass
+
+    def list_annual_filings(self, cik: str, *, target_years=None):
+        return [
+            SECFilingRef(
+                accession_number="0000000000-26-000001",
+                filing_date=date(2026, 4, 1),
+                report_date=date(2025, 12, 31),
+                form="20-F",
+                primary_document="example.htm",
+            )
+        ]
+
+    def filings_for_year(self, cik: str, year: int):
+        return [ref for ref in self.list_annual_filings(cik) if ref.report_date.year == year]
+
+    def _instance_document(self, cik: str, filing: SECFilingRef):
+        return "https://www.sec.gov/example_htm.xml", XBRL
+
+
+def test_original_filing_fallback_imports_latest_year_missing_from_companyfacts() -> None:
+    provider = LatestFilingProvider()
+
+    result = provider.gap_facts(
+        "0000123456",
+        [_base_fact("operating_cash_flow", 100), _base_fact("total_assets", 500)],
+        years=3,
+    )
+    by_metric = {fact.metric: fact for fact in result.facts}
+
+    assert set(by_metric) == {"operating_cash_flow", "total_assets"}
+    assert by_metric["operating_cash_flow"].period_end == date(2025, 12, 31)
+    assert by_metric["operating_cash_flow"].value == Decimal("1250")
+    assert by_metric["operating_cash_flow"].note.endswith("accn=0000000000-26-000001")
+    assert [gap for gap in result.unresolved if gap.year == 2025] == []

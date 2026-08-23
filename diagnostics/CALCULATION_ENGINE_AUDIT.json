@@ -1,0 +1,83 @@
+{
+  "decision": "GO",
+  "source": "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\final_data_gate_report.csv",
+  "summary": {
+    "AAPL": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 75,
+      "unavailable": 0
+    },
+    "ADBE": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 69,
+      "unavailable": 6
+    },
+    "ASML": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 75,
+      "unavailable": 0
+    },
+    "MSFT": {
+      "years": [
+        2024,
+        2025,
+        2026
+      ],
+      "available": 75,
+      "unavailable": 0
+    },
+    "TSM": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 75,
+      "unavailable": 0
+    }
+  },
+  "implemented_metrics": [
+    "gross_margin",
+    "operating_margin",
+    "net_margin",
+    "ebitda",
+    "ebitda_margin",
+    "return_on_assets",
+    "return_on_equity",
+    "equity_ratio",
+    "debt_to_assets",
+    "debt_to_equity",
+    "net_debt",
+    "net_debt_to_ebitda",
+    "current_ratio",
+    "quick_ratio",
+    "cash_ratio",
+    "operating_cash_flow_margin",
+    "capex_ratio",
+    "free_cash_flow",
+    "free_cash_flow_margin",
+    "working_capital",
+    "working_capital_to_revenue",
+    "receivables_days",
+    "payables_days",
+    "inventory_intensity",
+    "inventory_days"
+  ],
+  "documented_not_implemented": [
+    "revenue_growth",
+    "valuation_multiples"
+  ],
+  "blockers": []
+}

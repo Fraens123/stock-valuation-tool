@@ -239,6 +239,7 @@ def parse_xbrl_instance(
     form: str,
     source_url: str,
     expected_currency: str | None = None,
+    accession_number: str | None = None,
 ) -> list[NormalizedFinancialFact]:
     """Parse entity-wide annual standard concepts from one SEC XBRL instance document.
 
@@ -320,7 +321,10 @@ def parse_xbrl_instance(
                 provider_field=f"{fact.taxonomy}:{fact.concept}",
                 filing_date=filing_date,
                 retrieved_at=retrieved,
-                note=f"Original SEC filing fallback; form={form}",
+                note=(
+                    f"Original SEC filing fallback; form={form}"
+                    + (f"; accn={accession_number}" if accession_number else "")
+                ),
                 source_url=source_url,
             )
         )
@@ -490,6 +494,13 @@ class SECFilingFallbackProvider:
             for year in range(first_year, last_year + 1)
             if (metric, year) not in present
         }
+        latest_filings = [
+            ref
+            for ref in self.list_annual_filings(cik, target_years=[last_year, last_year + 1])
+            if ref.report_date.year > last_year
+        ]
+        for year in {ref.report_date.year for ref in latest_filings}:
+            missing.update((metric, year) for metric in metrics)
         if not missing:
             return SECFilingFallbackResult((), (), 0)
 
@@ -537,6 +548,7 @@ class SECFilingFallbackProvider:
                     form=filing.form,
                     source_url=instance_url,
                     expected_currency=expected_currency,
+                    accession_number=filing.accession_number,
                 )
                 by_metric = {fact.metric: fact for fact in parsed}
                 for metric in sorted(needed - set(found)):

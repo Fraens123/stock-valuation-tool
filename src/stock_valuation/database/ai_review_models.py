@@ -27,6 +27,27 @@ class AIReviewRun(Base):
     )
 
 
+class AIReviewPackageSnapshot(Base):
+    """Immutable exported review package payload.
+
+    The package id is derived from this payload. Import validation must compare the returned
+    result against the stored package, not against a later live snapshot that may have changed.
+    """
+
+    __tablename__ = "ai_review_package_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    package_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    schema_version: Mapped[str] = mapped_column(String(20))
+    years_requested: Mapped[int] = mapped_column(Integer)
+    payload_json: Mapped[str] = mapped_column(Text)
+    content_markdown: Mapped[str] = mapped_column(Text)
+    result_filename: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(40), default="exported", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AIReviewFinding(Base):
     __tablename__ = "ai_review_findings"
 

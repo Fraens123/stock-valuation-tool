@@ -1,0 +1,85 @@
+{
+  "decision": "GO – HISTORICAL ANALYSIS ENGINE V1 FROZEN",
+  "summary": {
+    "AAPL": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 86,
+      "unavailable": 18,
+      "missing_year_checks": []
+    },
+    "ADBE": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 86,
+      "unavailable": 18,
+      "missing_year_checks": [
+        {
+          "ticker": "ADBE",
+          "category": "working_capital",
+          "metric_id": "inventory_intensity",
+          "fiscal_year": 2025,
+          "window": "missing_years",
+          "status": "AVAILABLE",
+          "value": "3",
+          "unit": "count",
+          "issue": "",
+          "calculation_version": "historical-v1.0"
+        },
+        {
+          "ticker": "ADBE",
+          "category": "working_capital",
+          "metric_id": "inventory_days",
+          "fiscal_year": 2025,
+          "window": "missing_years",
+          "status": "AVAILABLE",
+          "value": "3",
+          "unit": "count",
+          "issue": "",
+          "calculation_version": "historical-v1.0"
+        }
+      ]
+    },
+    "ASML": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 86,
+      "unavailable": 18,
+      "missing_year_checks": []
+    },
+    "MSFT": {
+      "years": [
+        2024,
+        2025,
+        2026
+      ],
+      "available": 86,
+      "unavailable": 18,
+      "missing_year_checks": []
+    },
+    "TSM": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "available": 86,
+      "unavailable": 18,
+      "missing_year_checks": []
+    }
+  },
+  "blockers": [],
+  "inputs": [
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\final_data_gate_report.csv",
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\calculation_engine_results.csv"
+  ]
+}

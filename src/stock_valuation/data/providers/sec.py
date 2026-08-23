@@ -28,6 +28,7 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
         ("us-gaap", "Revenues"),
         ("us-gaap", "SalesRevenueNet"),
+        ("ifrs-full", "RevenueFromContractsWithCustomers"),
         ("ifrs-full", "Revenue"),
     ),
     "cost_of_revenue": (
@@ -78,6 +79,7 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "AccountsReceivableNetCurrent"),
         ("ifrs-full", "TradeAndOtherCurrentReceivables"),
         ("ifrs-full", "TradeReceivables"),
+        ("ifrs-full", "CurrentTradeReceivables"),
     ),
     "inventory": (
         ("us-gaap", "InventoryNet"),
@@ -103,15 +105,21 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("us-gaap", "AccountsPayableCurrent"),
         ("ifrs-full", "TradeAndOtherCurrentPayables"),
         ("ifrs-full", "TradePayables"),
+        ("ifrs-full", "TradeAndOtherCurrentPayablesToTradeSuppliers"),
+        ("ifrs-full", "TradeAndOtherCurrentPayablesToRelatedParties"),
     ),
     "short_term_debt": (
+        ("us-gaap", "DebtCurrent"),
         ("us-gaap", "ShortTermBorrowings"),
         ("us-gaap", "LongTermDebtCurrent"),
         ("ifrs-full", "CurrentBorrowings"),
+        ("ifrs-full", "CurrentPortionOfLongtermBorrowings"),
     ),
     "long_term_debt": (
         ("us-gaap", "LongTermDebtNoncurrent"),
+        ("us-gaap", "LongTermDebt"),
         ("ifrs-full", "NoncurrentBorrowings"),
+        ("ifrs-full", "LongtermBorrowings"),
     ),
     "shareholders_equity": (
         ("us-gaap", "StockholdersEquity"),
@@ -132,12 +140,52 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "depreciation_amortization": (
         ("us-gaap", "DepreciationDepletionAndAmortization"),
+        ("us-gaap", "DepreciationAndAmortization"),
         ("ifrs-full", "DepreciationAndAmortisationExpense"),
+        ("us-gaap", "Depreciation"),
+        ("us-gaap", "AmortizationOfIntangibleAssets"),
+        ("ifrs-full", "DepreciationExpense"),
+        ("ifrs-full", "AmortisationExpense"),
     ),
     "dividends_paid": (
         ("us-gaap", "PaymentsOfDividends"),
         ("us-gaap", "PaymentsOfDividendsCommonStock"),
         ("ifrs-full", "DividendsPaidClassifiedAsFinancingActivities"),
+    ),
+}
+
+AGGREGATE_TOTAL_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "accounts_payable": (
+        ("us-gaap", "AccountsPayableCurrent"),
+        ("ifrs-full", "TradeAndOtherCurrentPayables"),
+        ("ifrs-full", "TradePayables"),
+    ),
+    "short_term_debt": (
+        ("us-gaap", "DebtCurrent"),
+        ("ifrs-full", "CurrentBorrowings"),
+    ),
+    "depreciation_amortization": (
+        ("us-gaap", "DepreciationDepletionAndAmortization"),
+        ("us-gaap", "DepreciationAndAmortization"),
+        ("ifrs-full", "DepreciationAndAmortisationExpense"),
+    ),
+}
+
+AGGREGATE_COMPONENT_CONCEPTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "accounts_payable": (
+        ("ifrs-full", "TradeAndOtherCurrentPayablesToTradeSuppliers"),
+        ("ifrs-full", "TradeAndOtherCurrentPayablesToRelatedParties"),
+    ),
+    "short_term_debt": (
+        ("us-gaap", "ShortTermBorrowings"),
+        ("us-gaap", "LongTermDebtCurrent"),
+        ("ifrs-full", "CurrentPortionOfLongtermBorrowings"),
+    ),
+    "depreciation_amortization": (
+        ("us-gaap", "Depreciation"),
+        ("us-gaap", "AmortizationOfIntangibleAssets"),
+        ("ifrs-full", "DepreciationExpense"),
+        ("ifrs-full", "AmortisationExpense"),
     ),
 }
 
@@ -370,6 +418,63 @@ def _best_entries_for_metric(
     return [selected[key] for key in sorted(selected)]
 
 
+def _best_entries_for_aggregate_metric(
+    facts_root: dict[str, Any],
+    metric: str,
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    totals = _best_entries_for_metric(facts_root, AGGREGATE_TOTAL_CONCEPTS[metric])
+    total_by_end = {_date(entry.get("end")): (taxonomy, concept_name, unit, entry) for taxonomy, concept_name, unit, entry in totals}
+    component_rows: list[tuple[str, str, str, dict[str, Any]]] = []
+    for taxonomy, concept_name in AGGREGATE_COMPONENT_CONCEPTS[metric]:
+        taxonomy_payload = facts_root.get(taxonomy) or {}
+        if not isinstance(taxonomy_payload, dict):
+            continue
+        concept_payload = taxonomy_payload.get(concept_name)
+        if not isinstance(concept_payload, dict):
+            continue
+        component_rows.extend(
+            (taxonomy, concept_name, unit, entry)
+            for unit, entry in _best_entries_for_concept(concept_payload)
+        )
+    by_period_filing: dict[tuple[date, date, str], list[tuple[str, str, str, dict[str, Any]]]] = {}
+    for taxonomy, concept_name, unit, entry in component_rows:
+        period_end = _date(entry.get("end"))
+        filed = _date(entry.get("filed"))
+        if period_end is None or filed is None:
+            continue
+        by_period_filing.setdefault((period_end, filed, str(entry.get("accn") or "")), []).append(
+            (taxonomy, concept_name, unit, entry)
+        )
+
+    aggregated: dict[date, tuple[str, str, str, dict[str, Any]]] = {}
+    for (period_end, filed, accn), rows in by_period_filing.items():
+        existing = aggregated.get(period_end)
+        if existing is not None and (_date(existing[3].get("filed")) or date.min) > filed:
+            continue
+        if period_end in total_by_end:
+            continue
+        total = sum((_decimal(row[3].get("val")) or Decimal("0")) for row in rows)
+        unit = rows[0][2]
+        field = "+".join(f"{taxonomy}:{concept}" for taxonomy, concept, _, _ in rows)
+        aggregated[period_end] = (
+            "aggregation",
+            field,
+            unit,
+            {
+                "val": total,
+                "end": period_end.isoformat(),
+                "filed": filed.isoformat(),
+                "form": rows[0][3].get("form"),
+                "accn": accn,
+                "components": field,
+            },
+        )
+
+    output = dict(total_by_end)
+    output.update(aggregated)
+    return [output[key] for key in sorted(output)]
+
+
 def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinancialFact]:
     facts_root = payload.get("facts") or {}
     if not isinstance(facts_root, dict):
@@ -378,10 +483,12 @@ def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinanc
     normalized: list[NormalizedFinancialFact] = []
     retrieved = datetime.now(timezone.utc)
     for metric, candidates in CONCEPT_MAP.items():
-        for chosen_taxonomy, chosen_concept, unit, entry in _best_entries_for_metric(
-            facts_root,
-            candidates,
-        ):
+        entries = (
+            _best_entries_for_aggregate_metric(facts_root, metric)
+            if metric in AGGREGATE_TOTAL_CONCEPTS
+            else _best_entries_for_metric(facts_root, candidates)
+        )
+        for chosen_taxonomy, chosen_concept, unit, entry in entries:
             value = _decimal(entry.get("val"))
             period_end = _date(entry.get("end"))
             if value is None or period_end is None:
@@ -431,7 +538,8 @@ def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinanc
                     provider_field=f"{chosen_taxonomy}:{chosen_concept}",
                     filing_date=_date(entry.get("filed")),
                     retrieved_at=retrieved,
-                    note=f"SEC form={entry.get('form')}; accn={entry.get('accn')}",
+                    note=f"SEC form={entry.get('form')}; accn={entry.get('accn')}"
+                    + (f"; components={entry.get('components')}" if entry.get("components") else ""),
                 )
             )
     return normalized

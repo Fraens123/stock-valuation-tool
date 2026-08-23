@@ -13,6 +13,10 @@ from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.providers.esef_registry import ESEFRegistryError, ESEFRegistryProvider
 from stock_valuation.data.providers.gleif import GLEIFProvider, GLEIFProviderError
+from stock_valuation.data.providers.edgartools_provider import (
+    EdgarToolsProvider,
+    EdgarToolsProviderError,
+)
 from stock_valuation.data.providers.sec import SECCompanyFactsProvider, SECProviderError
 from stock_valuation.data.providers.sec_extension import (
     SECCompanyExtensionProvider,
@@ -55,6 +59,10 @@ class FinancialSourceResult:
 class SECProviderLike(Protocol):
     def resolve_company(self, ticker: str, name: str | None = None): ...
     def get_normalized_financials(self, cik: str) -> list[NormalizedFinancialFact]: ...
+
+
+class EdgarToolsProviderLike(Protocol):
+    def get_normalized_financials(self, ticker_or_cik: str) -> list[NormalizedFinancialFact]: ...
 
 
 class SECFilingProviderLike(Protocol):
@@ -231,6 +239,7 @@ def sync_best_available_financials(
     analysis: Analysis,
     *,
     sec_provider: SECProviderLike | None = None,
+    edgartools_provider: EdgarToolsProviderLike | None = None,
     sec_filing_provider: SECFilingProviderLike | None = None,
     sec_extension_provider: SECExtensionProviderLike | None = None,
     gleif_provider: GLEIFProviderLike | None = None,
@@ -256,6 +265,59 @@ def sync_best_available_financials(
     attempts: list[SourceAttempt] = []
 
     # --- SEC -----------------------------------------------------------------
+    edgar_facts: list[NormalizedFinancialFact] = []
+    edgar_count = 0
+    edgar = edgartools_provider
+    if edgar is None and sec_provider is None and os.getenv("SEC_USER_AGENT"):
+        try:
+            edgar = EdgarToolsProvider()
+        except (ValueError, EdgarToolsProviderError) as exc:
+            attempts.append(SourceAttempt("EdgarTools", "unavailable", message=str(exc)))
+
+    if edgar is not None:
+        try:
+            facts = edgar.get_normalized_financials(analysis.company.ticker)
+            if _usable(facts):
+                edgar_facts = facts
+                edgar_count = _store_primary(
+                    session,
+                    analysis,
+                    facts,
+                    provider="edgartools",
+                    source_url="https://www.sec.gov/edgar/search/",
+                )
+                attempts.append(
+                    SourceAttempt(
+                        "EdgarTools",
+                        "selected_candidate",
+                        edgar_count,
+                        analysis.company.ticker,
+                        (
+                            "EdgarTools SEC/XBRL-Daten importiert. Bestehende SEC Company Facts "
+                            "bleiben als Fallback/Ergänzung aktiv."
+                        ),
+                    )
+                )
+            else:
+                attempts.append(
+                    SourceAttempt(
+                        "EdgarTools",
+                        "insufficient",
+                        len(facts),
+                        analysis.company.ticker,
+                        "EdgarTools lieferte nicht genug nutzbare strukturierte Fakten.",
+                    )
+                )
+        except (EdgarToolsProviderError, ValueError) as exc:
+            attempts.append(
+                SourceAttempt(
+                    "EdgarTools",
+                    "error",
+                    identifier=analysis.company.ticker,
+                    message=str(exc),
+                )
+            )
+
     sec = sec_provider
     if sec is None and os.getenv("SEC_USER_AGENT"):
         try:
@@ -348,9 +410,9 @@ def sync_best_available_financials(
                             )
                     return FinancialSourceResult(
                         "SEC",
-                        count + filing_count,
+                        edgar_count + count + filing_count,
                         tuple(attempts),
-                        currency,
+                        _report_currency([*edgar_facts, *facts]) or currency,
                     )
                 attempts.append(
                     SourceAttempt(
@@ -368,6 +430,14 @@ def sync_best_available_financials(
                 attempts.append(SourceAttempt("SEC", "not_found", message="Kein sicherer SEC-CIK-Treffer."))
         except (SECProviderError, ProviderError, ValueError) as exc:
             attempts.append(SourceAttempt("SEC", "error", message=str(exc)))
+
+    if edgar_count:
+        return FinancialSourceResult(
+            "SEC",
+            edgar_count,
+            tuple(attempts),
+            _report_currency(edgar_facts),
+        )
 
     # --- ESEF ----------------------------------------------------------------
     gleif = gleif_provider or GLEIFProvider()

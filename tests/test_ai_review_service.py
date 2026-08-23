@@ -16,7 +16,7 @@ from stock_valuation.analyses.ai_review_service import (
 from stock_valuation.analyses.service import create_analysis
 from stock_valuation.companies.service import get_or_create_company
 from stock_valuation.data.resolution import load_preferred_financial_facts
-from stock_valuation.database.ai_review_models import AIReviewFinding
+from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewPackageSnapshot
 from stock_valuation.database.models import Base, FinancialFactSnapshot
 
 
@@ -128,6 +128,31 @@ def test_result_for_different_package_is_rejected() -> None:
 
         with pytest.raises(AIReviewError, match="Package-ID"):
             import_chatgpt_review_result(session, analysis, json.dumps(payload))
+
+
+def test_review_result_import_uses_immutable_exported_package_when_live_snapshot_changed() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        fact = _fact(session, analysis.id)
+        package = build_chatgpt_review_package(session, analysis, years=3)
+        payload = _result_payload(package, fact, value=100, status="PASS")
+
+        fact.value = Decimal("101")
+        session.commit()
+
+        run = import_chatgpt_review_result(session, analysis, json.dumps(payload))
+        package_snapshot = session.scalar(
+            select(AIReviewPackageSnapshot).where(
+                AIReviewPackageSnapshot.package_id == package.package_id
+            )
+        )
+
+        assert run.response_id == package.package_id
+        assert run.status == "completed_stale_snapshot"
+        assert run.findings[0].imported_value == Decimal("100.00000000")
+        assert package_snapshot.status == "stale_imported"
 
 
 def test_user_acceptance_creates_priority_override_and_rejection_does_not() -> None:

@@ -17,9 +17,10 @@ Identity Resolver
   └─ GLEIF LEI
   ↓
 Source Router
-  ├─ 1. SEC Company Facts
-  ├─ 2. ESEF / iXBRL
-  └─ 3. optionaler Provider-Fallback
+  - 1. SEC via EdgarTools
+  - 2. SEC Company Facts / Original-Filing-Ergaenzung
+  - 3. ESEF / iXBRL
+  - 4. optionaler Provider-Fallback
   ↓
 Normalisierte Rohdaten
   ↓
@@ -152,11 +153,14 @@ Implementiert in `src/stock_valuation/data/source_router.py`.
 
 Der Router wählt für historische Ist-Daten zunächst **eine kohärente Quelle**:
 
-1. SEC Company Facts
-2. ESEF
-3. Alpha Vantage nur wenn der Nutzer den Fallback ausdrücklich aktiviert
+1. EdgarTools als erster SEC/XBRL-Kandidat
+2. SEC Company Facts und gezielte Original-Filing-Ergaenzungen innerhalb derselben SEC-Quellenfamilie
+3. ESEF
+4. Alpha Vantage nur wenn der Nutzer den Fallback ausdruecklich aktiviert
 
-Er mischt nicht still einzelne Bilanzfelder von SEC mit GuV-Feldern von ESEF und Cashflow-Feldern von Alpha Vantage. Damit bleiben Rechnungslegungsbasis, Periodenlogik und Provenienz nachvollziehbar.
+Innerhalb der SEC-Familie duerfen EdgarTools und die bestehenden offiziellen SEC-Fallbacks gemeinsam im Snapshot liegen: EdgarTools gewinnt in Preferred Data, waehrend SEC Company Facts oder Originalfilings fehlende Metrik/Jahr-Kombinationen auffuellen. Das ist ein auditierbarer Fallback innerhalb derselben offiziellen SEC-Datenbasis, kein stilles Mischen unterschiedlicher Rechnungslegungsquellen.
+
+Der Router mischt weiterhin nicht still einzelne Bilanzfelder von SEC mit GuV-Feldern von ESEF und Cashflow-Feldern von Alpha Vantage. Damit bleiben Rechnungslegungsbasis, Periodenlogik und Provenienz nachvollziehbar.
 
 Eine Quelle gilt nur als automatisch nutzbar, wenn sie eine Mindestmenge an strukturierten Fakten über mindestens zwei Geschäftsjahre liefert. Fehlschläge werden protokolliert und der nächste Router-Pfad wird versucht.
 
@@ -206,12 +210,13 @@ Ein manueller Override löscht den ursprünglichen Provider-/Primärquellenwert 
 
 Priorität bei konkurrierenden gespeicherten Fakten wird zentral in `data/resolution.py` aufgelöst. Aktuelle Reihenfolge:
 
-1. bestätigter `manual_override`
+1. bestaetigter `manual_override`
 2. vorhandene offizielle Spezial-/Referenzquelle
 3. ESEF
-4. SEC Company Facts
-5. Alpha Vantage
-6. weitere Provider
+4. EdgarTools
+5. SEC Company Facts / SEC Original-Filing-Fallback
+6. Alpha Vantage
+7. weitere Provider
 
 **Source Priority und Calculation Readiness sind getrennt.**
 

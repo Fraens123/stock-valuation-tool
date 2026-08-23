@@ -16,6 +16,7 @@ PRIMARY_SOURCE_PROVIDERS = {
     "asml_primary",
     "esef_xbrl_json",
     "esef_ixbrl",
+    "edgartools",
     "sec_companyfacts",
     "sec_filing_xbrl",
     "sec_filing_extension",
@@ -27,8 +28,10 @@ PRIMARY_SOURCE_PROVIDERS = {
 # therefore require an explicit semantic PASS (or a confirmed manual override) before calculations.
 PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
     ("sec_companyfacts", "short_term_debt"),
+    ("edgartools", "short_term_debt"),
     ("sec_filing_xbrl", "short_term_debt"),
     ("sec_companyfacts", "depreciation_amortization"),
+    ("edgartools", "depreciation_amortization"),
     ("sec_filing_xbrl", "depreciation_amortization"),
     ("esef_xbrl_json", "depreciation_amortization"),
     ("esef_ixbrl", "depreciation_amortization"),

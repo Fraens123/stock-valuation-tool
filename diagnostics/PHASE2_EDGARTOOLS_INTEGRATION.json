@@ -1,0 +1,54 @@
+{
+  "phase": "PHASE 2 - EDGARTOOLS INTEGRATION",
+  "production_switch": "NO-GO for edgartools-only replacement",
+  "fallback_enabled_integration": "GO",
+  "production_sec_path_changed": true,
+  "production_sec_path_change": "EdgarTools is added as first SEC candidate; legacy SEC Company Facts/Filing fallback remains active.",
+  "implemented": {
+    "isolated_edgartools_provider": true,
+    "normalized_financial_fact_mapping": true,
+    "metric_requirement_catalog": true,
+    "restatement_policy": "latest official filed comparative/restated value wins; historical versions retained in provider result",
+    "explicit_rules": [
+      "short_term_debt",
+      "depreciation_amortization",
+      "ppe_net"
+    ],
+    "immutable_review_packages": true
+  },
+  "dual_run": {
+    "artifact_json": "diagnostics/EDGARTOOLS_DUAL_RUN.json",
+    "artifact_csv": "diagnostics/edgartools_dual_run.csv",
+    "companies": {
+      "ASML": {
+        "required_gate_pass": true,
+        "required_missing": 0
+      },
+      "AAPL": {
+        "required_gate_pass": false,
+        "required_missing": 0,
+        "issue": "1 VALUE_MISMATCH"
+      },
+      "MSFT": {
+        "required_gate_pass": false,
+        "required_missing": 3
+      },
+      "TSM": {
+        "required_gate_pass": false,
+        "required_missing": 15
+      },
+      "ADBE": {
+        "required_gate_pass": false,
+        "required_missing": 6,
+        "issue": "1 VALUE_MISMATCH"
+      }
+    }
+  },
+  "go_no_go_reason": "ASML passes, but the broader dual-run target set still has missing REQUIRED fields or mismatches; therefore use EdgarTools with fallbacks, not as sole engine.",
+  "next_actions": [
+    "Investigate AAPL and ADBE value mismatches.",
+    "Investigate missing REQUIRED fields for MSFT, TSM and ADBE.",
+    "Adjust issuer-specific applicability only with explicit auditable rules.",
+    "Keep production source_router unchanged until all REQUIRED gates pass."
+  ]
+}

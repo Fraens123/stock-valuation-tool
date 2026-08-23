@@ -1,0 +1,73 @@
+{
+  "generated_at": "2026-08-23T10:47:03.563687+00:00",
+  "companies": {
+    "ASML": {
+      "historical_versions": 1209,
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "required_missing": 0,
+      "required_gate_pass": true
+    },
+    "AAPL": {
+      "historical_versions": 1174,
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "required_missing": 0,
+      "required_gate_pass": true
+    },
+    "MSFT": {
+      "historical_versions": 1216,
+      "years": [
+        2024,
+        2025,
+        2026
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "required_missing": 0,
+      "required_gate_pass": true
+    },
+    "TSM": {
+      "historical_versions": 733,
+      "years": [
+        2022,
+        2023,
+        2024
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "required_missing": 0,
+      "required_gate_pass": true
+    },
+    "ADBE": {
+      "historical_versions": 1019,
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 54,
+        "MISSING_BOTH": 3
+      },
+      "required_missing": 3,
+      "required_gate_pass": false
+    }
+  },
+  "go_no_go": "NO-GO",
+  "reason": "Produktionsumschaltung bleibt blockiert, bis alle REQUIRED-Felder die Gates pro Zieluniversum erfüllen."
+}

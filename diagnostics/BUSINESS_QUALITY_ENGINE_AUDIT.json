@@ -1,0 +1,265 @@
+{
+  "decision": "GO – BUSINESS QUALITY ENGINE V1 FROZEN",
+  "inputs": [
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\calculation_engine_results.csv",
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\historical_analysis_results.csv"
+  ],
+  "companies": {
+    "AAPL": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "overall_quality_score": "7.60461785261351026800608135",
+      "assessment": "SOLID",
+      "component_scores": {
+        "profitability": "8",
+        "margin_quality": "9",
+        "cashflow_quality": "8",
+        "growth": "5.333333333333333333333333333",
+        "balance_sheet": "5.885092156836152062170262976",
+        "capital_efficiency": "9",
+        "stability": "7.940382839897823126355778665"
+      },
+      "positive_factors": [
+        "Gross Margin Quality: STRONG",
+        "Operating Margin Quality: STRONG",
+        "EBITDA Margin Quality: STRONG",
+        "FCF / Operating Cash Flow: STRONG",
+        "Return on Assets Quality: STRONG",
+        "Return on Equity Quality: STRONG",
+        "Debt to Assets Quality: STRONG",
+        "Debt to Equity Quality: STRONG",
+        "Net Debt / EBITDA Quality: STRONG",
+        "Investment Intensity Quality: STRONG",
+        "Negative Years Quality: STRONG",
+        "Missing Years Quality: STRONG"
+      ],
+      "negative_factors": [
+        "Quick Ratio Quality: WEAK",
+        "Cash Ratio Quality: WEAK"
+      ],
+      "unavailable_factors": [
+        "Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED"
+      ],
+      "not_applicable_factors": []
+    },
+    "ADBE": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "overall_quality_score": "8.07551571153704619329336768",
+      "assessment": "STRONG",
+      "component_scores": {
+        "profitability": "8",
+        "margin_quality": "9",
+        "cashflow_quality": "9",
+        "growth": "8.333333333333333333333333333",
+        "balance_sheet": "6.857142857142857142857142857",
+        "capital_efficiency": "8",
+        "stability": "6.888490448703795266267010132"
+      },
+      "positive_factors": [
+        "Gross Margin Quality: STRONG",
+        "Operating Margin Quality: STRONG",
+        "EBITDA Margin Quality: STRONG",
+        "Free Cash Flow Margin Quality: STRONG",
+        "FCF / Operating Cash Flow: STRONG",
+        "Return on Equity Quality: STRONG",
+        "Equity Ratio Quality: STRONG",
+        "Debt to Assets Quality: STRONG",
+        "Debt to Equity Quality: STRONG",
+        "Net Debt / EBITDA Quality: STRONG",
+        "Investment Intensity Quality: STRONG",
+        "Earnings Growth Quality: STRONG",
+        "FCF Growth Quality: STRONG",
+        "Negative Years Quality: STRONG",
+        "Missing Years Quality: STRONG"
+      ],
+      "negative_factors": [
+        "Margin Volatility Quality: WEAK"
+      ],
+      "unavailable_factors": [
+        "Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED"
+      ],
+      "not_applicable_factors": [
+        "Inventory Applicability: INVENTORY_NOT_SEPARATELY_REPORTED"
+      ]
+    },
+    "ASML": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "overall_quality_score": "8.003685106881832377821281848",
+      "assessment": "STRONG",
+      "component_scores": {
+        "profitability": "8",
+        "margin_quality": "9",
+        "cashflow_quality": "9",
+        "growth": "7.666666666666666666666666667",
+        "balance_sheet": "7.142857142857142857142857143",
+        "capital_efficiency": "8",
+        "stability": "6.703517735484990444879485145"
+      },
+      "positive_factors": [
+        "Gross Margin Quality: STRONG",
+        "Operating Margin Quality: STRONG",
+        "EBITDA Margin Quality: STRONG",
+        "Free Cash Flow Margin Quality: STRONG",
+        "FCF / Operating Cash Flow: STRONG",
+        "Return on Equity Quality: STRONG",
+        "Equity Ratio Quality: STRONG",
+        "Debt to Assets Quality: STRONG",
+        "Debt to Equity Quality: STRONG",
+        "Net Debt / EBITDA Quality: STRONG",
+        "Investment Intensity Quality: STRONG",
+        "FCF Growth Quality: STRONG",
+        "Negative Years Quality: STRONG",
+        "Missing Years Quality: STRONG"
+      ],
+      "negative_factors": [
+        "Growth Volatility Quality: WEAK"
+      ],
+      "unavailable_factors": [
+        "Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED"
+      ],
+      "not_applicable_factors": []
+    },
+    "MSFT": {
+      "years": [
+        2024,
+        2025,
+        2026
+      ],
+      "overall_quality_score": "7.896827517760355134732745799",
+      "assessment": "SOLID",
+      "component_scores": {
+        "profitability": "9",
+        "margin_quality": "9",
+        "cashflow_quality": "8",
+        "growth": "7.333333333333333333333333333",
+        "balance_sheet": "6.857142857142857142857142857",
+        "capital_efficiency": "8",
+        "stability": "6.30160851093688468066079132"
+      },
+      "positive_factors": [
+        "Gross Margin Quality: STRONG",
+        "Operating Margin Quality: STRONG",
+        "Net Margin Quality: STRONG",
+        "EBITDA Margin Quality: STRONG",
+        "FCF / Operating Cash Flow: STRONG",
+        "Return on Equity Quality: STRONG",
+        "Equity Ratio Quality: STRONG",
+        "Debt to Assets Quality: STRONG",
+        "Debt to Equity Quality: STRONG",
+        "Net Debt / EBITDA Quality: STRONG",
+        "Revenue Growth Quality: STRONG",
+        "Earnings Growth Quality: STRONG",
+        "Negative Years Quality: STRONG",
+        "Missing Years Quality: STRONG"
+      ],
+      "negative_factors": [
+        "Cash Ratio Quality: WEAK",
+        "Investment Intensity Quality: WEAK",
+        "Margin Volatility Quality: WEAK",
+        "Growth Volatility Quality: WEAK"
+      ],
+      "unavailable_factors": [
+        "Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED"
+      ],
+      "not_applicable_factors": []
+    },
+    "TSM": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "overall_quality_score": "8.3400000000000000000000000",
+      "assessment": "STRONG",
+      "component_scores": {
+        "profitability": "9",
+        "margin_quality": "9",
+        "cashflow_quality": "8",
+        "growth": "9",
+        "balance_sheet": "8.571428571428571428571428571",
+        "capital_efficiency": "8",
+        "stability": "6"
+      },
+      "positive_factors": [
+        "Gross Margin Quality: STRONG",
+        "Operating Margin Quality: STRONG",
+        "Net Margin Quality: STRONG",
+        "EBITDA Margin Quality: STRONG",
+        "FCF / Operating Cash Flow: STRONG",
+        "Return on Equity Quality: STRONG",
+        "Equity Ratio Quality: STRONG",
+        "Debt to Assets Quality: STRONG",
+        "Debt to Equity Quality: STRONG",
+        "Net Debt / EBITDA Quality: STRONG",
+        "Current Ratio Quality: STRONG",
+        "Quick Ratio Quality: STRONG",
+        "Cash Ratio Quality: STRONG",
+        "Revenue Growth Quality: STRONG",
+        "Earnings Growth Quality: STRONG",
+        "FCF Growth Quality: STRONG",
+        "Negative Years Quality: STRONG",
+        "Missing Years Quality: STRONG"
+      ],
+      "negative_factors": [
+        "Margin Volatility Quality: WEAK",
+        "Growth Volatility Quality: WEAK"
+      ],
+      "unavailable_factors": [
+        "Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED",
+        "ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED"
+      ],
+      "not_applicable_factors": []
+    }
+  },
+  "blockers": [],
+  "quality_metrics": [
+    "gross_margin_quality",
+    "operating_margin_quality",
+    "net_margin_quality",
+    "ebitda_margin_quality",
+    "free_cash_flow_margin_quality",
+    "fcf_to_ocf_quality",
+    "ocf_to_net_income_quality",
+    "fcf_to_net_income_quality",
+    "return_on_assets_quality",
+    "return_on_equity_quality",
+    "roic_quality",
+    "equity_ratio_quality",
+    "debt_to_assets_quality",
+    "debt_to_equity_quality",
+    "net_debt_to_ebitda_quality",
+    "current_ratio_quality",
+    "quick_ratio_quality",
+    "cash_ratio_quality",
+    "capex_intensity_quality",
+    "revenue_growth_quality",
+    "earnings_growth_quality",
+    "fcf_growth_quality",
+    "margin_volatility_quality",
+    "growth_volatility_quality",
+    "negative_years_quality",
+    "missing_years_quality",
+    "inventory_applicability_quality"
+  ],
+  "forbidden_market_metrics_used": []
+}

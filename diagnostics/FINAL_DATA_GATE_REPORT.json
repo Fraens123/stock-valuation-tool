@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-08-23T12:04:46.903781+00:00",
+  "decision": "GO – FINANCIAL DATA PIPELINE V1 FROZEN",
+  "companies": {
+    "ASML": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "core_required_fields": 54,
+      "conditional_fields": 3,
+      "failed_core_fields": 0,
+      "conditional_not_separately_reported": 0
+    },
+    "AAPL": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "core_required_fields": 54,
+      "conditional_fields": 3,
+      "failed_core_fields": 0,
+      "conditional_not_separately_reported": 0
+    },
+    "MSFT": {
+      "years": [
+        2024,
+        2025,
+        2026
+      ],
+      "classes": {
+        "VALUE_MATCH": 57
+      },
+      "core_required_fields": 54,
+      "conditional_fields": 3,
+      "failed_core_fields": 0,
+      "conditional_not_separately_reported": 0
+    },
+    "TSM": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 38,
+        "SEC_FALLBACK_ONLY": 19
+      },
+      "core_required_fields": 54,
+      "conditional_fields": 3,
+      "failed_core_fields": 0,
+      "conditional_not_separately_reported": 0
+    },
+    "ADBE": {
+      "years": [
+        2023,
+        2024,
+        2025
+      ],
+      "classes": {
+        "VALUE_MATCH": 54,
+        "NOT_SEPARATELY_REPORTED": 3
+      },
+      "core_required_fields": 54,
+      "conditional_fields": 3,
+      "failed_core_fields": 0,
+      "conditional_not_separately_reported": 3
+    }
+  },
+  "mixed_filing_version_issues": [],
+  "unresolved": [],
+  "requirement_review": {
+    "changed_to_conditional": [
+      "inventory"
+    ],
+    "kept_core_required": [
+      "accounts_payable",
+      "accounts_receivable",
+      "capital_expenditures",
+      "cash_and_equivalents",
+      "current_assets",
+      "current_liabilities",
+      "depreciation_amortization",
+      "gross_profit",
+      "long_term_debt",
+      "net_income",
+      "operating_cash_flow",
+      "operating_income",
+      "ppe_net",
+      "revenue",
+      "shareholders_equity",
+      "short_term_debt",
+      "total_assets",
+      "total_liabilities"
+    ],
+    "rationale": "Inventory is business-model dependent and can be absent as a separate official fact. The remaining CORE_REQUIRED metrics are retained for Financial Data Pipeline V1 because they are needed as baseline income statement, balance sheet, debt, equity, cash-flow, capex and D&A anchors for the target non-financial SEC universe."
+  }
+}

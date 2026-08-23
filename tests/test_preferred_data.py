@@ -221,6 +221,45 @@ def test_sec_short_term_debt_requires_semantic_review_even_as_primary_source() -
         assert state.calculation_ready is True
 
 
+def test_edgartools_primary_source_imports_but_ambiguous_metrics_keep_review_gate() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        _fact(
+            session,
+            analysis.id,
+            "revenue",
+            "100",
+            provider="edgartools",
+            provider_field="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+            source_type="primary_source",
+        )
+        _fact(
+            session,
+            analysis.id,
+            "short_term_debt",
+            "10",
+            provider="edgartools",
+            provider_field="aggregation:us-gaap:LongTermDebtCurrent",
+            source_type="primary_source",
+        )
+
+        states = {
+            state.fact.metric: state
+            for state in load_preferred_data_states(
+                session,
+                analysis.id,
+                metrics=["revenue", "short_term_debt"],
+            )
+        }
+
+        assert states["revenue"].quality_status == "primary_source"
+        assert states["revenue"].calculation_ready is True
+        assert states["short_term_debt"].quality_status == "primary_semantic_review_required"
+        assert states["short_term_debt"].calculation_ready is False
+
+
 def test_internal_definitions_cover_microsoft_mapping_problems() -> None:
     assert "Operating-Lease-Right-of-Use-Assets" in FIELD_DEFINITIONS["ppe_net"]
     assert "Fälligkeit innerhalb von zwölf Monaten" in FIELD_DEFINITIONS["short_term_debt"]
