@@ -16,6 +16,10 @@ DEFAULT_HISTORY_YEARS = 10
 BASE_SOURCE_PRIORITY = tuple(
     provider for provider in DEFAULT_PROVIDER_PRIORITY if provider != "manual_override"
 )
+SEC_REVIEW_CANDIDATE_PROVIDERS = {
+    "sec_filing_extension",
+    "sec_filing_text_candidate",
+}
 
 
 @dataclass(frozen=True)
@@ -73,7 +77,12 @@ def _taxonomy(fact: FinancialFactSnapshot) -> str:
 
 def _provider_family(provider: str | None) -> str:
     normalized = _clean(provider).lower()
-    if normalized in {"sec_companyfacts", "sec_filing_xbrl", "sec_filing_extension"}:
+    if normalized in {
+        "sec_companyfacts",
+        "sec_filing_xbrl",
+        "sec_filing_extension",
+        "sec_filing_text_candidate",
+    }:
         return "sec"
     return normalized
 
@@ -179,12 +188,12 @@ def _override_keys(session: Session, analysis_id: int) -> set[tuple[str, object]
     return {(row.metric, row.period_end) for row in rows if row.value is not None}
 
 
-def _extension_mapping_resolved(
+def _review_candidate_mapping_resolved(
     fact: FinancialFactSnapshot,
     review_index: dict[tuple[str, object], AIReviewFinding],
     override_keys: set[tuple[str, object]],
 ) -> bool:
-    if fact.provider != "sec_filing_extension":
+    if fact.provider not in SEC_REVIEW_CANDIDATE_PROVIDERS:
         return False
     key = (fact.metric, fact.period_end)
     if key in override_keys:
@@ -209,7 +218,7 @@ def audit_history_mapping(
     """Audit longitudinal mapping consistency without network access or semantic guessing.
 
     PASS means the requested history is complete and its technical changes are either absent or an
-    SEC company-extension change was explicitly resolved by semantic PASS/accepted override.
+    SEC review-candidate change was explicitly resolved by semantic PASS/accepted override.
     REVIEW means a complete series still has an unresolved mapping/source/currency/taxonomy change.
     GAP means at least one requested fiscal year has no candidate/value at all.
     """
@@ -288,29 +297,31 @@ def audit_history_mapping(
         taxonomies = tuple(sorted({_taxonomy(fact) for fact in effective_metric_facts}))
         change_years = _change_years(year_to_field)
 
-        extension_facts = [
-            fact for fact in effective_metric_facts if fact.provider == "sec_filing_extension"
+        review_candidate_facts = [
+            fact
+            for fact in effective_metric_facts
+            if fact.provider in SEC_REVIEW_CANDIDATE_PROVIDERS
         ]
-        extension_resolved = bool(extension_facts) and all(
-            _extension_mapping_resolved(fact, review_index, override_keys)
-            for fact in extension_facts
+        review_candidates_resolved = bool(review_candidate_facts) and all(
+            _review_candidate_mapping_resolved(fact, review_index, override_keys)
+            for fact in review_candidate_facts
         )
-        non_extension_fields = {
+        non_candidate_fields = {
             _clean(fact.provider_field, _clean(fact.provider))
             for fact in effective_metric_facts
-            if fact.provider != "sec_filing_extension"
+            if fact.provider not in SEC_REVIEW_CANDIDATE_PROVIDERS
         }
-        non_extension_taxonomies = {
+        non_candidate_taxonomies = {
             _taxonomy(fact)
             for fact in effective_metric_facts
-            if fact.provider != "sec_filing_extension"
+            if fact.provider not in SEC_REVIEW_CANDIDATE_PROVIDERS
         }
         field_change_requires_review = len(provider_fields) > 1
         taxonomy_change_requires_review = len(taxonomies) > 1
-        if extension_resolved:
-            if len(non_extension_fields) <= 1:
+        if review_candidates_resolved:
+            if len(non_candidate_fields) <= 1:
                 field_change_requires_review = False
-            if len(non_extension_taxonomies) <= 1:
+            if len(non_candidate_taxonomies) <= 1:
                 taxonomy_change_requires_review = False
 
         reasons: list[str] = []
@@ -329,8 +340,8 @@ def audit_history_mapping(
             reasons.append("Währung wechselte: " + ", ".join(currencies))
         if taxonomy_change_requires_review:
             reasons.append("Taxonomie wechselte: " + ", ".join(taxonomies))
-        if extension_resolved:
-            reasons.append("SEC-Company-Extension-Mapping semantisch bestätigt")
+        if review_candidates_resolved:
+            reasons.append("SEC-Filing-Kandidaten semantisch bestätigt")
 
         if missing_years:
             status = "GAP"
