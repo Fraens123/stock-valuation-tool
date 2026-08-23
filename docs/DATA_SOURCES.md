@@ -2,221 +2,269 @@
 
 ## Ziel
 
-Möglichst wenige, konsistente Rohdatenquellen. Kennzahlen werden intern berechnet. Jede Zahl wird mit Quelle, Zeitraum und Datenstand gespeichert.
+Historische Ist-Daten sollen möglichst aus **offiziellen, strukturierten und frei zugänglichen Quellen** stammen. Das Tool darf nicht von einem einzelnen kommerziellen API-Anbieter abhängen.
 
-## Verbindliche V1-Hierarchie
+Alle externen Fakten werden zunächst normalisiert und mit Provenienz gespeichert. Kennzahlen und Bewertungen verwenden danach ausschließlich **Preferred Data**.
 
-### 1. Offizielle Unternehmensberichte — Primärquelle für veröffentlichte Zahlen
+## Verbindlicher Standardablauf
 
-Für den Referenzfall ASML:
+```text
+Unternehmen
+  ↓
+Identity Resolver
+  ├─ Ticker / Name
+  ├─ SEC CIK
+  └─ GLEIF LEI
+  ↓
+Source Router
+  ├─ 1. SEC Company Facts
+  ├─ 2. ESEF / iXBRL
+  └─ 3. optionaler Provider-Fallback
+  ↓
+Normalisierte Rohdaten
+  ↓
+Preferred Data / Calculation Readiness
+  ↓
+Kennzahlen und Bewertung
+```
 
-- Annual Reports
-- Financial Statements Excel
-- Quartalsberichte
-- Investor-Day-Unterlagen
-- Management Guidance
-
-Offizielle Unternehmensangaben haben bei historischen veröffentlichten Zahlen Vorrang vor einem normalisierten Sekundärprovider.
-
-### 2. Alpha Vantage — automatischer V1-Kandidat mit Feld-Gates
-
-Für ASML muss zwischen Kurs- und Fundamentals-Symbol unterschieden werden:
-
-- lokales Amsterdam-Listing / Marktpreis: später separat auf Euronext-Basis behandeln
-- Alpha-Vantage-Fundamentals: `ASML`
-
-Der lokale Live-Test zeigte:
-
-- `ASML.AMS` liefert beim `INCOME_STATEMENT`-Fundamentals-Endpunkt 0 Reports.
-- `ASML` liefert die konsolidierten ASML-Holding-Abschlüsse in EUR.
-- 20 Jahresberichte und 81 Quartalsberichte wurden erkannt.
-- 2025 Revenue wurde mit 32,6673 Mrd. EUR geliefert und stimmt mit ASML US GAAP überein.
-- Ein vollständiger Snapshot-Import wurde lokal erfolgreich durchgeführt: 720 Financial-Fact-Datenpunkte über 20 Geschäftsjahre.
-
-Verwendung:
-- historische GuV über `INCOME_STATEMENT`
-- Bilanz über `BALANCE_SHEET`
-- Cashflow über `CASH_FLOW`
-- Analystenschätzungen über `EARNINGS_ESTIMATES`
-- Unternehmenssuche über `SYMBOL_SEARCH`
-
-Free-Tier:
-- 25 Requests pro Tag
-- Requests werden im Adapter konservativ zeitlich gestaffelt
-- vollständiger Import benötigt derzeit vier Requests
-- geeignet für Entwicklung und Einzelanalysen, nicht für Massen-Screening
-
-**Qualitätsentscheidung:** Alpha Vantage wird nicht pauschal freigegeben. Jedes interne Rohdatenfeld erhält einen eigenen Feld-Gate:
-
-- `approved`: alle vorhandenen Primärquellenchecks PASS
-- `review`: mindestens WARN, aber kein FAIL/MISSING
-- `blocked`: mindestens ein FAIL oder MISSING
-
-Ein gutes Jahr darf eine problematische zweite Periode nicht verdecken.
-
-Bekannte blockierte/problematische ASML-Felder aus dem ersten Live-Test:
-- `accounts_receivable`
-- `inventory`
-- `ppe_net`
-- `short_term_debt`
-- `operating_cash_flow`
-- `capital_expenditures`
-- `depreciation_amortization`
-
-`cash_and_short_term_investments` bleibt nur Cross-Check; für Net Debt / EV sollen validierte Komponenten verwendet werden.
-
-Siehe `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`.
-
-Dokumentation:
-- `https://www.alphavantage.co/documentation/`
-- `https://documentation.alphavantage.co/FundamentalDataDocs/index.html`
-
-### 3. EODHD — integrierter Fallback, Fundamentals im Free-Tier nicht verfügbar
-
-Referenzsymbol: `ASML.AS`.
-
-Der lokale Test am 22.08.2026 mit einem gültigen kostenlosen EODHD-Key ergab beim Fundamentals-v1.1-Abruf für ASML:
-
-- HTTP `403 Forbidden`
-- API-Key wurde erkannt
-- der kostenlose Tarif schaltet Fundamentals für diesen Abruf nicht frei
-
-**Entscheidung:** Vorläufig keinen EODHD-Fundamentals-Tarif kaufen. Adapter bleibt im Projekt, damit EODHD später optional als bezahlter Provider/Cross-Check genutzt werden kann.
-
-### 4. ECB Data API — risikofreier EUR-Zins
-
-Für EUR-Unternehmen wird die Euro-Area-AAA-Zinskurve verwendet, z. B. der 10-jährige Punkt als risikofreie Näherung.
-
-Zu speichern:
-- Wert
-- Beobachtungsdatum
-- Abrufdatum
-- genaue ECB-Serie
-- manuelles Override optional
-
-Der Zins wird Teil des Analyse-Snapshots; eine alte Analyse verwendet bei späterem Öffnen nicht den heutigen Zins.
-
-### 5. Aktienfinder.de — zentrale manuelle Ergänzung
-
-Keine Abhängigkeit von einer undokumentierten API.
-
-Manuell erfassbar:
-- Prognosen/Schätzungen, wenn dort besser aufbereitet
-- Spezialinformationen, die unser Provider nicht zuverlässig liefert
-- Kontrollwerte
-- eigene Notizen
-
-Pflichtmetadaten:
-- Wert
-- Zeitraum/Geschäftsjahr
-- Quelle = Aktienfinder
-- Eingabedatum
-- Einheit/Währung
-- Kommentar optional
-
-Ein manueller Wert darf einen API-Wert überschreiben, muss dann aber im UI, Vergleich und Report als Override erkennbar sein.
+ASML ist ein Referenzunternehmen für Validierung, aber **keine Sonderbedingung des normalen Importpfads**.
 
 ---
 
-## Zukunftsschätzungen für DCF
+## 1. SEC EDGAR / Company Facts
 
-### Management Guidance
+### Zweck
 
-Management Guidance wird **separat** gespeichert und nicht mit Analystenschätzungen vermischt.
+Bevorzugte historische Quelle für Unternehmen, die bei der US SEC strukturierte XBRL-Filings einreichen.
 
-### Analystenkonsens
+### Identität
 
-Für die ersten DCF-Jahre sollen professionelle Schätzungen genutzt werden, wenn Datenqualität und Analystenzahl ausreichend sind.
+Die SEC verwendet die **CIK (Central Index Key)**. Das Tool lädt das öffentliche Ticker-/CIK-Verzeichnis und löst Ticker bzw. bei Bedarf einen eindeutigen Unternehmensnamen auf eine CIK auf.
 
-Zielschema:
-- Low
-- Average / Consensus
-- High
-- Analyst Count
-- Provider
-- Abrufdatum
-- Geschäftsjahr
+Gespeichert wird:
+- Provider `sec`
+- Purpose `cik`
+- CIK getrennt vom Börsenticker
 
-Alpha Vantage liefert zusätzlich lange historische Estimate-/Revisionsreihen. Diese bleiben im Snapshot auditierbar, werden in der normalen UI aber standardmäßig ausgeblendet, wenn ihre Periode vor dem Analysestichtag liegt.
+### Finanzdaten
 
-### DCF-Priorität
+Danach wird die öffentliche Company-Facts-JSON-Schnittstelle verwendet:
 
-**Jahr 1**
-1. Management Guidance
-2. Analystenkonsens
-3. eigene Einschätzung
+`https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json`
 
-**Jahre 2–3**
-1. Analyst Low / Average / High
-2. Management-Langfristziele als Plausibilitätsrahmen
-3. eigene Overrides
+Es ist kein API-Key erforderlich. Die SEC verlangt jedoch einen aussagekräftigen `User-Agent` mit Kontaktinformation. Dieser steht ausschließlich lokal in `.env`:
 
-**Jahre 4–5**
-- eigene fundamentale Forecasts
-- Übergang von kurzfristigem Konsens zu nachhaltigen Annahmen
+```text
+SEC_USER_AGENT=Vorname Nachname email@example.com
+```
 
-**Jahre 6–10**
-- Fade / Mean Reversion
+### Normalisierung
 
-**ab Jahr 11**
-- Terminalphase
+Unterstützte Standardtaxonomien:
+- `us-gaap`
+- `ifrs-full`
 
-Analystenwerte sind Input-Evidenz, keine automatische Wahrheit.
+Beispiele:
+- `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` → `revenue`
+- `us-gaap:Assets` → `total_assets`
+- `us-gaap:PropertyPlantAndEquipmentNet` → `ppe_net`
+- `ifrs-full:Revenue` → `revenue`
 
----
+Company-spezifische Extension-Tags werden nicht automatisch geraten.
 
-## Datenqualitätsregeln
+### Wichtige Sicherheitsregel
 
-### Historische Zahlen
+Eine offizielle Quelle beweist die **Herkunft**, aber nicht automatisch, dass ein einzelner XBRL-Tag exakt unserer internen Definition entspricht.
 
-Priorität:
-1. offizieller Geschäftsbericht / Filing
-2. für das konkrete Rohdatenfeld freigegebener automatischer Provider
-3. optionaler Cross-Check-Provider
-4. manuelle Ergänzung
+Beispiel `short_term_debt`:
+- unser Feld umfasst sämtliche zinstragenden Finanzschulden mit Fälligkeit <= 12 Monate,
+- einschließlich Current Portion of Long-Term Debt,
+- aber ohne Lieferantenverbindlichkeiten und separat behandelte Lease Liabilities.
 
-Ein Providername allein ist keine Freigabe. Entscheidend ist die validierte Feldsemantik.
-
-### Primärquellen-Gate
-
-Für ASML 2025/2024:
-- <= 0,5 % relative Abweichung: PASS
-- > 0,5 % bis 2 %: WARN
-- > 2 %: FAIL
-- fehlend: MISSING
-
-Ein Providerwert wird bei FAIL/MISSING nicht still durch den Kontrollwert ersetzt. Stattdessen muss Mapping/Definition geklärt werden.
-
-### Keine stillen Ersatzwerte
-
-Wenn ein benötigtes Rohdatenfeld fehlt oder blockiert ist, wird die davon abhängige Kennzahl nicht mit einem ähnlichen Feld berechnet. Der Wert wird als `missing` bzw. `blocked` markiert.
-
-### Keine gemischten Definitionen
-
-ROE, Gearing, ROCE, FCF usw. werden zentral definiert und aus denselben normalisierten Rohdaten berechnet. Nicht ROE von Provider A, Gearing von Provider B und FCF von einer Website ohne gemeinsame Definitionsbasis.
+Die SEC kann mehrere Standardkonzepte dafür verwenden. Deshalb bleibt `sec_companyfacts + short_term_debt` bis zu einem semantischen PASS bzw. bestätigten Override **nicht berechnungsbereit**.
 
 ---
 
-## Weitere mögliche Provider
+## 2. GLEIF – Unternehmensidentität / LEI
 
-### Financial Modeling Prep
+GLEIF ist **keine Finanzdatenquelle**. Der öffentliche GLEIF-Dienst wird zur Identitätsauflösung verwendet:
 
-Interessant für Analyst Estimates und zusätzliche Fundamental APIs. Tarif- und globale Abdeckung müssen vor Nutzung geprüft werden.
+```text
+Legal Entity Name → LEI
+```
 
-Andere Provider werden nur hinter dem gemeinsamen Provider-Interface integriert.
+Die **LEI (Legal Entity Identifier)** ist der Schlüssel für die Suche nach ESEF-Filings.
+
+Regeln:
+- keine API-Keys,
+- Ergebnisse werden lokal gecacht,
+- die automatische Auflösung akzeptiert nur ausreichend eindeutige Legal-Name-Matches,
+- bei mehreren gleich plausiblen Rechtsträgern wird nicht geraten.
+
+Gespeichert wird:
+- Provider `gleif`
+- Purpose `lei`
+- LEI getrennt von Ticker, ISIN und CIK
 
 ---
 
-## ASML-Referenzwerte
+## 3. ESEF / iXBRL
 
-Die offizielle ASML-US-GAAP-Berichterstattung 2025/2024 dient als Primärquellen-Gate für Umsatz, Ergebnis, Bilanz und Cashflow. Die Kontrollwerte stehen in `src/stock_valuation/validation/asml_reference.py` und werden ausschließlich zur Validierung verwendet, nicht als automatische Ersatzdaten.
+### Zweck
+
+Bevorzugte strukturierte historische Quelle für geeignete europäische IFRS-Emittenten, wenn SEC keine ausreichend nutzbare Serie liefert.
+
+### Discovery
+
+Der Router verwendet die LEI und sucht öffentliche ESEF-Filings über `filings.xbrl.org`.
+
+Der Dienst ist ein öffentlicher Aggregator von ESEF-Filings; die zugrunde liegenden Berichte stammen aus den regulatorischen Veröffentlichungen der Emittenten. Die Datenbank ist nicht in jedem Land/Jahr vollständig. Ein fehlender Treffer bedeutet deshalb **nicht**, dass das Unternehmen keine veröffentlichten Abschlüsse besitzt.
+
+### Datenformat
+
+Bevorzugt wird xBRL-JSON aus dem ESEF-Filing. Unterstützt werden zunächst nur eindeutige Standardkonzepte aus `ifrs-full`, z. B.:
+
+- `ifrs-full:Revenue`
+- `ifrs-full:ProfitLoss`
+- `ifrs-full:Assets`
+- `ifrs-full:Equity`
+- `ifrs-full:Inventories`
+- `ifrs-full:PropertyPlantAndEquipment`
+- `ifrs-full:CashFlowsFromUsedInOperatingActivities`
+
+### Sicherheitsregeln
+
+- Nur jährliche Duration-Facts für GuV/Cashflow.
+- Bilanz-Facts dürfen Instant-Facts sein.
+- Facts mit zusätzlichen Segment-/Klassen-Dimensionen werden im automatischen Standardimport verworfen.
+- Extension-Tags werden nicht automatisch auf interne Felder gemappt.
+- Der konkrete Report-/Filing-Link wird pro Fact gespeichert, soweit verfügbar.
+- Neuere Filings dürfen Restatements/Vergleichswerte für ältere Perioden liefern; Provenienz bleibt erhalten.
+
+Der bestehende Parser für manuell hochgeladene ESEF-XHTML/ZIP-Dateien bleibt als technischer Fallback im Code.
 
 ---
 
-## Verwandte Dokumente
+## 4. Source Router
 
-- `docs/RAW_DATA_SCHEMA.md`
-- `docs/ASML_DATA_MAPPING.md`
-- `docs/ASML_ALPHA_VANTAGE_VALIDATION.md`
-- `docs/NORMALIZATION_POLICY.md`
-- `docs/DCF_METHOD.md`
+Implementiert in `src/stock_valuation/data/source_router.py`.
+
+Der Router wählt für historische Ist-Daten zunächst **eine kohärente Quelle**:
+
+1. SEC Company Facts
+2. ESEF
+3. Alpha Vantage nur wenn der Nutzer den Fallback ausdrücklich aktiviert
+
+Er mischt nicht still einzelne Bilanzfelder von SEC mit GuV-Feldern von ESEF und Cashflow-Feldern von Alpha Vantage. Damit bleiben Rechnungslegungsbasis, Periodenlogik und Provenienz nachvollziehbar.
+
+Eine Quelle gilt nur als automatisch nutzbar, wenn sie eine Mindestmenge an strukturierten Fakten über mindestens zwei Geschäftsjahre liefert. Fehlschläge werden protokolliert und der nächste Router-Pfad wird versucht.
+
+---
+
+## 5. Alpha Vantage – optionaler Fallback und Estimates
+
+Alpha Vantage bleibt integriert, ist aber **keine Voraussetzung mehr für historische Finanzdaten**.
+
+### Historische Daten
+
+Nur als ausdrücklich aktivierter Fallback, wenn SEC/ESEF keine ausreichend strukturierte Quelle liefern.
+
+Providerwerte sind nicht automatisch berechnungsbereit. Sie benötigen Primärquellenprüfung bzw. einen vorhandenen Feld-Gate.
+
+### Analystenschätzungen
+
+SEC und ESEF enthalten keinen Analystenkonsens. Alpha Vantage kann deshalb weiterhin separat für Estimates verwendet werden, wenn der API-Zugang funktioniert.
+
+Der Alpha-Vantage-Cache bleibt aktiv, damit identische erfolgreiche Requests kein Tageskontingent verschwenden.
+
+---
+
+## 6. EODHD und weitere Provider
+
+EODHD bleibt als vorhandener Adapter/Fallback im Code, ist aber derzeit kein Standardpfad. Weitere Anbieter werden ausschließlich hinter Provider-Interfaces und dem Source-Router-Konzept ergänzt.
+
+Kein kommerzieller Provider darf die interne Felddefinition bestimmen.
+
+---
+
+## 7. ECB Data API
+
+Für den risikofreien EUR-Zins bleibt die ECB Data API vorgesehen. Der Zins wird mit Beobachtungsdatum, Abrufdatum und genauer Serie im Analyse-Snapshot eingefroren.
+
+---
+
+## 8. Aktienfinder / manuelle Daten
+
+Aktienfinder bleibt eine manuelle Ergänzungsquelle für Spezialinformationen oder Prognosen. Manuelle Overrides sind erlaubt, müssen aber Quelle, Zeitraum, Einheit/Währung und Begründung enthalten.
+
+Ein manueller Override löscht den ursprünglichen Provider-/Primärquellenwert nicht.
+
+---
+
+## 9. Preferred Data und Datenqualität
+
+Priorität bei konkurrierenden gespeicherten Fakten wird zentral in `data/resolution.py` aufgelöst. Aktuelle Reihenfolge:
+
+1. bestätigter `manual_override`
+2. vorhandene offizielle Spezial-/Referenzquelle
+3. ESEF
+4. SEC Company Facts
+5. Alpha Vantage
+6. weitere Provider
+
+**Source Priority und Calculation Readiness sind getrennt.**
+
+Ein Wert kann die beste vorhandene Quelle sein und trotzdem für Kennzahlen blockiert bleiben, wenn seine Semantik noch nicht ausreichend geklärt ist.
+
+Berechnungsbereit sind insbesondere:
+- bestätigte Overrides,
+- eindeutig gemappte Primärquellen,
+- semantisch geprüfte heikle Primärquellenfelder,
+- Providerwerte mit passender Primärquellenprüfung `PASS`.
+
+Nicht berechnungsbereit:
+- ungeprüfte Providerwerte,
+- `WARN`, `FAIL`, `UNKLAR` ohne bestätigten Override,
+- veraltete Reviews,
+- bekannte mehrdeutige XBRL-Mappings ohne semantische Freigabe,
+- fertiges Provider-EBITDA, wenn EBITDA intern abgeleitet werden soll.
+
+---
+
+## 10. ChatGPT-Dateiprüfung
+
+Die Prüfung über das normale ChatGPT bleibt Teil des Workflows, ändert aber ihre Rolle:
+
+### Bei SEC/ESEF
+
+Die Herkunft der Zahl ist bereits offiziell. ChatGPT kontrolliert vor allem:
+- semantische Gleichheit von XBRL-Tag und internem Feld,
+- Restatements,
+- ungewöhnliche Company Extensions,
+- Definitionskonflikte,
+- periodische/inhaltliche Zuordnung.
+
+### Bei Fallback-Providern
+
+Zusätzlich wird der Zahlenwert gegen offizielle Primärquellen gegengeprüft.
+
+Die KI verändert niemals automatisch einen gespeicherten Wert. Korrekturen werden erst durch `Übernehmen` als auditiertes Override aktiv.
+
+---
+
+## Grenzen
+
+SEC + ESEF decken sehr viele, aber **nicht alle Aktien weltweit** ab. Deshalb ist die Architektur absichtlich erweiterbar:
+
+```text
+offizielle strukturierte Quelle
+        ↓ falls nicht verfügbar
+öffentlicher/regulatorischer Fallback
+        ↓
+sekundärer Datenprovider
+        ↓
+manuelle Ergänzung / Review
+```
+
+Das Ziel ist nicht eine behauptete universelle Einzelquelle, sondern ein universeller **Quellen-Router mit klaren Fallbacks und sichtbarer Datenqualität**.
