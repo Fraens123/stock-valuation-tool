@@ -1,0 +1,137 @@
+{
+  "decision": "GO – MARKET DATA & SHARE DATA LAYER V1 FROZEN",
+  "inputs": [
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\calculation_engine_results.csv",
+    "C:\\Users\\Fraens\\Documents\\Fraens\\Finanzen\\Portfolio-Aufbau\\Aktien Analyse Tool\\stock-valuation-tool\\diagnostics\\final_data_gate_report.csv"
+  ],
+  "source_research": {
+    "Alpha Vantage": "Quote/time-series APIs plus SHARES_OUTSTANDING; quota-limited, API key required.",
+    "Stooq": "Free historical/current data for personal use; useful low-cost historical source, coverage needs symbol mapping.",
+    "Yahoo/yfinance": "Broad coverage but terms/licensing require caution; not selected as default V1 source.",
+    "SEC/XBRL": "Useful for official share facts; not a market price source."
+  },
+  "companies": {
+    "ASML": {
+      "company": "ASML Holding N.V.",
+      "primary_listing": true,
+      "ticker": "ASML.AS",
+      "exchange": "Euronext Amsterdam",
+      "security_type": "ordinary_share",
+      "trading_currency": "EUR",
+      "financial_currency": "EUR",
+      "latest_price": "910.20",
+      "price_date": "2026-08-21",
+      "shares_outstanding": "393000000",
+      "share_date": "2026-01-28",
+      "adr_ratio": null,
+      "underlying_share_ratio": null,
+      "market_cap": "357708600000.00",
+      "provider_market_cap": "357708600000",
+      "market_cap_delta": "0.00",
+      "net_debt": "-8525100000.0",
+      "enterprise_value": "349183500000.00",
+      "status": "READY",
+      "issues": [
+        "CURRENCY_MATCH"
+      ]
+    },
+    "AAPL": {
+      "company": "Apple Inc.",
+      "primary_listing": true,
+      "ticker": "AAPL",
+      "exchange": "NASDAQ",
+      "security_type": "ordinary_share",
+      "trading_currency": "USD",
+      "financial_currency": "USD",
+      "latest_price": "275.25",
+      "price_date": "2026-08-21",
+      "shares_outstanding": "14840390000",
+      "share_date": "2025-10-17",
+      "adr_ratio": null,
+      "underlying_share_ratio": null,
+      "market_cap": "4084817347500.00",
+      "provider_market_cap": "4084737347500",
+      "market_cap_delta": "80000000.00",
+      "net_debt": "54744000000.0",
+      "enterprise_value": "4139561347500.00",
+      "status": "READY",
+      "issues": [
+        "CURRENCY_MATCH"
+      ]
+    },
+    "MSFT": {
+      "company": "Microsoft Corporation",
+      "primary_listing": true,
+      "ticker": "MSFT",
+      "exchange": "NASDAQ",
+      "security_type": "ordinary_share",
+      "trading_currency": "USD",
+      "financial_currency": "USD",
+      "latest_price": "586.10",
+      "price_date": "2026-08-21",
+      "shares_outstanding": "7430000000",
+      "share_date": "2026-07-20",
+      "adr_ratio": null,
+      "underlying_share_ratio": null,
+      "market_cap": "4354723000000.00",
+      "provider_market_cap": "4352723000000",
+      "market_cap_delta": "2000000000.00",
+      "net_debt": "19359000000.0",
+      "enterprise_value": "4374082000000.00",
+      "status": "READY",
+      "issues": [
+        "CURRENCY_MATCH"
+      ]
+    },
+    "TSM": {
+      "company": "Taiwan Semiconductor Manufacturing Company Limited",
+      "primary_listing": false,
+      "ticker": "TSM",
+      "exchange": "NYSE",
+      "security_type": "ADR",
+      "trading_currency": "USD",
+      "financial_currency": "TWD",
+      "latest_price": "320.00",
+      "price_date": "2026-08-21",
+      "shares_outstanding": "25930380458",
+      "share_date": "2025-12-31",
+      "adr_ratio": "1",
+      "underlying_share_ratio": "5",
+      "market_cap": "1659544349312.000",
+      "provider_market_cap": "1659544349312",
+      "market_cap_delta": "0.000",
+      "net_debt": "-2591096200000",
+      "enterprise_value": "1576629270912.000",
+      "status": "READY",
+      "issues": [
+        "FX_APPLIED",
+        "FX_REQUIRED"
+      ]
+    },
+    "ADBE": {
+      "company": "Adobe Inc.",
+      "primary_listing": true,
+      "ticker": "ADBE",
+      "exchange": "NASDAQ",
+      "security_type": "ordinary_share",
+      "trading_currency": "USD",
+      "financial_currency": "USD",
+      "latest_price": "358.40",
+      "price_date": "2026-08-21",
+      "shares_outstanding": "421000000",
+      "share_date": "2026-01-16",
+      "adr_ratio": null,
+      "underlying_share_ratio": null,
+      "market_cap": "150886400000.00",
+      "provider_market_cap": "150886400000",
+      "market_cap_delta": "0.00",
+      "net_debt": "779000000.0",
+      "enterprise_value": "151665400000.00",
+      "status": "READY",
+      "issues": [
+        "CURRENCY_MATCH"
+      ]
+    }
+  },
+  "blockers": []
+}

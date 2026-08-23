@@ -39,14 +39,14 @@ gross_margin_quality, operating_margin_quality, net_margin_quality, ebitda_margi
 | current_ratio_quality | Current Ratio Quality | balance_sheet | latest current_ratio | current_ratio | decimal_ratio | Broad short-term liquidity. | High values are not always better if capital is idle. | Most non-financial companies. | Financials and businesses with structurally negative working capital need context. | GENERAL_FINANCIAL_ANALYSIS |
 | quick_ratio_quality | Quick Ratio Quality | balance_sheet | latest quick_ratio | quick_ratio | decimal_ratio | Liquidity excluding inventory. | Receivable collectability is not evaluated. | Software, semiconductor, industrial, consumer. | Financials. | GENERAL_FINANCIAL_ANALYSIS |
 | cash_ratio_quality | Cash Ratio Quality | balance_sheet | latest cash_ratio | cash_ratio | decimal_ratio | Immediate cash coverage of current liabilities. | Excess cash can reduce returns; not a valuation signal. | Most non-financial companies. | Financials. | GENERAL_FINANCIAL_ANALYSIS |
-| capex_intensity_quality | Investment Intensity Quality | investment_intensity | latest capex_ratio plus trend context | capex_ratio | decimal_ratio | Shows OCF share reinvested into PPE. | Asset-heavy growth phases can be intentionally high. | Semiconductor, industrial, consumer, asset-heavy and asset-light with context. | Businesses with irregular project capex need longer history. | PROJECT_EXTENSION |
+| capex_intensity_quality | Investment Intensity Quality | cashflow_quality | latest capex_ratio plus trend context | capex_ratio | decimal_ratio | Shows OCF share reinvested into PPE. | Asset-heavy growth phases can be intentionally high. | Semiconductor, industrial, consumer, asset-heavy and asset-light with context. | Businesses with irregular project capex need longer history. | PROJECT_EXTENSION |
 | revenue_growth_quality | Revenue Growth Quality | growth | latest revenue YoY and 3Y CAGR where available | revenue | decimal_ratio | Measures top-line growth over time. | Growth alone is not quality without margins and cash flow. | Most operating companies. | Turnarounds and cyclical troughs require review. | GENERAL_FINANCIAL_ANALYSIS |
 | earnings_growth_quality | Earnings Growth Quality | growth | latest net_income YoY and 3Y CAGR where available | net_income | decimal_ratio | Measures reported earnings growth. | Negative base years are not forced into bad scores; upstream status is preserved. | Profitable companies. | Loss-making or turnaround companies. | GENERAL_FINANCIAL_ANALYSIS |
 | fcf_growth_quality | FCF Growth Quality | growth | latest free_cash_flow YoY and 3Y CAGR where available | free_cash_flow | decimal_ratio | Measures cash generation growth. | Capex cycles can distort short windows. | Cash-generative companies. | Businesses with lumpy project cash flows. | GENERAL_FINANCIAL_ANALYSIS |
-| margin_volatility_quality | Margin Volatility Quality | stability | population volatility of margin series from Calculation outputs | gross_margin, operating_margin, net_margin, ebitda_margin, free_cash_flow_margin | decimal_ratio | Measures variability of margins over the available history. | Three-year windows are short and can miss cycles. | Most non-financial companies. | Highly cyclical companies need longer history. | PROJECT_EXTENSION |
-| growth_volatility_quality | Growth Volatility Quality | stability | population volatility of available YoY growth rates | revenue, net_income, free_cash_flow | decimal_ratio | Measures variability of growth rates. | Short history and negative-base suppression can reduce sample size. | Most operating companies. | Turnarounds and cyclicals need manual context. | PROJECT_EXTENSION |
+| margin_volatility_quality | Margin Volatility Quality | stability | average of per-series population volatility for gross_margin, operating_margin, net_margin, ebitda_margin and free_cash_flow_margin | gross_margin, operating_margin, net_margin, ebitda_margin, free_cash_flow_margin | decimal_ratio | Measures time-series stability of each margin and aggregates the available series volatilities. | Three-year windows are short and can miss cycles; cross-margin level dispersion is deliberately not measured. | Most non-financial companies. | Highly cyclical companies need longer history. | PROJECT_EXTENSION |
+| growth_volatility_quality | Growth Volatility Quality | stability | average of per-series population volatility for revenue, net_income and free_cash_flow YoY growth | revenue, net_income, free_cash_flow | decimal_ratio | Measures time-series variability of each growth metric and aggregates the available series volatilities. | Short history and negative-base suppression can reduce sample size. | Most operating companies. | Turnarounds and cyclicals need manual context. | PROJECT_EXTENSION |
 | negative_years_quality | Negative Years Quality | stability | negative_years from Historical Analysis stability profile | revenue, net_income, free_cash_flow | count | Counts negative reported years in relevant series. | Negative FCF during investment phases is not automatically fatal. | Most mature companies. | Early-stage loss companies. | PROJECT_EXTENSION |
-| missing_years_quality | Missing Years Quality | stability | missing_years from Historical Analysis stability profile | revenue, net_income, free_cash_flow | count | Counts missing/unavailable years in the historical window. | Only measures data completeness, not business quality directly. | All companies. | None; but missing data is not treated as bad business economics. | PROJECT_EXTENSION |
+| missing_years_quality | Missing Years Data Confidence | data_confidence | missing_years from Historical Analysis stability profile | revenue, net_income, free_cash_flow | count | Counts missing/unavailable years in the historical window. | Only measures data completeness, not business quality directly. | All companies. | None; missing data is not treated as bad business economics. | PROJECT_EXTENSION |
 | inventory_applicability_quality | Inventory Applicability | working_capital | inventory_intensity/inventory_days availability status | inventory_intensity, inventory_days | status | Separates business-model irrelevance from poor quality. | Does not judge supply-chain quality without inventory data. | Software and other asset-light companies; also inventory-heavy companies if reported. | None; status-only rule. | PROJECT_EXTENSION |
 
 ## 5. Availability-Regeln
@@ -85,7 +85,7 @@ gross_margin_quality, operating_margin_quality, net_margin_quality, ebitda_margi
 | --- | ---: | --- |
 | profitability | 18% | Profitabilitaet ist zentral, aber nicht allein ausreichend. |
 | margin_quality | 14% | Margen zeigen oekonomische Qualitaet und Preissetzung. |
-| cashflow_quality | 16% | Cash Conversion schuetzt vor reiner Accounting-Qualitaet. |
+| cashflow_quality | 16% | Cash Conversion und Capex-Intensitaet schuetzen vor reiner Accounting-Qualitaet. |
 | growth | 14% | Wachstum ist wichtig, aber nur mit Profitabilitaet hochwertig. |
 | balance_sheet | 14% | Finanzkraft reduziert Fragilitaet. |
 | capital_efficiency | 14% | Rendite auf Kapital zeigt Effizienz. |
@@ -95,11 +95,11 @@ gross_margin_quality, operating_margin_quality, net_margin_quality, ebitda_margi
 
 | Unternehmen | Jahre | Profitabilitaet | Margenentwicklung | Cashflow-Qualitaet | Wachstum | Bilanzqualitaet | Kapitalrenditen | Score | Assessment |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| AAPL | 2023, 2024, 2025 | 8 | 9 | 8 | 5.333333333333333333333333333 | 5.885092156836152062170262976 | 9 | 7.60461785261351026800608135 | SOLID |
-| ADBE | 2023, 2024, 2025 | 8 | 9 | 9 | 8.333333333333333333333333333 | 6.857142857142857142857142857 | 8 | 8.07551571153704619329336768 | STRONG |
-| ASML | 2023, 2024, 2025 | 8 | 9 | 9 | 7.666666666666666666666666667 | 7.142857142857142857142857143 | 8 | 8.003685106881832377821281848 | STRONG |
-| MSFT | 2024, 2025, 2026 | 9 | 9 | 8 | 7.333333333333333333333333333 | 6.857142857142857142857142857 | 8 | 7.896827517760355134732745799 | SOLID |
-| TSM | 2023, 2024, 2025 | 9 | 9 | 8 | 9 | 8.571428571428571428571428571 | 8 | 8.3400000000000000000000000 | STRONG |
+| AAPL | 2023, 2024, 2025 | 8 | 9 | 8.333333333333333333333333333 | 5.333333333333333333333333333 | 5.885092156836152062170262976 | 9 | 7.707323658043125340595157266 | SOLID |
+| ADBE | 2023, 2024, 2025 | 8 | 9 | 9 | 8.333333333333333333333333333 | 6.857142857142857142857142857 | 8 | 8.255825793366261170620653158 | STRONG |
+| ASML | 2023, 2024, 2025 | 8 | 9 | 9 | 7.666666666666666666666666667 | 7.142857142857142857142857143 | 8 | 8.033333333333333333333333333 | STRONG |
+| MSFT | 2024, 2025, 2026 | 9 | 9 | 6.646252615531321082473131013 | 7.333333333333333333333333333 | 6.857142857142857142857142857 | 8 | 7.971099601711631218802991919 | SOLID |
+| TSM | 2023, 2024, 2025 | 9 | 9 | 6.936027098976846657656948547 | 9 | 8.571428571428571428571428571 | 8 | 8.266973142126208103773367806 | STRONG |
 
 ## 15. Gefundene Probleme
 
@@ -109,6 +109,7 @@ gross_margin_quality, operating_margin_quality, net_margin_quality, ebitda_margi
 
 - OCF/Net Income und FCF/Net Income sind in V1 nicht scored, weil die frozen Calculation/Historical-Artefakte Net Income nicht als same-year Quality-Input zusammen mit Cashflow exponieren.
 - ROIC ist nicht implementiert, weil Invested Capital und NOPAT fuer V1 nicht fachlich sauber freigegeben sind.
+- Missing Years ist Data Confidence, nicht Business Quality, und beeinflusst den Overall Quality Score nicht.
 - 5Y/10Y-Aussagen bleiben bei nur drei freigegebenen Jahren INSUFFICIENT_HISTORY.
 - Absolute Score-Bands sind breite V1-Anker und keine branchenspezifische Bewertung.
 
@@ -133,7 +134,7 @@ GO – BUSINESS QUALITY ENGINE V1 FROZEN
 ### AAPL
 
 - Geschaeftsjahre: 2023, 2024, 2025
-- Quality Score: 7.60461785261351026800608135
+- Quality Score: 7.707323658043125340595157266
 - Quality Assessment: SOLID
 - Positive Faktoren: Gross Margin Quality: STRONG; Operating Margin Quality: STRONG; EBITDA Margin Quality: STRONG; FCF / Operating Cash Flow: STRONG; Return on Assets Quality: STRONG; Return on Equity Quality: STRONG; Debt to Assets Quality: STRONG; Debt to Equity Quality: STRONG
 - Negative Faktoren: Quick Ratio Quality: WEAK; Cash Ratio Quality: WEAK
@@ -144,10 +145,10 @@ GO – BUSINESS QUALITY ENGINE V1 FROZEN
 ### ADBE
 
 - Geschaeftsjahre: 2023, 2024, 2025
-- Quality Score: 8.07551571153704619329336768
+- Quality Score: 8.255825793366261170620653158
 - Quality Assessment: STRONG
 - Positive Faktoren: Gross Margin Quality: STRONG; Operating Margin Quality: STRONG; EBITDA Margin Quality: STRONG; Free Cash Flow Margin Quality: STRONG; FCF / Operating Cash Flow: STRONG; Return on Equity Quality: STRONG; Equity Ratio Quality: STRONG; Debt to Assets Quality: STRONG
-- Negative Faktoren: Margin Volatility Quality: WEAK
+- Negative Faktoren: keine
 - Nicht verfuegbare Faktoren: Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED
 - Nicht anwendbare Faktoren: Inventory Applicability: INVENTORY_NOT_SEPARATELY_REPORTED
 - Business-Model-Logik: Keine firmenspezifischen Hardcodes; die Engine bewertet nur Datenverfuegbarkeit, Werte, Trends und Volatilitaet. Asset-light/Software: Inventory-Status NOT_SEPARATELY_REPORTED fuehrt zu NOT_APPLICABLE, nicht zu einer negativen Bewertung. Asset-heavy/Halbleiter/Industrie: Capex-Intensitaet wird ausgewiesen, aber hohe Investitionen werden als Kontextgrenze dokumentiert. US-GAAP/IFRS/Foreign Private Issuer: Die Engine sieht nur Calculation/Historical-Ergebnisse und ist providerunabhaengig. Nicht anwendbare Faktoren: Inventory Applicability: INVENTORY_NOT_SEPARATELY_REPORTED
@@ -155,7 +156,7 @@ GO – BUSINESS QUALITY ENGINE V1 FROZEN
 ### ASML
 
 - Geschaeftsjahre: 2023, 2024, 2025
-- Quality Score: 8.003685106881832377821281848
+- Quality Score: 8.033333333333333333333333333
 - Quality Assessment: STRONG
 - Positive Faktoren: Gross Margin Quality: STRONG; Operating Margin Quality: STRONG; EBITDA Margin Quality: STRONG; Free Cash Flow Margin Quality: STRONG; FCF / Operating Cash Flow: STRONG; Return on Equity Quality: STRONG; Equity Ratio Quality: STRONG; Debt to Assets Quality: STRONG
 - Negative Faktoren: Growth Volatility Quality: WEAK
@@ -166,10 +167,10 @@ GO – BUSINESS QUALITY ENGINE V1 FROZEN
 ### MSFT
 
 - Geschaeftsjahre: 2024, 2025, 2026
-- Quality Score: 7.896827517760355134732745799
+- Quality Score: 7.971099601711631218802991919
 - Quality Assessment: SOLID
 - Positive Faktoren: Gross Margin Quality: STRONG; Operating Margin Quality: STRONG; Net Margin Quality: STRONG; EBITDA Margin Quality: STRONG; FCF / Operating Cash Flow: STRONG; Return on Equity Quality: STRONG; Equity Ratio Quality: STRONG; Debt to Assets Quality: STRONG
-- Negative Faktoren: Cash Ratio Quality: WEAK; Investment Intensity Quality: WEAK; Margin Volatility Quality: WEAK; Growth Volatility Quality: WEAK
+- Negative Faktoren: Cash Ratio Quality: WEAK; Investment Intensity Quality: WEAK
 - Nicht verfuegbare Faktoren: Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED
 - Nicht anwendbare Faktoren: keine
 - Business-Model-Logik: Keine firmenspezifischen Hardcodes; die Engine bewertet nur Datenverfuegbarkeit, Werte, Trends und Volatilitaet. Asset-light/Software: Inventory-Status NOT_SEPARATELY_REPORTED fuehrt zu NOT_APPLICABLE, nicht zu einer negativen Bewertung. Asset-heavy/Halbleiter/Industrie: Capex-Intensitaet wird ausgewiesen, aber hohe Investitionen werden als Kontextgrenze dokumentiert. US-GAAP/IFRS/Foreign Private Issuer: Die Engine sieht nur Calculation/Historical-Ergebnisse und ist providerunabhaengig.
@@ -177,10 +178,10 @@ GO – BUSINESS QUALITY ENGINE V1 FROZEN
 ### TSM
 
 - Geschaeftsjahre: 2023, 2024, 2025
-- Quality Score: 8.3400000000000000000000000
+- Quality Score: 8.266973142126208103773367806
 - Quality Assessment: STRONG
 - Positive Faktoren: Gross Margin Quality: STRONG; Operating Margin Quality: STRONG; Net Margin Quality: STRONG; EBITDA Margin Quality: STRONG; FCF / Operating Cash Flow: STRONG; Return on Equity Quality: STRONG; Equity Ratio Quality: STRONG; Debt to Assets Quality: STRONG
-- Negative Faktoren: Margin Volatility Quality: WEAK; Growth Volatility Quality: WEAK
+- Negative Faktoren: Growth Volatility Quality: WEAK
 - Nicht verfuegbare Faktoren: Operating Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; Free Cash Flow / Net Income: UPSTREAM_MEASURE_NOT_EXPOSED; ROIC Quality: UPSTREAM_MEASURE_NOT_EXPOSED
 - Nicht anwendbare Faktoren: keine
 - Business-Model-Logik: Keine firmenspezifischen Hardcodes; die Engine bewertet nur Datenverfuegbarkeit, Werte, Trends und Volatilitaet. Asset-light/Software: Inventory-Status NOT_SEPARATELY_REPORTED fuehrt zu NOT_APPLICABLE, nicht zu einer negativen Bewertung. Asset-heavy/Halbleiter/Industrie: Capex-Intensitaet wird ausgewiesen, aber hohe Investitionen werden als Kontextgrenze dokumentiert. US-GAAP/IFRS/Foreign Private Issuer: Die Engine sieht nur Calculation/Historical-Ergebnisse und ist providerunabhaengig.

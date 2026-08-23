@@ -18,7 +18,7 @@ from stock_valuation.quality.models import (
     QualityMetricResult,
     QualityScoreComponent,
 )
-from stock_valuation.quality.rules import QUALITY_DEFINITION_BY_ID, QUALITY_DEFINITIONS
+from stock_valuation.quality.rules import QUALITY_DEFINITIONS
 from stock_valuation.quality.scoring import (
     QualityScoringConfig,
     assessment_from_score,
@@ -115,7 +115,7 @@ def _evaluate_definition(
     if metric_id == "negative_years_quality":
         return _historical_count(definition, by_metric, "negative_years", lower_is_better=True)
     if metric_id == "missing_years_quality":
-        return _historical_count(definition, by_metric, "missing_years", lower_is_better=True)
+        return _historical_count(definition, by_metric, "missing_years", lower_is_better=False, scored=False)
     if metric_id in {"revenue_growth_quality", "earnings_growth_quality", "fcf_growth_quality"}:
         growth_metric = {
             "revenue_growth_quality": "revenue",
@@ -245,18 +245,24 @@ def _volatility_result(
     config: QualityScoringConfig,
     metric_ids: tuple[str, ...],
 ) -> QualityMetricResult:
-    values = [
-        row.value
-        for metric in metric_ids
-        for row in by_metric.get(metric, [])
-        if row.source == "calculation" and row.status == AVAILABLE and row.value is not None
-    ]
-    volatility = population_volatility(values)
+    volatility, used_rows = _average_series_volatility(
+        by_metric,
+        metric_ids,
+        source="calculation",
+        window=None,
+    )
     if volatility is None:
         return _status_result(definition, INSUFFICIENT_HISTORY, "INSUFFICIENT_HISTORY", [])
     score = score_volatility(volatility, config)
-    ref = QualityInput(definition.metric_id, max(_years(by_metric)), "volatility", volatility, "decimal_ratio", AVAILABLE, None, "quality")
-    return _result(definition, ref, volatility, "decimal_ratio", "STABLE" if score >= Decimal("6") else "VOLATILE", score)
+    return _result_from_rows(
+        definition,
+        used_rows,
+        volatility,
+        "decimal_ratio",
+        "STABLE" if score >= Decimal("6") else "VOLATILE",
+        score,
+        window="volatility",
+    )
 
 
 def _historical_volatility(
@@ -265,18 +271,57 @@ def _historical_volatility(
     config: QualityScoringConfig,
     metric_ids: tuple[str, ...],
 ) -> QualityMetricResult:
-    values = [
-        row.value
-        for metric in metric_ids
-        for row in by_metric.get(metric, [])
-        if row.source == "historical" and row.window == "YoY" and row.status == AVAILABLE and row.value is not None
-    ]
-    volatility = population_volatility(values)
+    volatility, used_rows = _average_series_volatility(
+        by_metric,
+        metric_ids,
+        source="historical",
+        window="YoY",
+    )
     if volatility is None:
         return _status_result(definition, INSUFFICIENT_HISTORY, "INSUFFICIENT_HISTORY", [])
     score = score_volatility(volatility, config)
-    ref = QualityInput(definition.metric_id, max(_years(by_metric)), "volatility", volatility, "decimal_ratio", AVAILABLE, None, "quality")
-    return _result(definition, ref, volatility, "decimal_ratio", "STABLE" if score >= Decimal("6") else "VOLATILE", score)
+    return _result_from_rows(
+        definition,
+        used_rows,
+        volatility,
+        "decimal_ratio",
+        "STABLE" if score >= Decimal("6") else "VOLATILE",
+        score,
+        window="volatility",
+    )
+
+
+def _average_series_volatility(
+    by_metric: dict[str, list[QualityInput]],
+    metric_ids: tuple[str, ...],
+    *,
+    source: str,
+    window: str | None,
+) -> tuple[Decimal | None, list[QualityInput]]:
+    volatilities: list[Decimal] = []
+    used_rows: list[QualityInput] = []
+    for metric in metric_ids:
+        series_rows = [
+            row
+            for row in by_metric.get(metric, [])
+            if row.source == source
+            and (window is None or row.window == window)
+            and row.status == AVAILABLE
+            and row.value is not None
+            and row.fiscal_year is not None
+        ]
+        series_rows.sort(key=lambda row: row.fiscal_year or 0)
+        if len(series_rows) < 2:
+            continue
+        values = [row.value for row in series_rows if row.value is not None]
+        volatility = population_volatility(values)
+        if volatility is None:
+            continue
+        volatilities.append(volatility)
+        used_rows.extend(series_rows)
+    if not volatilities:
+        return None, []
+    return sum(volatilities, Decimal("0")) / Decimal(len(volatilities)), used_rows
 
 
 def _historical_count(
@@ -285,19 +330,29 @@ def _historical_count(
     window: str,
     *,
     lower_is_better: bool,
+    scored: bool = True,
 ) -> QualityMetricResult:
-    values = [
-        row.value
+    used_rows = [
+        row
         for metric in definition.inputs
         for row in by_metric.get(metric, [])
         if row.source == "historical" and row.window == window and row.status == AVAILABLE and row.value is not None
     ]
-    if not values:
+    if not used_rows:
         return _status_result(definition, INSUFFICIENT_HISTORY, "INSUFFICIENT_HISTORY", [])
+    values = [row.value for row in used_rows if row.value is not None]
     total = sum(values, Decimal("0"))
-    score = clamp_score(Decimal("10") - total * Decimal("2")) if lower_is_better else Decimal("5")
-    ref = QualityInput(definition.metric_id, max(_years(by_metric)), window, total, "count", AVAILABLE, None, "historical")
-    return _result(definition, ref, total, "count", "STABLE" if total == 0 else "ISSUES_PRESENT", score)
+    score = clamp_score(Decimal("10") - total * Decimal("2")) if lower_is_better and scored else None
+    return _result_from_rows(
+        definition,
+        used_rows,
+        total,
+        "count",
+        "STABLE" if total == 0 else "ISSUES_PRESENT",
+        score,
+        assessment="INFORMATIVE" if not scored else None,
+        window=window,
+    )
 
 
 def _years(by_metric: dict[str, list[QualityInput]]) -> tuple[int, ...]:
@@ -371,6 +426,37 @@ def _result(
         input_metrics=definition.inputs,
         input_refs=(_input_ref(source_row),),
         inputs_hash=_hash_rows([source_row]),
+    )
+
+
+def _result_from_rows(
+    definition: QualityMetricDefinition,
+    rows: list[QualityInput],
+    value: Decimal | None,
+    unit: str,
+    trend: str,
+    score: Decimal | None,
+    *,
+    assessment: str | None = None,
+    window: str = "quality",
+) -> QualityMetricResult:
+    return QualityMetricResult(
+        metric_id=definition.metric_id,
+        name=definition.name,
+        category=definition.category,
+        fiscal_year=max((row.fiscal_year for row in rows if row.fiscal_year is not None), default=None),
+        window=window,
+        value=value,
+        unit=unit,
+        trend=trend,
+        assessment=assessment or assessment_from_score(score),
+        score=score,
+        status=AVAILABLE,
+        issue=None,
+        source_category=definition.source_category,
+        input_metrics=definition.inputs,
+        input_refs=tuple(_input_ref(row) for row in rows),
+        inputs_hash=_hash_rows(rows),
     )
 
 
