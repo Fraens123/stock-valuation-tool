@@ -27,6 +27,7 @@ class NormalizedFinancialFact:
     retrieved_at: datetime | None = None
     is_cross_check_only: bool = False
     note: str | None = None
+    source_url: str | None = None
 
 
 @dataclass(frozen=True)
