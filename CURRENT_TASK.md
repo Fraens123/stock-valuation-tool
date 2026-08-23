@@ -1,208 +1,148 @@
 # Current Task
 
-## Phase 2/3 Übergang – sauberer Neustart mit Preferred Data
+## Phase 2 – generischer offizieller Quellen-Router
 
-ASML bleibt Referenzfall für Datenqualität, ist aber **keine Voraussetzung** für Suche, Import, Prüfung oder Speicherung neuer Aktien.
+Historische Ist-Daten dürfen nicht mehr von Alpha Vantage als Pflichtquelle abhängen. ASML bleibt ein Referenzfall, aber die normale Suche/Importlogik muss für beliebige Unternehmen funktionieren.
 
-## Verifizierter Stand
+## Aktuell implementiert
 
-- ASML und Microsoft wurden bereits als Referenzfälle für Import und Datenqualität verwendet.
-- Der erste echte Microsoft-ChatGPT-Dateiprüflauf zeigte, warum Providerwerte nicht direkt als Berechnungsbasis dienen dürfen.
-- Preferred Data ist als verbindliche Berechnungsschicht implementiert.
-- Einzelne Unternehmen können vollständig aus der lokalen Datenbank entfernt werden.
-- Zusätzlich kann der komplette lokale Unternehmens-/Analysedatenbestand geleert werden, ohne DB-Schema oder Anwendung zu löschen.
-- Alpha-Vantage-Antworten werden ab jetzt persistent unter `data/cache/providers/alphavantage` gecacht.
-- Provider-Fehlermeldungen werden vor Anzeige bereinigt, damit ein von Alpha Vantage zurückgespiegelter API-Key nicht im UI erscheint.
-- Alte ChatGPT-Prüfpakete + Ergebnisdateien können als Offline-Entwicklungs-Snapshot rekonstruiert werden; alte DB-Fact-IDs werden dabei sicher auf neue IDs remappt.
+### 1. Providerunabhängige Unternehmensidentität
 
-## Sichtbarer Standardablauf
+- `src/stock_valuation/companies/discovery.py`
+- `src/stock_valuation/data/providers/sec.py`
+- `src/stock_valuation/data/providers/gleif.py`
 
-1. **Übersicht** – alle Unternehmen/Revisionen verwalten und vergleichen.
-2. **Unternehmen** – Aktie suchen, Analyse anlegen und bei Bedarf lokale Unternehmen vollständig löschen.
-3. **Finanzdaten**
-   - `Daten laden / aktualisieren` (Alpha Vantage, identische bereits erfolgreiche Requests kommen aus lokalem Cache),
-   - kostenlose interne Plausibilitätschecks,
-   - ChatGPT-Prüfpaket herunterladen,
-   - Prüfpaket im normalen ChatGPT mit Websuche prüfen lassen,
-   - JSON-Ergebnisdatei zurück in das Tool laden,
-   - WARN/FAIL/UNKLAR prüfen,
-   - pro sicherer Abweichung `Übernehmen` oder `Verwerfen`,
-   - optional manuell korrigieren.
-4. **Manuelle Daten** – Aktienfinder, Management Guidance, risikofreier Zins.
-5. **Kennzahlen** – ausschließlich **berechnungsbereite Preferred Data** verwenden.
+Normaler Suchweg:
 
-Später folgen Geschäftsmodell, Bewertung, Investmentthese und Report.
+```text
+Name/Ticker
+  ├─ SEC-Verzeichnis → Ticker + CIK
+  └─ GLEIF → Legal Entity + LEI
+```
 
-## Alpha-Vantage-Cache / Offline-Entwicklung
+CIK und LEI werden getrennt vom Börsenticker in `CompanyProviderSymbol` gespeichert.
 
-Implementiert in:
-- `src/stock_valuation/data/providers/response_cache.py`
-- `src/stock_valuation/data/providers/alphavantage.py`
-- `src/stock_valuation/data/offline_replay.py`
-- `pages/0_Unternehmen.py`
-- `tests/test_alphavantage_cache.py`
-- `tests/test_offline_replay.py`
+Die Streamlit-Seite `Unternehmen` verwendet für die normale Suche nicht mehr Alpha Vantage.
 
-### Provider-Cache
+### 2. Historischer Source Router
 
-- Erfolgreiche Alpha-Vantage-JSON-Antworten werden unter `data/cache/providers/alphavantage` gespeichert.
-- `data/cache/` ist bereits über `.gitignore` ausgeschlossen; Providerantworten werden nicht committed.
-- Cache-Key basiert nur auf API-Funktion + fachlichen Request-Parametern; der API-Key wird weder gehasht noch gespeichert.
-- Identische Requests nutzen standardmäßig zuerst den Cache und verbrauchen dann keinen neuen API-Request.
-- `force_refresh=True` ist technisch vorhanden, um später bewusst Live-Daten neu abzurufen.
-- `cache_only=True` erlaubt Tests vollständig ohne Netzwerk; bei Cache-Miss wird sauber abgebrochen.
-- Alpha-Vantage-Fehlermeldungen werden sanitisiert, damit der API-Key nicht im Fehlertext auftaucht.
+- `src/stock_valuation/data/source_router.py`
 
-### Offline-Replay aus ChatGPT-Dateien
+Standardreihenfolge:
 
-Unter `Unternehmen -> Offline-Entwicklung – vorhandenes ChatGPT-Prüfpaket wiederherstellen` können zusammen hochgeladen werden:
-- ein früher exportiertes `*_chatgpt_review_package.md`,
-- die dazugehörige `*_chatgpt_review_result.json`.
+1. SEC Company Facts
+2. ESEF/xBRL-JSON
+3. Alpha Vantage nur wenn der Nutzer den Fallback ausdrücklich aktiviert
 
-Der Replay:
-- benötigt keinen Alpha-Vantage-Request,
-- validiert Package-ID, Ticker, Stichtag, Jahresanzahl und vollständige Fact-ID-Menge,
-- rekonstruiert nur die im Prüfpaket enthaltenen Finanzfakten,
-- legt ein neues lokales Unternehmen/Analyse-Snapshot an,
-- remappt alte Fact-IDs auf die neuen SQLite-IDs,
-- erzeugt intern eine neue aktuelle Package-ID,
-- transformiert die alte Ergebnisdatei nur im Speicher,
-- importiert die Findings anschließend über den normalen `import_chatgpt_review_result`-Pfad.
+Der Router wählt zunächst eine kohärente historische Quelle und mischt nicht still verschiedene Provider innerhalb einer Abschlussserie.
 
-Wichtig: Ein Prüfpaket ersetzt **keinen vollständigen Alpha-Vantage-Rohdatensatz**. Ein 3-Jahres-Paket rekonstruiert nur diese 3 Jahre und enthält keine nicht exportierten 20-Jahres-Daten oder Analystenschätzungen.
+### 3. SEC
 
-## Unternehmen vollständig löschen
+- kein API-Key
+- lokal erforderlich: `SEC_USER_AGENT`
+- öffentliches Ticker/CIK-Verzeichnis wird gecacht
+- Company Facts wird gecacht
+- Standardkonzepte aus `us-gaap` und `ifrs-full` werden normalisiert
+- Company Extensions werden nicht geraten
 
-Implementiert in:
-- `src/stock_valuation/companies/deletion.py`
-- `pages/0_Unternehmen.py`
-- `tests/test_company_deletion.py`
+Bekannte semantische Sperre:
+- `sec_companyfacts + short_term_debt` ist trotz Primärquelle **nicht automatisch calculation-ready**, weil die interne Definition mehrere kurzfristige Schuldenkonzepte umfassen kann.
+- Ein passender ChatGPT-Review `PASS` oder bestätigter Override kann das Feld freigeben.
 
-### Einzellöschung
+### 4. GLEIF
 
-Unter `Unternehmen -> Datenverwaltung – Unternehmen löschen` kann ein Unternehmen ausgewählt werden.
-Zur Bestätigung muss der Ticker eingegeben werden.
+- kein API-Key
+- Name → LEI
+- dient nur der Identität, nicht als Finanzdatenquelle
+- automatische Auflösung nur bei ausreichend eindeutigem Legal-Name-Match
+- Responses werden lokal gecacht
 
-Gelöscht werden zusammen mit dem Unternehmen insbesondere:
-- alle Analysen und Revisionen,
-- Finanzdaten und Adjustments,
-- Analystenschätzungen und Guidance,
-- manuelle Inputs/Overrides,
-- operative Daten,
-- Kennzahlen-Snapshots,
-- qualitative Einschätzungen,
-- Bewertungsannahmen und -ergebnisse,
-- Investmentthese,
-- ChatGPT-Prüfläufe und Findings,
-- providerbezogene Symbole.
+### 5. ESEF
 
-Der lokale Provider-Cache bleibt bei einer Unternehmenslöschung bewusst erhalten, weil er reine Entwicklungs-/Providerantworten enthält und erneute API-Aufrufe vermeiden soll.
+- `src/stock_valuation/data/providers/esef_registry.py`
+- LEI → Filings über `filings.xbrl.org`
+- xBRL-JSON wird bevorzugt
+- nur standardisierte `ifrs-full`-Konzepte werden automatisch gemappt
+- jährliche Duration-Facts für GuV/Cashflow
+- Instant-Facts für Bilanz
+- segmentierte/dimensionale Facts werden nicht still als Konzernsumme verwendet
+- konkrete Filing-/Report-URL wird pro Fact gespeichert, soweit vorhanden
+- heruntergeladene Registry-/Filingdaten werden lokal gecacht
 
-### Alle Unternehmen löschen
+Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
 
-Im selben Bereich gibt es `Alle Unternehmen`.
-Zur Bestätigung muss exakt `ALLE LÖSCHEN` eingegeben werden.
-Die Datenbankstruktur bleibt bestehen; danach kann ein Unternehmen wieder frisch als R1 angelegt werden.
+### 6. Finanzdaten-UI
 
-## Preferred Data / Calculation Readiness
+`pages/1_Datenimport.py`:
 
-Implementiert in:
-- `src/stock_valuation/data/resolution.py` – wählt den bevorzugten gespeicherten Wert,
-- `src/stock_valuation/data/preferred_data.py` – bewertet separat, ob dieser Wert berechnungsbereit ist,
-- `src/stock_valuation/metrics/service.py` – verwendet nur berechnungsbereite Preferred Data,
-- `pages/4_Kennzahlen.py` – zeigt Datenfreigabestatus sichtbar an.
+- Hauptbutton: `Finanzdaten laden / aktualisieren`
+- SEC → ESEF → optional Alpha-Fallback
+- zeigt Router-Versuche in einem technischen Expander
+- historische Daten funktionieren ohne Alpha-Vantage-Key
+- Analystenschätzungen sind ein separater optionaler Schritt
+- ChatGPT-Prüfung bleibt für semantischen Cross-Check und Provider-Kontrolle
 
-### Source Resolution
+### 7. Preferred Data
 
-Priorität für dasselbe Feld/Jahr:
+- `esef_xbrl_json` ist als Primärquelle integriert
+- Source Priority und Calculation Readiness bleiben getrennt
+- manuelle Overrides bleiben höchste praktische Korrekturebene
+- Primärquellenwerte mit bekannter semantischer Mehrdeutigkeit können blockiert bleiben
 
-1. bestätigter `manual_override`,
-2. offizielle Primärquelle (`asml_primary`, SEC, ESEF/iXBRL),
-3. Alpha Vantage,
-4. weitere Fallback-Provider.
+### 8. Cache / Entwicklung
 
-Die niedrigeren Quellen bleiben vollständig gespeichert und auditierbar.
+- Alpha-Vantage-Cache bleibt erhalten
+- SEC/GLEIF/ESEF verwenden ebenfalls lokale Caches unter `data/cache/`
+- Cache-Verzeichnis ist gitignored
+- Offline-Replay bleibt im Code und in Tests, ist aber nicht mehr in der normalen Streamlit-Oberfläche sichtbar
 
-### Calculation Readiness
+## Neue/angepasste Tests in diesem Block
 
-Berechnungsbereit:
-- bestätigter Override,
-- eindeutig gemappte Primärquelle,
-- Providerwert mit ChatGPT-Review `PASS`,
-- bestehendes ASML-Referenzgate mit Primärquellenfreigabe.
+- `tests/test_esef_registry.py`
+- `tests/test_gleif_provider.py`
+- `tests/test_company_discovery.py`
+- `tests/test_source_router.py`
+- `tests/test_preferred_data.py` erweitert um semantisches SEC-Schuldengate
+- bestehende SEC-/ESEF-/Alpha-/Replay-Tests bleiben bestehen
 
-Nicht berechnungsbereit:
-- ungeprüfter Providerwert,
-- `WARN`/`FAIL` ohne akzeptierten Override,
-- `UNKLAR`,
-- veralteter Review, der nicht mehr exakt zum Preferred Fact passt,
-- fertiges Provider-EBITDA (`derive_required`).
+**Wichtig:** Die Tests dieses neuen Blocks müssen jetzt lokal mit `pytest -q` ausgeführt werden. Aktueller Stand darf erst danach als grün bezeichnet werden.
 
-Ein verworfener ChatGPT-Korrekturvorschlag bestätigt den alten Providerwert **nicht automatisch**.
-
-## Interne Felddefinitionen
-
-Zentral in `src/stock_valuation/data/preferred_data.py` und `docs/RAW_DATA_SCHEMA.md`:
-
-- `ppe_net`: reine Netto-Sachanlagen; separat ausgewiesene Operating-Lease-ROU-Assets ausgeschlossen.
-- `short_term_debt`: zinstragende Schulden mit Fälligkeit <= 12 Monate einschließlich Current Portion of Long-Term Debt; AP und Lease Liabilities getrennt.
-- `depreciation_amortization`: reine Abschreibungen + Amortisation; kein automatisches `and other`.
-- `ebitda`: selbst aus freigegebenem EBIT + freigegebenem D&A berechnen; Provider-EBITDA nur Cross-Check.
-
-Diese Definitionen werden in neue ChatGPT-Prüfpakete eingebettet.
-
-## Kennzahlenengine
-
-- Berechnungsversion: `3a-0.3`.
-- EBIT-Marge:
-  - ASML: validiertes `operating_income` / Revenue gemäß D-012,
-  - andere Unternehmen: freigegebenes internes `ebit` / Revenue; `operating_income` wird nicht still gleichgesetzt.
-- EBITDA-Marge:
-  - (freigegebenes EBIT + freigegebenes D&A) / Revenue,
-  - Provider-EBITDA wird nicht direkt verwendet.
-
-## ChatGPT-Dateiprüfung ohne separate API-Abrechnung
-
-- keine OpenAI Responses API im normalen Workflow,
-- kein `OPENAI_API_KEY` erforderlich,
-- keine `openai`-Python-Abhängigkeit,
-- Prüfpaket enthält Unternehmensidentität, Fact-IDs, Providerfelder, Werte, lokale Plausibilitätschecks, interne Felddefinitionen und verbindlichen Prüfauftrag,
-- Rückimport validiert Schema-Version, Package-ID, Ticker, Stichtag, Revision und Fact-IDs,
-- Ergebnisse werden lokal als `AIReviewRun` und `AIReviewFinding` gespeichert.
-
-## Lokaler Abnahmetest jetzt – Offline Microsoft
+## Nächster Live-Abnahmetest
 
 1. `git pull`
-2. `pytest -q`
-3. `streamlit run app.py`
-4. `Unternehmen` öffnen.
-5. `Offline-Entwicklung – vorhandenes ChatGPT-Prüfpaket wiederherstellen` öffnen.
-6. Das vorhandene Microsoft-Prüfpaket und das zugehörige JSON-Ergebnis auswählen.
-7. `Offline-Snapshot wiederherstellen` drücken.
-8. Erwartung: Microsoft R1 wird mit 92 Finanzfakten und 92 Prüfergebnissen angelegt, ohne Alpha-Vantage-Request.
-9. `Finanzdaten` öffnen und Review-Status kontrollieren.
-10. `Kennzahlen` öffnen und Preferred-Data-Gates prüfen.
-11. Die zwei bekannten PP&E-FAILs können anschließend über den normalen Entscheidungsweg geprüft/übernommen werden.
+2. `.env` prüfen:
+   ```text
+   SEC_USER_AGENT=Vorname Nachname email@example.com
+   ```
+3. `pytest -q`
+4. `streamlit run app.py`
+5. bestehende Entwicklungsunternehmen bei Bedarf löschen
+6. nacheinander echte Fälle testen:
+   - Microsoft – erwarteter primärer SEC-Weg
+   - ASML – SEC oder ESEF abhängig von strukturierter Abdeckung
+   - Siemens – ESEF/GLEIF-Fall; Registry-Abdeckung kann lückenhaft sein
+   - LVMH – ESEF/GLEIF-Fall
+7. je Fall prüfen:
+   - korrekte Unternehmensidentität
+   - CIK/LEI
+   - gewählte Quelle
+   - Anzahl Geschäftsjahre/Fakten
+   - Währung
+   - Rohfeld-Provenienz
+   - lokale Plausibilitätschecks
+   - Preferred-Data-Status
+8. danach ChatGPT-Prüfpaket für 2–3 Jahre erzeugen und semantische Mappings prüfen.
 
-## ASML-Neustart nach erneuertem Provider-Kontingent
+## Bekannte Grenzen / bewusst noch offen
 
-1. ASML erneut suchen; die Suche wird ab dem ersten erfolgreichen Lauf gecacht.
-2. Unternehmen automatisch erkennen und Analyse R1 anlegen.
-3. Unter `Finanzdaten` echten Alpha-Vantage-Import durchführen; erfolgreiche Statement-Antworten werden gecacht.
-4. Neues ASML-ChatGPT-Prüfpaket erzeugen und prüfen.
-5. Danach kann derselbe Datenstand beliebig oft offline weiterentwickelt/getestet werden.
-
-## Noch offene Import-/Prüfthemen
-
-- kompletten ASML-Neustart durchführen, sobald echte Providerantworten wieder verfügbar sind,
-- UI-Schalter für bewusstes `force_refresh`/Live-Neuladen ergänzen,
-- neue ChatGPT-Prüfung mit den zentralen Felddefinitionen testen,
-- weitere semantisch kritische Rohfelder schrittweise in `FIELD_DEFINITIONS` aufnehmen,
-- aktuellen Marktpreis automatisch laden und Listing/Währung sauber trennen,
-- automatische Primärquellen-Discovery dort ergänzen, wo zuverlässig möglich,
-- SEC-/ESEF-Mappings erweitern,
-- ISIN/LEI-Anreicherung verbessern,
-- optional zweiten breiten Fundamentals-Provider als Fallback prüfen.
+- SEC + ESEF sind keine vollständige Weltabdeckung.
+- `filings.xbrl.org` kann je Land/Jahr lückenhaft sein; fehlender Registry-Treffer ist nicht gleichbedeutend mit fehlendem Geschäftsbericht.
+- Company-spezifische XBRL Extension-Tags werden derzeit nicht automatisch gemappt.
+- Ein generischer automatischer Discovery-Fallback zu nationalen ESEF/OAM-Registern ist noch offen.
+- Analystenschätzungen benötigen weiterhin einen separaten Provider oder manuelle Daten.
+- Aktienkurs/Marktlisting und historische Rechnungslegungsdaten bleiben getrennte Aufgaben.
+- ISIN/LEI/CIK/Ticker-Mapping kann weiter verbessert werden.
+- Source Router mischt bewusst nicht automatisch Provider feldweise; spätere Cross-Checks können mehrere Quellen parallel speichern.
 
 ## Noch offene Kapitel-2-Methodik
 
