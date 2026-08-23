@@ -44,9 +44,13 @@ Der Router wählt zunächst eine kohärente historische Quelle und mischt nicht 
 - Company Facts wird gecacht
 - Standardkonzepte aus `us-gaap` und `ifrs-full` werden normalisiert
 - Company Extensions werden nicht geraten
+- alternative standardisierte Konzepte werden **pro Periodenende** aufgelöst, nicht mehr einmal für die gesamte Historie
+- dadurch werden legitime XBRL-Tagwechsel als Mapping-Verlauf sichtbar, statt künstliche Lücken zu erzeugen
+- wenn mehrere erlaubte Konzepte dasselbe Periodenende abdecken, gewinnt die dokumentierte Konzept-Priorität
 
 Bekannte semantische Sperre:
 - `sec_companyfacts + short_term_debt` ist trotz Primärquelle **nicht automatisch calculation-ready**, weil die interne Definition mehrere kurzfristige Schuldenkonzepte umfassen kann.
+- Die SEC-Konzeptauswahl aggregiert solche Schuldenkomponenten nicht blind.
 - Ein passender ChatGPT-Review `PASS` oder bestätigter Override kann das Feld freigeben.
 
 ### 4. GLEIF
@@ -141,6 +145,9 @@ Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
   - Quellen-/Währungs-/Taxonomiewechsel
   - manueller Override verdeckt die Original-Mappingserie nicht
   - ältere Jahre außerhalb des 10-Jahres-Fensters beeinflussen den Status nicht
+- `tests/test_sec_provider.py`
+  - alternative Standard-XBRL-Tags werden über unterschiedliche Jahre gemeinsam importiert
+  - höhere Konzeptpriorität gewinnt nur bei gleicher Periode
 - bestehende SEC-/ESEF-/Alpha-/Replay-Tests bleiben bestehen
 
 **Wichtig:** Neue Tests dieses Blocks müssen lokal mit `pytest -q` ausgeführt werden. Aktueller Stand darf erst danach als grün bezeichnet werden.
@@ -150,13 +157,12 @@ Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
 1. `git pull`
 2. `pytest -q`
 3. `streamlit run app.py`
-4. ASML R1 auf `Kennzahlen` öffnen
-5. 10-Jahres-Mapping prüfen:
-   - Prüffenster 2016–2025
-   - Anzahl stabile Felder
-   - Anzahl `prüfen`
-   - Anzahl Lücken
-   - auffällige Mapping-Verläufe/Wechseljahre
+4. ASML R1 unter `Finanzdaten` einmal `Finanzdaten laden / aktualisieren` ausführen, damit der vorhandene gecachte SEC-Rohdatensatz mit der neuen periodischen Konzeptauflösung neu normalisiert wird.
+5. Danach `Kennzahlen` öffnen und 10-Jahres-Mapping erneut prüfen:
+   - `dividends_paid`: sollte bei vorhandenem alternativen Standardtag nicht mehr künstlich nach 2018 abbrechen
+   - `operating_cash_flow` 2016: erneut bewerten
+   - `shareholders_equity` 2018: doppelte Periodenenden gezielt prüfen
+   - `short_term_debt` 2016/2017: nicht als Null erfinden; nur echte SEC-Fakten verwenden
 6. danach dieselbe Logik an weiteren Unternehmen testen:
    - Microsoft – SEC US-GAAP
    - Siemens – ESEF/IFRS, soweit Registry-Abdeckung vorhanden
