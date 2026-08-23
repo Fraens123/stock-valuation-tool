@@ -1,0 +1,676 @@
+# DATA PIPELINE AUDIT
+
+## 1. Executive Summary
+
+SEC-Entscheidung: **EdgarTools = CONDITIONAL GO**.
+ESEF-Entscheidung: **Arelle = CONDITIONAL GO fuer Prototyp/Evaluierung, noch kein Produktions-Go**.
+
+Der aktuelle Datenpfad ist konzeptionell richtig, aber die Beschaffungs-/XBRL-Schicht ist zu breit selbst gebaut. EdgarTools reproduziert ASML-Kernwerte fuer FY2023-FY2025 weitgehend direkt aus offiziellen SEC/XBRL-Daten und liefert bessere Statement-/Fact-Metadaten als der eigene Komfortparser. Nicht eindeutige Felder bleiben weiterhin projektspezifische Semantik- und Aggregationsfragen.
+
+## 2. Aktueller Datenpfad
+
+Company/Identity -> Source Router -> Provider -> NormalizedFinancialFact -> Snapshot -> Resolution -> Preferred Data -> Calculation Readiness -> Kennzahlen.
+
+SEC Company Facts ist aktuell Primaerquelle. Originalfilings fuellen Standard-XBRL-Luecken. Company-Extensions werden nur als Review-Kandidaten gespeichert. ESEF wird nach SEC versucht, Alpha Vantage nur als Fallback.
+
+## 3. Gefundene Schwachstellen
+
+- `sec.py` dupliziert Standardkonzept-Mapping, das EdgarTools bereits umfangreicher pflegt.
+- `sec_filing.py` implementiert Contexts, Units, Perioden und Instanzsuche selbst und ist damit faktisch ein partieller XBRL-Prozessor.
+- `sec_extension.py` nutzt semantische Heuristik fuer firmeneigene Tags; das sollte nicht die dauerhafte Engine sein.
+- `short_term_debt`, `depreciation_amortization`, `ppe_net`, `dividends_paid` und CAPEX-nahe Felder brauchen explizite Definition/Aggregation statt stiller Tag-Auswahl.
+
+## 4. EdgarTools-Test
+
+Vergleichszeilen: 250. Klassen: `{'EDGARTOOLS_ONLY': 8, 'EXACT_MATCH': 157, 'SEMANTIC_MATCH': 16, 'UNSUPPORTED': 22, 'VALUE_MATCH_DIFFERENT_TAG': 26, 'VALUE_MISMATCH': 21}`.
+ASML FY2023-FY2025 Coverage: 88.0%. Exact/Value-Match-Rate: 100.0%.
+
+Die vollstaendige Tabelle steht in `diagnostics/asml_financial_source_comparison.csv`.
+
+## 5. ASML FY2023-FY2025 Vergleich
+
+- 2023 short_term_investments: EDGARTOOLS_ONLY (current=n/a, edgar=5400000.0, tag=us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent).
+- 2023 intangible_purchases: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+- 2023 dividends_paid: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+- 2024 short_term_investments: EDGARTOOLS_ONLY (current=n/a, edgar=5400000.0, tag=us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent).
+- 2024 intangible_purchases: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+- 2024 dividends_paid: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+- 2025 short_term_investments: EDGARTOOLS_ONLY (current=n/a, edgar=405900000.0, tag=us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent).
+- 2025 intangible_purchases: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+- 2025 dividends_paid: UNSUPPORTED (current=n/a, edgar=n/a, tag=n/a).
+
+## 6. ASML 10-Jahres-Vergleich
+
+Der 10-Jahres-Vergleich wurde fuer FY2016-FY2025 erzeugt. Fehlende Werte sind in der CSV als `CURRENT_ONLY`, `EDGARTOOLS_ONLY` oder `UNSUPPORTED` sichtbar.
+
+## 7. Weitere Unternehmen
+
+[
+  {
+    "ticker": "AAPL",
+    "category": "US-GAAP Standardunternehmen",
+    "available_2025": {
+      "revenue": true,
+      "net_income": true,
+      "total_assets": true,
+      "operating_cash_flow": true
+    }
+  },
+  {
+    "ticker": "MSFT",
+    "category": "US-GAAP Standardunternehmen",
+    "available_2025": {
+      "revenue": true,
+      "net_income": true,
+      "total_assets": true,
+      "operating_cash_flow": true
+    }
+  },
+  {
+    "ticker": "TSM",
+    "category": "IFRS Foreign Private Issuer",
+    "available_2025": {
+      "revenue": false,
+      "net_income": false,
+      "total_assets": false,
+      "operating_cash_flow": false
+    }
+  },
+  {
+    "ticker": "ADBE",
+    "category": "abweichendes Geschaeftsjahr",
+    "available_2025": {
+      "revenue": true,
+      "net_income": true,
+      "total_assets": true,
+      "operating_cash_flow": true
+    }
+  }
+]
+
+## 8. ESEF/Arelle Bewertung
+
+Arelle ist fuer ESEF/iXBRL fachlich die passendere Basis als ein eigener Parser, weil Taxonomien, Contexts, Units, Dimensions und Validierung Kernumfang der Bibliothek sind. Empfehlung: Prototyp bauen und erst danach Produktions-Go. Aktueller ESEF-Code bleibt bis dahin Fallback.
+
+## 9. Snapshot-/Package-ID-Problem
+
+Die Package-ID wird in `ai_review_service.py` aus Analyseidentitaet, `years_requested`, Mapping-Kandidatenanzahl und den ausgewaehlten Snapshot-Fakten gebildet. Wenn nach Export neue SEC-Filing-Kandidaten oder andere Facts gespeichert werden, aendert sich der Hash. Die Pruefung ist richtig und darf nicht entfernt werden. Der UI-Workflow sollte alte Review-Ergebnisse als `stale` markieren und ein neues Paket verlangen.
+
+## 10. Empfohlene Zielarchitektur
+
+SEC: EdgarTools -> kleiner Adapter -> NormalizedFinancialFact -> Snapshot/Provenienz -> Preferred Data. ESEF: Arelle/xBRL-JSON Adapter analog. Eigene XBRL-Parser nur als Uebergangsdiagnostik/Fallback behalten.
+
+## 11. Welche Dateien bleiben
+
+- `src/stock_valuation/data/types.py`
+- `src/stock_valuation/data/source_router.py`
+- `src/stock_valuation/data/resolution.py`
+- `src/stock_valuation/data/preferred_data.py`
+- `src/stock_valuation/data/snapshot_service.py`
+- `src/stock_valuation/analyses/ai_review_service.py`
+
+## 12. Welche Dateien ersetzt werden
+
+- `src/stock_valuation/data/providers/sec.py`
+- `src/stock_valuation/data/providers/sec_filing.py`
+- `src/stock_valuation/data/providers/sec_extension.py`
+
+## 13. Welche Dateien spaeter entfernt werden koennen
+
+- heuristische Teile aus sec_extension.py nach Adapter-Migration
+- eigener XML-Context/Unit-Parser in sec_filing.py nach stabiler EdgarTools-Abdeckung
+
+## 14. Welche Tests benoetigt werden
+
+- Konkrete ASML-Werte FY2023-FY2025 fuer revenue, net_income, total_assets, shareholders_equity, operating_cash_flow, ppe_net, short_term_debt und depreciation_amortization.
+- Tests fuer Waehrung, Periode, Filing-Art, Originaltag und Skalierung.
+- Tests fuer Aggregationsregeln bei `short_term_debt` und D&A.
+
+## 15. Konkrete Umsetzungsschritte
+
+- EdgarTools-Adapter als neuen isolierten Provider implementieren, ohne bestehenden SEC-Pfad zu loeschen.
+- Regressionstests mit konkreten ASML-Werten 2023-2025 anlegen.
+- Arelle-Prototyp fuer ein ESEF-ZIP/iXBRL-Filing bauen.
+- Review-Package-ID um expliziten Snapshot-Exportzustand/Stale-Status im UI ergaenzen.
+
+## 16. Go/No-Go Entscheidung
+
+SEC: EdgarTools = **CONDITIONAL GO**.
+ESEF: Arelle = **CONDITIONAL GO fuer Prototyp/Evaluierung**.
+
+## Lizenzen
+
+{
+  "edgartools": "MIT",
+  "arelle": "Apache-2.0 (laut arelle.org/GitHub; vor Produktions-Go im gewaehlten Paket erneut verifizieren)."
+}
+
+## Kritische Abweichungen
+
+[
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "revenue",
+    "current_pipeline_value": "6875100000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "6794752000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:SalesRevenueNet",
+    "edgartools_standard_concept": "revenue",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-80348000.0",
+    "difference_relative": "-0.01168681182819158994050995622",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "cost_of_revenue",
+    "current_pipeline_value": "3729800000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:CostOfGoodsAndServicesSold",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3750272000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:CostOfGoodsAndServicesSold",
+    "edgartools_standard_concept": "cost_of_revenue",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "20472000.0",
+    "difference_relative": "0.005488766153681162528821920746",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "gross_profit",
+    "current_pipeline_value": "3145300000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:GrossProfit",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3044480000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:GrossProfit",
+    "edgartools_standard_concept": "gross_profit",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-100820000.0",
+    "difference_relative": "-0.03205417607223476297968397291",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "operating_income",
+    "current_pipeline_value": "1758500000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:OperatingIncomeLoss",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "1657734000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:OperatingIncomeLoss",
+    "edgartools_standard_concept": "operating_income",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-100766000.0",
+    "difference_relative": "-0.05730224623258458913847028718",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "pretax_income",
+    "current_pipeline_value": "1792200000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "1691378000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "edgartools_standard_concept": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "edgartools_filing_form": "20-F",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "0000937966-17-000007",
+    "edgartools_source": "edgartools.get_annual_fact",
+    "difference_absolute": "-100822000.0",
+    "difference_relative": "-0.05625599821448499051445151211",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "net_income",
+    "current_pipeline_value": "1557800000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:NetIncomeLoss",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "1471894000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:NetIncomeLoss",
+    "edgartools_standard_concept": "net_income",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-85906000.0",
+    "difference_relative": "-0.05514571832070869174476826293",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2016,
+    "period_end": "2016-12-31",
+    "period_type": "FY",
+    "internal_metric": "shareholders_equity",
+    "current_pipeline_value": "9972400000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:StockholdersEquity",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "9820481000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:StockholdersEquity",
+    "edgartools_standard_concept": "stockholders_equity",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2017-02-08",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-151919000.0",
+    "difference_relative": "-0.01523394569010468894147848061",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "revenue",
+    "current_pipeline_value": "8962700000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "9052800000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:SalesRevenueNet",
+    "edgartools_standard_concept": "revenue",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "90100000.0",
+    "difference_relative": "0.01005277427560891249288718801",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "cost_of_revenue",
+    "current_pipeline_value": "4942500000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:CostOfGoodsAndServicesSold",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "4976100000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:CostOfGoodsAndServicesSold",
+    "edgartools_standard_concept": "cost_of_revenue",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "33600000.0",
+    "difference_relative": "0.006798179059180576631259484067",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "gross_profit",
+    "current_pipeline_value": "4020200000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:GrossProfit",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "4076700000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:GrossProfit",
+    "edgartools_standard_concept": "gross_profit",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "56500000.0",
+    "difference_relative": "0.01405402716282772001392965524",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "operating_income",
+    "current_pipeline_value": "2439700000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:OperatingIncomeLoss",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "2496200000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:OperatingIncomeLoss",
+    "edgartools_standard_concept": "operating_income",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "56500000.0",
+    "difference_relative": "0.02315858507193507398450629176",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "pretax_income",
+    "current_pipeline_value": "2389400000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "2445900000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "edgartools_standard_concept": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "edgartools_filing_form": "20-F",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "0000937966-18-000007",
+    "edgartools_source": "edgartools.get_annual_fact",
+    "difference_absolute": "56500000.0",
+    "difference_relative": "0.02364610362434083870427722441",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "net_income",
+    "current_pipeline_value": "2066700000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:NetIncomeLoss",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "2118500000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:NetIncomeLoss",
+    "edgartools_standard_concept": "net_income",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "51800000.0",
+    "difference_relative": "0.02506411186916340059031305947",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "current_assets",
+    "current_pipeline_value": "8885800000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:AssetsCurrent",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "9007000000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:AssetsCurrent",
+    "edgartools_standard_concept": "us-gaap:AssetsCurrent",
+    "edgartools_filing_form": "20-F",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "0000937966-18-000007",
+    "edgartools_source": "edgartools.get_annual_fact",
+    "difference_absolute": "121200000.0",
+    "difference_relative": "0.01363973980958383038105741745",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "accounts_receivable",
+    "current_pipeline_value": "1740300000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:AccountsReceivableNetCurrent",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "1772300000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:AccountsReceivableNetCurrent",
+    "edgartools_standard_concept": "accounts_receivable",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "32000000.0",
+    "difference_relative": "0.01838763431592254209044417629",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "total_liabilities",
+    "current_pipeline_value": "7412500000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:Liabilities",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "7520200000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "Liabilities",
+    "edgartools_standard_concept": "total_liabilities",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "107700000.0",
+    "difference_relative": "0.01452951096121416526138279933",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "current_liabilities",
+    "current_pipeline_value": "3170000000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:LiabilitiesCurrent",
+    "current_pipeline_filing_date": "2019-02-06",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3341900000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:LiabilitiesCurrent",
+    "edgartools_standard_concept": "us-gaap:LiabilitiesCurrent",
+    "edgartools_filing_form": "20-F",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "0000937966-18-000007",
+    "edgartools_source": "edgartools.get_annual_fact",
+    "difference_absolute": "171900000.0",
+    "difference_relative": "0.05422712933753943217665615142",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2017,
+    "period_end": "2017-12-31",
+    "period_type": "FY",
+    "internal_metric": "operating_cash_flow",
+    "current_pipeline_value": "1818300000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "1798600000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+    "edgartools_standard_concept": "operating_cash_flow",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2018-02-07",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-19700000.0",
+    "difference_relative": "-0.01083429577077489963152395094",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2018,
+    "period_end": "2018-12-31",
+    "period_type": "FY",
+    "internal_metric": "long_term_debt",
+    "current_pipeline_value": "3026500000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:LongTermDebtNoncurrent",
+    "current_pipeline_filing_date": "2020-02-12",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3005700000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:LongTermDebtNoncurrent",
+    "edgartools_standard_concept": "long_term_debt",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2019-02-06",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-20800000.0",
+    "difference_relative": "-0.006872625144556418304972740790",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2019,
+    "period_end": "2019-12-31",
+    "period_type": "FY",
+    "internal_metric": "cash_and_equivalents",
+    "current_pipeline_value": "3532300000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+    "current_pipeline_filing_date": "2021-02-10",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3121100000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+    "edgartools_standard_concept": "cash_and_equivalents",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2020-02-12",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-411200000.0",
+    "difference_relative": "-0.1164114033349375760835716106",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  },
+  {
+    "company": "ASML Holding N.V.",
+    "fiscal_year": 2020,
+    "period_end": "2020-12-31",
+    "period_type": "FY",
+    "internal_metric": "cash_and_equivalents",
+    "current_pipeline_value": "6049400000",
+    "current_pipeline_currency": "EUR",
+    "current_pipeline_provider": "sec_companyfacts",
+    "current_pipeline_provider_field": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+    "current_pipeline_filing_date": "2022-02-09",
+    "current_pipeline_source_url": null,
+    "edgartools_value": "3532300000.0",
+    "edgartools_currency": "EUR",
+    "edgartools_original_tag": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+    "edgartools_standard_concept": "cash_and_equivalents",
+    "edgartools_filing_form": "",
+    "edgartools_filing_date": "2021-02-10",
+    "edgartools_accession_number": "",
+    "edgartools_source": "edgartools.get_concept",
+    "difference_absolute": "-2517100000.0",
+    "difference_relative": "-0.4160908519853208582669355639",
+    "classification": "VALUE_MISMATCH",
+    "comment": "Abweichung > 0,5 Prozent; Primärquelle fachlich pruefen."
+  }
+]

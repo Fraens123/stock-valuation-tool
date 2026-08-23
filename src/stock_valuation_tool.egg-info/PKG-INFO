@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: stock-valuation-tool
+Version: 0.1.0
+Summary: Guided stock analysis and valuation tool.
+Requires-Python: >=3.12
+Requires-Dist: streamlit>=1.37
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: pydantic>=2.8
+Requires-Dist: pandas>=2.2
+Requires-Dist: numpy>=2.0
+Requires-Dist: requests>=2.32
+Requires-Dist: plotly>=5.23
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: reportlab>=4.2
+Requires-Dist: openpyxl>=3.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"

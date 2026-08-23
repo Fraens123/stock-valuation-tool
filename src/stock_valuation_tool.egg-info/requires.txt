@@ -1,0 +1,15 @@
+streamlit>=1.37
+sqlalchemy>=2.0
+pydantic>=2.8
+pandas>=2.2
+numpy>=2.0
+requests>=2.32
+plotly>=5.23
+PyYAML>=6.0
+python-dotenv>=1.0
+reportlab>=4.2
+openpyxl>=3.1
+
+[dev]
+pytest>=8.3
+ruff>=0.6
