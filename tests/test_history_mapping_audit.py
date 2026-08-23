@@ -140,7 +140,7 @@ def test_currency_or_taxonomy_change_requires_review() -> None:
         assert row.providers == ("esef_xbrl_json", "sec_companyfacts")
         assert row.currencies == ("EUR", "USD")
         assert row.taxonomies == ("ifrs-full", "us-gaap")
-        assert "Quelle wechselte" in row.reason
+        assert "Quellenfamilie wechselte" in row.reason
         assert "Währung wechselte" in row.reason
         assert "Taxonomie wechselte" in row.reason
 
