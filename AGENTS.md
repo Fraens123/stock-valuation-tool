@@ -4,7 +4,7 @@ Diese Datei ist die verbindliche Arbeitsanweisung für Codex/Copilot und andere 
 
 ## 1. Projektziel
 
-Wir bauen ein lokales, geführtes Aktienanalyse- und Unternehmensbewertungstool in Python/Streamlit. Die fachliche Reihenfolge orientiert sich am bestehenden Excel-Modell des Nutzers und an Nicolas Schmidlin, **Unternehmensbewertung & Kennzahlenanalyse** (ISBN-13 978-3800645640). Referenzunternehmen während der Entwicklung ist **ASML Holding N.V.** (`ASML.AS`).
+Wir bauen ein lokales, geführtes Aktienanalyse- und Unternehmensbewertungstool in Python/Streamlit. Die fachliche Reihenfolge orientiert sich am bestehenden Excel-Modell des Nutzers und an Nicolas Schmidlin, **Unternehmensbewertung & Kennzahlenanalyse** (ISBN-13 978-3800645640). ASML Holding N.V. ist ein Referenzunternehmen für Validierung, **aber die Anwendungs- und Datenlogik darf nicht auf ASML zugeschnitten werden**.
 
 Die Anwendung soll die Analyse unterstützen, nicht ersetzen. Sie muss den Nutzer zwingen, Daten, Geschäftsmodell, Marktposition, Management, Risiken und Bewertungsannahmen nachvollziehbar zu dokumentieren.
 
@@ -55,6 +55,7 @@ Nicht eigenmächtig Bewertungsmethodik verändern. Methodische Änderungen zuers
 - Historie standardmäßig 10 Jahre, zusätzlich 5-Jahres-Mittel/Median wenn sinnvoll.
 - Datenquelle und Datenstand sichtbar machen.
 - Nutzerbegründungen bei qualitativen Einschätzungen speichern.
+- Technische Providerdiagnostik nicht als normalen Top-Level-Workflow anzeigen.
 
 ## 5. Analyse-Lifecycle
 
@@ -81,19 +82,43 @@ Beim Aktualisieren wird eine neue Revision erzeugt. Die Vergleichsfunktion muss 
 - Datenmodell so kapseln, dass später PostgreSQL möglich ist.
 - Keine stillen Datenmigrationen; Schemaänderungen nachvollziehbar halten.
 
-## 7. Datenquellen
+## 7. Datenquellen und Source Router
 
 Siehe `docs/DATA_SOURCES.md`.
 
-Aktueller V1-Stand:
-- ASML Investor Relations / Annual Reports: Primärquelle und Referenz für veröffentlichte historische Zahlen sowie Guidance.
-- Alpha Vantage: automatischer V1-Kandidat; **nur feldweise nach Primärquellen-Gate freigegeben**, niemals pauschal vertrauen.
-- EODHD: Adapter vorhanden; Fundamentals beim getesteten Free-Key nicht freigeschaltet, daher derzeit nur optionaler späterer Fallback/Cross-Check.
-- ECB Data API: EUR-Risikofreizins.
-- Aktienfinder.de: manuelle Ergänzungen/Overrides.
-- weitere Provider nur hinter Provider-Interfaces.
+### Historische veröffentlichte Finanzdaten
 
-Für ASML dürfen Downstream-Kennzahlen nur Felder verwenden, die der 2024/2025-Primärquellencheck freigegeben hat. FAIL/MISSING-Felder werden nicht still durch offizielle Kontrollwerte ersetzt.
+Der normale Import ist **quellenunabhängig** und wird über einen Source Router gesteuert:
+
+1. **SEC EDGAR / Company Facts** für SEC-Berichterstatter, ohne API-Key; CIK wird automatisch aufgelöst.
+2. **ESEF/iXBRL** für passende europäische Emittenten; LEI wird über GLEIF aufgelöst und ESEF-Filings werden strukturiert eingelesen.
+3. **Alpha Vantage** nur optional als Fallback, nicht als Voraussetzung für historische Ist-Daten.
+4. weitere Provider später nur hinter dem gemeinsamen Provider-/Router-Konzept.
+
+Regeln:
+- Keine `if company == ASML`-Sonderlogik im normalen Such-/Importpfad.
+- Offizielle strukturierte Quellen bevorzugen.
+- Nicht still verschiedene Provider innerhalb einer Jahresabschlussserie mischen. Der Router wählt zunächst eine kohärente Quelle für den historischen Import.
+- Originale XBRL-/Provider-Tags bleiben als Provenienz erhalten.
+- Company-Extension-Tags nicht automatisch erraten. Unklare Semantik wird blockiert bzw. über den Review-Workflow geprüft.
+- Eine Primärquelle beweist Herkunft, aber nicht automatisch die semantische Gleichheit mit unserem internen Feld. Bekannte mehrdeutige Mappings müssen zusätzlich freigegeben werden.
+- `short_term_debt` aus SEC ist ein aktuelles Beispiel: unser internes Feld umfasst alle zinstragenden Schulden mit Fälligkeit <= 12 Monate einschließlich Current Portion of Long-Term Debt. Ein einzelner SEC-XBRL-Tag darf nicht still als vollständig angenommen werden.
+
+### Unternehmensidentität
+
+- SEC: Ticker/Name → CIK.
+- GLEIF: Legal Entity Name → LEI.
+- Ticker, CIK, LEI, ISIN und Provider-Symbole sind getrennte Identifikatoren und dürfen nicht ineinander überladen werden.
+
+### Analystenschätzungen
+
+SEC/ESEF liefern keinen Analystenkonsens. Estimates bleiben eine getrennte Datenklasse und dürfen optional von Alpha Vantage, später einem anderen Provider oder manuell stammen.
+
+### Preferred Data
+
+Downstream-Kennzahlen verwenden ausschließlich die Preferred-Data-Schicht. Rohdaten eines Providers werden niemals direkt in Bewertungsformeln verwendet.
+
+ASML-spezifische Primärquellenparser dürfen als Referenz-/Validierungswerkzeug im Code bleiben, sind aber kein Bestandteil des universellen normalen Importpfads.
 
 ## 8. Engineering-Regeln
 
@@ -101,6 +126,7 @@ Für ASML dürfen Downstream-Kennzahlen nur Felder verwenden, die der 2024/2025-
 - Berechnungslogik nie direkt in Streamlit-Widgets verstecken.
 - UI, Domain, Datenzugriff und Bewertungslogik trennen.
 - Jede zentrale Bewertungsformel mit Unit Tests absichern.
+- Provider-Router, Normalisierung und kritische Feldmappings ebenfalls mit Unit Tests absichern.
 - Keine API-Keys, Cookies, Zugangsdaten oder private Analyse-Daten committen.
 - `.env` verwenden; `.env.example` pflegen.
 - Typannotationen verwenden.
