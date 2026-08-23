@@ -29,6 +29,8 @@ from stock_valuation.analyses.input_service import (
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
 from stock_valuation.companies.provider_symbols import get_provider_symbol
 from stock_valuation.data.audit import run_deterministic_audit
+from stock_valuation.data.history_mapping_audit import audit_history_mapping
+from stock_valuation.data.preferred_data import load_preferred_data_states
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.resolution import load_preferred_financial_facts
@@ -49,6 +51,24 @@ STATUS_LABELS = {
     AnalysisStatus.IN_PROGRESS: "In Bearbeitung",
     AnalysisStatus.COMPLETED: "Abgeschlossen",
     AnalysisStatus.ARCHIVED: "Archiviert",
+}
+MAPPING_STATUS_LABELS = {
+    "PASS": "✅ stabil",
+    "REVIEW": "⚠️ prüfen",
+    "GAP": "🟡 Lücke",
+}
+DATA_STATUS_LABELS = {
+    "confirmed_override": "✅ Bestätigte Korrektur",
+    "primary_source": "✅ Primärquelle",
+    "primary_reviewed_pass": "✅ Primärquelle + Semantik geprüft",
+    "primary_semantic_review_required": "⚠️ Primärquelle – Semantik prüfen",
+    "reviewed_pass": "✅ ChatGPT PASS",
+    "legacy_primary_validated": "✅ Primärquellen-validiert",
+    "provider_unverified": "🟡 Ungeprüfter Providerwert",
+    "review_stale": "🟡 Prüfung veraltet",
+    "unclear": "⚠️ UNKLAR",
+    "review_conflict": "❌ Abweichung offen",
+    "derive_required": "🔵 selbst ableiten",
 }
 
 
@@ -75,9 +95,9 @@ def _format_value(value: Decimal | None, currency: str | None) -> str:
 
 st.title("Finanzdaten")
 st.caption(
-    "Historische Ist-Daten werden automatisch aus der besten verfügbaren strukturierten Quelle "
-    "geladen: **SEC → ESEF → optionaler Provider-Fallback**. Danach folgen Plausibilitäts- und "
-    "bei Bedarf ChatGPT-Mappingprüfung."
+    "Der komplette Datenworkflow läuft auf dieser Seite: **Ist-Daten laden → Quellen prüfen → "
+    "10-Jahres-Abdeckung prüfen → ChatGPT-Cross-Check → Korrekturen → optionale Schätzungen**. "
+    "Für die eigentliche Kennzahlenanalyse ist danach kein Zurückspringen zum Import nötig."
 )
 
 with get_session() as session:
@@ -117,26 +137,32 @@ with get_session() as session:
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
     analysis_as_of_date = analysis.as_of_date
     company_ticker = analysis.company.ticker
+    company_name = analysis.company.name
     company_currency = analysis.company.currency
+    revision_number = analysis.revision_number
+    analysis_status = analysis.status
 
 alpha_symbol = alpha_identifier.symbol if alpha_identifier else company_ticker
 alpha_key_available = bool(os.getenv("ALPHA_VANTAGE_API_KEY"))
 sec_user_agent_available = bool(os.getenv("SEC_USER_AGENT"))
 
 header = st.columns(5)
-header[0].metric("Unternehmen", analysis.company.name)
+header[0].metric("Unternehmen", company_name)
 header[1].metric("Ticker", company_ticker)
 header[2].metric("Währung", company_currency or "—")
-header[3].metric("Revision", f"R{analysis.revision_number}")
-header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
+header[3].metric("Revision", f"R{revision_number}")
+header[4].metric("Status", STATUS_LABELS.get(analysis_status, analysis_status.value))
 
 with st.expander("Automatisch erkannte Daten-Identitäten", expanded=False):
     st.write(f"**SEC CIK:** {sec_identifier.symbol if sec_identifier else 'noch nicht erkannt'}")
     st.write(f"**LEI:** {lei_identifier.symbol if lei_identifier else 'noch nicht erkannt'}")
-    st.write(f"**Alpha-Vantage-Symbol:** {alpha_symbol if alpha_identifier else 'nicht benötigt / noch nicht hinterlegt'}")
+    st.write(
+        f"**Alpha-Vantage-Symbol:** "
+        f"{alpha_symbol if alpha_identifier else 'nicht benötigt / noch nicht hinterlegt'}"
+    )
 
 # -----------------------------------------------------------------------------
-# 1. Import
+# 1. Historical import
 # -----------------------------------------------------------------------------
 st.subheader("1. Finanzdaten laden")
 if not editable:
@@ -152,7 +178,8 @@ else:
     )
     if not sec_user_agent_available:
         st.caption(
-            "SEC ist derzeit übersprungen, weil `SEC_USER_AGENT` in `.env` fehlt. ESEF/GLEIF wird trotzdem versucht."
+            "SEC ist derzeit übersprungen, weil `SEC_USER_AGENT` in `.env` fehlt. "
+            "ESEF/GLEIF wird trotzdem versucht."
         )
 
     allow_alpha_fallback = st.checkbox(
@@ -193,7 +220,8 @@ else:
             }
             if result.success:
                 st.success(
-                    f"Historische Finanzdaten geladen: {result.fact_count} Fakten aus **{result.selected_source}**"
+                    f"Historische Finanzdaten geladen: {result.fact_count} Fakten aus "
+                    f"**{result.selected_source}**"
                     + (f" · Berichtswährung {result.report_currency}" if result.report_currency else "")
                     + "."
                 )
@@ -206,48 +234,23 @@ else:
         except (ValueError, AnalysisFrozenError, ProviderError) as exc:
             st.error(str(exc))
 
-    router_state = st.session_state.get(f"source-router-{analysis_id}")
-    if router_state:
-        st.caption(
-            f"Letzter Importpfad: {router_state.get('selected_source') or 'keine Quelle ausgewählt'} · "
-            f"{router_state.get('fact_count', 0)} Fakten"
-        )
-        attempts = router_state.get("attempts") or []
-        if attempts:
-            with st.expander("Quellen-Router anzeigen", expanded=router_state.get("selected_source") is None):
-                st.dataframe(pd.DataFrame(attempts), width="stretch", hide_index=True)
-
-    st.markdown("#### Analystenschätzungen – optional")
+router_state = st.session_state.get(f"source-router-{analysis_id}")
+if router_state:
     st.caption(
-        "SEC und ESEF enthalten veröffentlichte Ist-Daten, aber keinen Analystenkonsens. "
-        "Schätzungen werden deshalb getrennt behandelt."
+        f"Letzter Importpfad: {router_state.get('selected_source') or 'keine Quelle ausgewählt'} · "
+        f"{router_state.get('fact_count', 0)} Fakten"
     )
-    if alpha_key_available:
-        if st.button("Analystenschätzungen über Alpha Vantage laden"):
-            provider = AlphaVantageProvider()
-            try:
-                with get_session() as session:
-                    current = get_analysis(session, analysis_id)
-                    if current is None:
-                        raise ValueError("Analyse wurde nicht gefunden.")
-                    with st.spinner(f"Lade Analystenschätzungen für {alpha_symbol} …"):
-                        estimate_count = sync_alphavantage_estimates(
-                            session,
-                            current,
-                            provider,
-                            symbol=alpha_symbol,
-                        )
-                if estimate_count:
-                    st.success(f"Analystenschätzungen geladen: {estimate_count} Datensätze.")
-                else:
-                    st.info("Der Provider hat aktuell keine importierbaren Estimates geliefert.")
-                st.rerun()
-            except (ValueError, AnalysisFrozenError, ProviderError) as exc:
-                st.warning("Analystenschätzungen konnten nicht geladen werden: " + str(exc))
-    else:
-        st.caption("Kein Alpha-Vantage-Key hinterlegt; historische Finanzdaten funktionieren trotzdem.")
+    attempts = router_state.get("attempts") or []
+    if attempts:
+        with st.expander(
+            "Quellen-Router anzeigen",
+            expanded=router_state.get("selected_source") is None,
+        ):
+            st.dataframe(pd.DataFrame(attempts), width="stretch", hide_index=True)
 
+# Load the complete current snapshot once for all following import-quality sections.
 with get_session() as session:
+    current = get_analysis(session, analysis_id)
     facts = session.scalars(
         select(FinancialFactSnapshot)
         .where(FinancialFactSnapshot.analysis_id == analysis_id)
@@ -259,12 +262,16 @@ with get_session() as session:
         .order_by(EstimateSnapshot.period, EstimateSnapshot.metric)
     ).all()
     preferred = load_preferred_financial_facts(session, analysis_id)
+    preferred_states = load_preferred_data_states(session, analysis_id)
+    history_audit = audit_history_mapping(session, current, years=10) if current is not None else None
+    audit_checks = run_deterministic_audit(session, current) if current is not None and preferred else []
+    latest_run = latest_ai_review_run(session, analysis_id)
 
 # -----------------------------------------------------------------------------
-# 2. Stored data
+# 2. Import status and quality
 # -----------------------------------------------------------------------------
 st.divider()
-st.subheader("2. Gespeicherter Datenstand")
+st.subheader("2. Importstatus und Datenqualität")
 if not facts:
     st.caption("Noch keine Finanzdaten in diesem Snapshot.")
 else:
@@ -279,8 +286,8 @@ else:
     summary[2].metric("Missing", missing_count)
     summary[3].metric("Quellen", len(providers))
     summary[4].metric("Bestätigte Korrekturen", len(overrides))
-
     st.caption("Gespeicherte Quellen: " + ", ".join(providers))
+
     with st.expander("Rohdaten anzeigen", expanded=False):
         st.dataframe(
             pd.DataFrame(
@@ -302,27 +309,130 @@ else:
             hide_index=True,
         )
 
-# -----------------------------------------------------------------------------
-# 3. Review
-# -----------------------------------------------------------------------------
-st.divider()
-st.subheader("3. Daten prüfen")
-if not preferred:
-    st.caption("Für die Prüfung müssen zuerst Finanzdaten importiert werden.")
-else:
-    with get_session() as session:
-        current = get_analysis(session, analysis_id)
-        audit_checks = run_deterministic_audit(session, current) if current is not None else []
-        latest_run = latest_ai_review_run(session, analysis_id)
+    st.markdown("#### Historische Datenbasis – 10-Jahres-Mapping")
+    if history_audit is None or not history_audit.rows:
+        st.warning("Für die historische Mappingprüfung sind noch keine Jahresdaten vorhanden.")
+    else:
+        mapping_cols = st.columns(3)
+        mapping_cols[0].metric("Stabile Felder", history_audit.stable_count)
+        mapping_cols[1].metric("Mapping prüfen", history_audit.review_count)
+        mapping_cols[2].metric("Nicht vollständig abgedeckt", history_audit.gap_count)
+        st.caption(
+            f"Prüffenster: {history_audit.first_year}–{history_audit.last_year}. "
+            "Geprüft werden Abdeckung, Originalfeld/XBRL-Tag, Quellenfamilie, Währung und Taxonomie."
+        )
+
+        mapping_has_issues = bool(history_audit.review_count or history_audit.gap_count)
+        if mapping_has_issues:
+            st.warning(
+                "Mindestens eine historische Serie ist noch nicht vollständig bzw. hat einen "
+                "prüfpflichtigen Mappingwechsel. Der Import bleibt nutzbar; diese Fälle werden im "
+                "Prüfworkflow gezielt behandelt."
+            )
+        else:
+            st.success(
+                "Alle importierten historischen Felder sind im 10-Jahres-Fenster technisch konsistent."
+            )
+
+        with st.expander("10-Jahres-Mapping im Detail", expanded=mapping_has_issues):
+            show_stable_mapping = st.checkbox(
+                "Auch stabile Felder anzeigen",
+                value=not mapping_has_issues,
+                key=f"show-stable-history-mapping-import-{analysis_id}",
+            )
+            mapping_rows = list(history_audit.rows)
+            if not show_stable_mapping:
+                mapping_rows = [row for row in mapping_rows if row.status != "PASS"]
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Status": MAPPING_STATUS_LABELS.get(row.status, row.status),
+                            "Interner Schlüssel": row.metric,
+                            "Abdeckung": row.coverage_label,
+                            "Fehlende Jahre": ", ".join(str(year) for year in row.missing_years) or "—",
+                            "Wechsel ab": ", ".join(str(year) for year in row.change_years) or "—",
+                            "Quelle": ", ".join(row.providers),
+                            "Währung": ", ".join(row.currencies),
+                            "Taxonomie": ", ".join(row.taxonomies),
+                            "Mapping-Verlauf": row.mapping_sequence,
+                            "Hinweis": row.reason,
+                        }
+                        for row in mapping_rows
+                    ]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+
+    st.markdown("#### Berechnungsbasis – Preferred Data")
+    if not preferred_states:
+        st.warning("Noch keine bevorzugten Finanzdaten vorhanden.")
+    else:
+        ready_count = sum(state.calculation_ready for state in preferred_states)
+        unresolved_count = sum(
+            state.quality_status
+            in {
+                "unclear",
+                "review_conflict",
+                "review_stale",
+                "derive_required",
+                "primary_semantic_review_required",
+            }
+            for state in preferred_states
+        )
+        unverified_count = sum(
+            state.quality_status == "provider_unverified" for state in preferred_states
+        )
+        source_count = sum(
+            state.quality_status
+            in {"primary_source", "primary_reviewed_pass", "confirmed_override"}
+            for state in preferred_states
+        )
+
+        cols = st.columns(4)
+        cols[0].metric("Berechnungsbereit", ready_count)
+        cols[1].metric("Ungeprüfte Providerwerte", unverified_count)
+        cols[2].metric("Unklar / blockiert", unresolved_count)
+        cols[3].metric("Primärquelle / Override", source_count)
+
+        with st.expander("Preferred-Data-Status im Detail", expanded=bool(unresolved_count)):
+            recent_states = sorted(
+                preferred_states,
+                key=lambda state: (state.fact.period_end, state.fact.metric),
+                reverse=True,
+            )
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Jahr": state.fact.period_end.year,
+                            "Metrik": state.fact.metric,
+                            "Verwendete Quelle": state.fact.provider,
+                            "Status": DATA_STATUS_LABELS.get(
+                                state.quality_status, state.quality_status
+                            ),
+                            "Berechnungsbereit": "Ja" if state.calculation_ready else "Nein",
+                            "Review": state.review_verdict,
+                            "Entscheidung": state.review_decision,
+                            "Begründung": state.reason,
+                        }
+                        for state in recent_states
+                    ]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
 
     check_count = sum(item.status == "CHECK" for item in audit_checks)
+    st.markdown("#### Lokale Plausibilitätsprüfung")
     audit_cols = st.columns(3)
     audit_cols[0].metric("Plausibilitätschecks", len(audit_checks))
     audit_cols[1].metric("PASS", sum(item.status == "PASS" for item in audit_checks))
     audit_cols[2].metric("Intern prüfen", check_count)
 
     if audit_checks:
-        with st.expander("Kostenlose lokale Plausibilitätsprüfung", expanded=bool(check_count)):
+        with st.expander("Plausibilitätschecks im Detail", expanded=bool(check_count)):
             st.dataframe(
                 pd.DataFrame(
                     [
@@ -331,7 +441,9 @@ else:
                             "Status": "✅ PASS" if item.status == "PASS" else "⚠️ PRÜFEN",
                             "Check": item.label,
                             "Abweichung %": (
-                                float(item.deviation_pct) if item.deviation_pct is not None else None
+                                float(item.deviation_pct)
+                                if item.deviation_pct is not None
+                                else None
                             ),
                             "Details": item.detail,
                         }
@@ -342,18 +454,28 @@ else:
                 hide_index=True,
             )
 
-    st.markdown("#### ChatGPT-Prüfung / semantischer Cross-Check")
+# -----------------------------------------------------------------------------
+# 3. ChatGPT review
+# -----------------------------------------------------------------------------
+st.divider()
+st.subheader("3. ChatGPT-Prüfung")
+if not preferred:
+    st.caption("Für die Prüfung müssen zuerst Finanzdaten importiert werden.")
+else:
     st.write(
-        "Das Prüfpaket bleibt bewusst erhalten. Bei SEC/ESEF stammen die Zahlen bereits aus offiziellen "
-        "Filings; ChatGPT kontrolliert dann vor allem **Feldsemantik, ungewöhnliche Mappings, Restatements "
-        "und Definitionskonflikte**. Bei Fallback-Providern dient es zusätzlich als Zahlen-Cross-Check."
+        "Bei SEC/ESEF stammen die Zahlen bereits aus offiziellen Filings. ChatGPT kontrolliert hier "
+        "vor allem **Feldsemantik, ungewöhnliche Mappings, Restatements und Definitionskonflikte**. "
+        "Ältere offene SEC-Extension-Kandidaten werden automatisch zusätzlich in das Paket aufgenommen."
     )
 
     review_years = st.selectbox(
-        "Geschäftsjahre tief prüfen",
+        "Aktuelle Geschäftsjahre vollständig tief prüfen",
         [2, 3, 5],
         index=1,
-        help="Für den ersten Test sind 2 oder 3 Jahre sinnvoll. Die lokale Historie bleibt vollständig gespeichert.",
+        help=(
+            "3 Jahre reichen im Normalfall. Offene ältere Mappingkandidaten werden automatisch ergänzt; "
+            "dafür müssen nicht alle 10 Jahre vollständig geprüft werden."
+        ),
     )
 
     try:
@@ -378,8 +500,9 @@ else:
             )
         with package_cols[1]:
             st.caption(
-                f"{review_package.fact_count} Fakten · Package-ID `{review_package.package_id[:12]}…` · "
-                f"erwartete Ergebnisdatei: `{review_package.result_filename}`"
+                f"{review_package.fact_count} Fakten · Package-ID "
+                f"`{review_package.package_id[:12]}…` · erwartete Ergebnisdatei: "
+                f"`{review_package.result_filename}`"
             )
 
         st.info(
@@ -407,7 +530,8 @@ else:
                             uploaded_review.getvalue(),
                         )
                     st.success(
-                        f"ChatGPT-Prüfung eingelesen: Lauf #{run.id} mit {len(run.findings)} Prüffunden."
+                        f"ChatGPT-Prüfung eingelesen: Lauf #{run.id} mit "
+                        f"{len(run.findings)} Prüffunden."
                     )
                     st.rerun()
                 except (AIReviewError, AnalysisFrozenError, ValueError) as exc:
@@ -421,10 +545,10 @@ else:
             status: sum(row.verdict == status for row in findings)
             for status in ["PASS", "WARN", "FAIL", "UNKLAR"]
         }
-        st.markdown("##### Letztes eingelesenes ChatGPT-Prüfergebnis")
+        st.markdown("##### Letztes eingelesenes Prüfergebnis")
         st.caption(
-            f"Importiert: {latest_run.created_at} · {latest_run.years_requested} Geschäftsjahre · "
-            f"Package-ID `{(latest_run.response_id or '—')[:12]}…`"
+            f"Importiert: {latest_run.created_at} · {latest_run.years_requested} aktuelle "
+            f"Geschäftsjahre · Package-ID `{(latest_run.response_id or '—')[:12]}…`"
         )
         if latest_run.summary:
             st.info(latest_run.summary)
@@ -445,9 +569,21 @@ else:
                             "Jahr": row.period_end.year,
                             "Status": row.verdict,
                             "Metrik": row.metric,
-                            "Importiert": float(row.imported_value) if row.imported_value is not None else None,
-                            "Offiziell": float(row.official_value) if row.official_value is not None else None,
-                            "Abweichung %": float(row.deviation_pct) if row.deviation_pct is not None else None,
+                            "Importiert": (
+                                float(row.imported_value)
+                                if row.imported_value is not None
+                                else None
+                            ),
+                            "Offiziell": (
+                                float(row.official_value)
+                                if row.official_value is not None
+                                else None
+                            ),
+                            "Abweichung %": (
+                                float(row.deviation_pct)
+                                if row.deviation_pct is not None
+                                else None
+                            ),
                             "Währung": row.currency,
                             "Offizielle Bezeichnung": row.official_label,
                             "Quelle": row.source_title,
@@ -461,7 +597,7 @@ else:
                 hide_index=True,
             )
         else:
-            st.success("Keine Abweichungen oder unklaren Positionen in der letzten ChatGPT-Prüfung.")
+            st.success("Keine Abweichungen oder unklaren Positionen in der letzten Prüfung.")
 
         pending = [
             row
@@ -488,7 +624,9 @@ else:
                     c2.metric("Offiziell", _format_value(finding.official_value, finding.currency))
                     c3.metric(
                         "Abweichung",
-                        f"{float(finding.deviation_pct):.3f} %" if finding.deviation_pct is not None else "—",
+                        f"{float(finding.deviation_pct):.3f} %"
+                        if finding.deviation_pct is not None
+                        else "—",
                     )
                     st.write(f"**Offizielle Bezeichnung:** {finding.official_label or '—'}")
                     st.write(f"**Begründung:** {finding.reason or '—'}")
@@ -518,61 +656,69 @@ else:
                             st.error(str(exc))
 
 # -----------------------------------------------------------------------------
-# 4. Manual correction
+# 4. Corrections - advanced only
 # -----------------------------------------------------------------------------
 st.divider()
-st.subheader("4. Manuelle Korrektur")
-st.caption(
-    "Falls du selbst eine bessere Primärquelle kennst, kannst du einen Wert direkt korrigieren. "
-    "Der importierte Originalwert wird niemals gelöscht."
-)
+with st.expander("4. Manuelle Korrekturen – nur bei Bedarf", expanded=False):
+    st.caption(
+        "Falls du selbst eine bessere Primärquelle kennst, kannst du hier einen Wert korrigieren. "
+        "Der importierte Originalwert wird niemals gelöscht."
+    )
 
-if not preferred:
-    st.caption("Noch keine importierten Werte vorhanden.")
-else:
-    selectable = [fact for fact in preferred if fact.value is not None and fact.period_type == "FY"]
-    labels = {
-        f"{fact.period_end.year} · {fact.metric} · {fact.value} {fact.currency or ''} · {fact.provider}": fact
-        for fact in selectable
-    }
-    selected_fact = labels[st.selectbox("Zu korrigierender Wert", list(labels))]
+    if not preferred:
+        st.caption("Noch keine importierten Werte vorhanden.")
+    else:
+        selectable = [
+            fact for fact in preferred if fact.value is not None and fact.period_type == "FY"
+        ]
+        labels = {
+            f"{fact.period_end.year} · {fact.metric} · {fact.value} "
+            f"{fact.currency or ''} · {fact.provider}": fact
+            for fact in selectable
+        }
+        selected_fact = labels[st.selectbox("Zu korrigierender Wert", list(labels))]
 
-    with st.form("manual-financial-override"):
-        corrected_raw = st.text_input("Korrigierter Wert", value=str(selected_fact.value))
-        source_name = st.text_input("Quelle / Dokument", placeholder="z. B. Annual Report 2026")
-        source_url = st.text_input("Offizielle Quellen-URL (empfohlen)")
-        note = st.text_area("Begründung der Korrektur")
-        save_override = st.form_submit_button("Korrektur übernehmen", disabled=not editable)
+        with st.form("manual-financial-override"):
+            corrected_raw = st.text_input("Korrigierter Wert", value=str(selected_fact.value))
+            source_name = st.text_input(
+                "Quelle / Dokument", placeholder="z. B. Annual Report 2026"
+            )
+            source_url = st.text_input("Offizielle Quellen-URL (empfohlen)")
+            note = st.text_area("Begründung der Korrektur")
+            save_override = st.form_submit_button(
+                "Korrektur übernehmen", disabled=not editable
+            )
 
-    if save_override:
-        try:
-            if not source_name.strip():
-                raise ValueError("Für eine Korrektur muss eine Quelle angegeben werden.")
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse nicht gefunden.")
-                upsert_manual_financial_override(
-                    session,
-                    current,
-                    metric=selected_fact.metric,
-                    period_end=selected_fact.period_end,
-                    value=_decimal(corrected_raw),
-                    currency=selected_fact.currency,
-                    unit=selected_fact.unit,
-                    statement=selected_fact.statement,
-                    source_name=source_name,
-                    source_url=source_url,
-                    note=note,
+        if save_override:
+            try:
+                if not source_name.strip():
+                    raise ValueError("Für eine Korrektur muss eine Quelle angegeben werden.")
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    upsert_manual_financial_override(
+                        session,
+                        current,
+                        metric=selected_fact.metric,
+                        period_end=selected_fact.period_end,
+                        value=_decimal(corrected_raw),
+                        currency=selected_fact.currency,
+                        unit=selected_fact.unit,
+                        statement=selected_fact.statement,
+                        source_name=source_name,
+                        source_url=source_url,
+                        note=note,
+                    )
+                st.success(
+                    "Korrektur gespeichert. Der importierte Originalwert bleibt erhalten."
                 )
-            st.success("Korrektur gespeichert. Der importierte Originalwert bleibt erhalten.")
-            st.rerun()
-        except (ValueError, AnalysisFrozenError) as exc:
-            st.error(str(exc))
+                st.rerun()
+            except (ValueError, AnalysisFrozenError) as exc:
+                st.error(str(exc))
 
-    manual_rows = [fact for fact in facts if fact.provider == "manual_override"]
-    if manual_rows:
-        with st.expander("Aktive bestätigte Korrekturen", expanded=False):
+        manual_rows = [fact for fact in facts if fact.provider == "manual_override"]
+        if manual_rows:
             st.dataframe(
                 pd.DataFrame(
                     [
@@ -590,7 +736,9 @@ else:
                 width="stretch",
                 hide_index=True,
             )
-            removal_options = {f"{row.period_end.year} · {row.metric}": row for row in manual_rows}
+            removal_options = {
+                f"{row.period_end.year} · {row.metric}": row for row in manual_rows
+            }
             remove_label = st.selectbox(
                 "Bestätigte Korrektur entfernen",
                 list(removal_options),
@@ -610,10 +758,40 @@ else:
                 st.rerun()
 
 # -----------------------------------------------------------------------------
-# Estimates
+# 5. Estimates - optional
 # -----------------------------------------------------------------------------
 st.divider()
-st.subheader("Analystenschätzungen")
+st.subheader("5. Analystenschätzungen – optional")
+st.caption(
+    "SEC und ESEF enthalten veröffentlichte Ist-Daten, aber keinen Analystenkonsens. "
+    "Schätzungen sind deshalb ein separater optionaler Import innerhalb derselben Seite."
+)
+
+if editable and alpha_key_available:
+    if st.button("Analystenschätzungen über Alpha Vantage laden"):
+        provider = AlphaVantageProvider()
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse wurde nicht gefunden.")
+                with st.spinner(f"Lade Analystenschätzungen für {alpha_symbol} …"):
+                    estimate_count = sync_alphavantage_estimates(
+                        session,
+                        current,
+                        provider,
+                        symbol=alpha_symbol,
+                    )
+            if estimate_count:
+                st.success(f"Analystenschätzungen geladen: {estimate_count} Datensätze.")
+            else:
+                st.info("Der Provider hat aktuell keine importierbaren Estimates geliefert.")
+            st.rerun()
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.warning("Analystenschätzungen konnten nicht geladen werden: " + str(exc))
+elif not alpha_key_available:
+    st.caption("Kein Alpha-Vantage-Key hinterlegt; historische Finanzdaten funktionieren trotzdem.")
+
 if not estimates:
     st.caption("Noch keine Analystenschätzungen gespeichert oder vom Provider geliefert.")
 else:
