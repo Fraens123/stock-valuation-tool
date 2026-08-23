@@ -105,6 +105,7 @@ def normalize_esef_xbrl_json(
     payload: dict[str, Any],
     *,
     source_note: str | None = None,
+    source_url: str | None = None,
 ) -> list[NormalizedFinancialFact]:
     """Normalize standard IFRS facts from an xBRL-JSON report.
 
@@ -170,6 +171,7 @@ def normalize_esef_xbrl_json(
             provider_field=concept,
             retrieved_at=retrieved,
             note=source_note,
+            source_url=source_url,
         )
         selected.setdefault((metric, period_end), fact)
 
@@ -350,11 +352,16 @@ class ESEFRegistryProvider:
                 payload = self.get_xbrl_json(filing)
             except ESEFRegistryError:
                 continue
+            source_url = filing.report_url or filing.viewer_url or filing.package_url or filing.json_url
             source_note = (
                 f"filings.xbrl.org filing={filing.api_id}; LEI={filing.lei}; "
                 f"period={filing.period_end}; json={filing.json_url}"
             )
-            for fact in normalize_esef_xbrl_json(payload, source_note=source_note):
+            for fact in normalize_esef_xbrl_json(
+                payload,
+                source_note=source_note,
+                source_url=source_url,
+            ):
                 selected.setdefault((fact.metric, fact.period_end), fact)
 
         return sorted(selected.values(), key=lambda row: (row.period_end, row.metric))
