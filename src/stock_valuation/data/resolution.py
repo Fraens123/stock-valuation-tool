@@ -15,6 +15,7 @@ DEFAULT_PROVIDER_PRIORITY: tuple[str, ...] = (
     "esef_ixbrl",
     "sec_companyfacts",
     "sec_filing_xbrl",
+    "sec_filing_extension",
     "alphavantage",
     "eodhd",
 )
@@ -33,8 +34,9 @@ def load_preferred_financial_facts(
     The function performs no network access and no arithmetic transformation. It only selects
     among facts already persisted in the selected analysis snapshot. Explicit manual overrides
     win, followed by official primary sources and then provider fallbacks. SEC Company Facts wins
-    over the original-filing supplement when both contain the exact same metric/period; the filing
-    supplement is intended to fill gaps, not silently replace the aggregate API.
+    over standard original-filing supplements, which in turn win over a company-extension
+    candidate. Extension candidates can therefore fill a missing metric/period for review without
+    silently replacing a standardized SEC fact.
     """
     query = select(FinancialFactSnapshot).where(
         FinancialFactSnapshot.analysis_id == analysis_id,
