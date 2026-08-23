@@ -219,6 +219,41 @@ def calculate_asml_ebitda_margin_series(
     return calculate_ebitda_margin_series(session, analysis)
 
 
+def _stored_points_match(
+    session: Session,
+    analysis: Analysis,
+    points: list[MetricPoint],
+    *,
+    metric_id: str,
+    basis: str,
+) -> bool:
+    existing = load_metric_series(session, analysis.id, metric_id, basis=basis)
+    if len(existing) != len(points):
+        return False
+
+    expected = [
+        (
+            str(point.period_end.year),
+            point.value,
+            point.unit,
+            point.calculation_version,
+            point.inputs_hash,
+        )
+        for point in points
+    ]
+    stored = [
+        (
+            row.period,
+            row.value,
+            row.unit,
+            row.calculation_version,
+            row.inputs_hash,
+        )
+        for row in existing
+    ]
+    return stored == expected
+
+
 def replace_metric_points(
     session: Session,
     analysis: Analysis,
@@ -227,7 +262,17 @@ def replace_metric_points(
     metric_id: str,
     basis: str = "reported",
 ) -> int:
+    """Synchronize a derived metric series and avoid writes when it is already current."""
     ensure_editable(analysis)
+    if _stored_points_match(
+        session,
+        analysis,
+        points,
+        metric_id=metric_id,
+        basis=basis,
+    ):
+        return len(points)
+
     session.execute(
         delete(MetricSnapshot).where(
             MetricSnapshot.analysis_id == analysis.id,
@@ -252,7 +297,40 @@ def replace_metric_points(
     return len(points)
 
 
+def _clear_metric_points_if_present(
+    session: Session,
+    analysis: Analysis,
+    *,
+    metric_id: str,
+    basis: str = "reported",
+) -> None:
+    existing_id = session.scalar(
+        select(MetricSnapshot.id).where(
+            MetricSnapshot.analysis_id == analysis.id,
+            MetricSnapshot.metric_id == metric_id,
+            MetricSnapshot.basis == basis,
+        ).limit(1)
+    )
+    if existing_id is None:
+        return
+    ensure_editable(analysis)
+    session.execute(
+        delete(MetricSnapshot).where(
+            MetricSnapshot.analysis_id == analysis.id,
+            MetricSnapshot.metric_id == metric_id,
+            MetricSnapshot.basis == basis,
+        )
+    )
+    session.commit()
+
+
 def calculate_and_store_phase_3a(session: Session, analysis: Analysis) -> dict[str, int]:
+    """Keep all methodically active Phase-3a metrics synchronized with Preferred Data.
+
+    This function is safe to call automatically on an editable analysis. Identical metric series
+    cause no database rewrite. If a previously calculable EBITDA series becomes blocked because a
+    required Preferred-Data input is no longer approved, the stale stored series is removed.
+    """
     ebit_points = calculate_ebit_margin_series(session, analysis)
     counts = {
         "ebit_margin": replace_metric_points(
@@ -267,6 +345,12 @@ def calculate_and_store_phase_3a(session: Session, analysis: Analysis) -> dict[s
     try:
         ebitda_points = calculate_ebitda_margin_series(session, analysis)
     except MetricDataQualityError:
+        _clear_metric_points_if_present(
+            session,
+            analysis,
+            metric_id="ebitda_margin",
+            basis="reported",
+        )
         counts["ebitda_margin"] = 0
     else:
         counts["ebitda_margin"] = replace_metric_points(
