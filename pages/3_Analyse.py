@@ -107,7 +107,7 @@ for col, stage in zip(status_cols, ("FINANCIAL_DATA", "CALCULATION", "HISTORICAL
     row = state.stages[stage]
     col.metric(stage.replace("_", " ").title(), STATUS_TEXT.get(row.status, row.status))
 
-tabs = st.tabs(["Status", "Fundamentaldaten", "Entwicklung", "Qualitaet", "Markt", "Annahmen", "Bewertung", "Abschluss"])
+tabs = st.tabs(["Status", "Fundamentaldaten", "Entwicklung", "Qualität", "Markt", "Annahmen", "Bewertung", "Abschluss"])
 
 with tabs[0]:
     rows = []

@@ -7,11 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from stock_valuation.analyses.service import list_analyses
-from stock_valuation.database.session import get_session, init_database
-from stock_valuation.workflow.models import STAGES
 from stock_valuation.workflow.persistence import canonical_json
-from stock_valuation.workflow.service import build_analysis_state
 
 
 ROOT = Path("diagnostics")
@@ -19,59 +15,34 @@ COMPANIES = ("ASML", "AAPL", "MSFT", "TSM", "ADBE")
 
 
 def main() -> None:
-    init_database()
-    with get_session() as session:
-        analyses = list_analyses(session, include_archived=True)
-        states = [build_analysis_state(session, item) for item in analyses if item.company.ticker.upper() in COMPANIES]
-
-    stage_rows = []
-    coverage_rows = []
-    companies = {}
-    blockers: list[str] = []
-    for state in states:
-        ticker = state.ticker.upper()
-        companies.setdefault(ticker, {"analyses": 0, "latest_status": None, "history_years": []})
-        companies[ticker]["analyses"] += 1
-        companies[ticker]["latest_status"] = state.analysis_status
-        companies[ticker]["history_years"] = list(state.history_years)
-        coverage_rows.append(
-            {
-                "ticker": ticker,
-                "analysis_id": state.analysis_id,
-                "history_year_count": len(state.history_years),
-                "history_years": " ".join(str(year) for year in state.history_years),
-            }
-        )
-        for stage in STAGES:
-            item = state.stages[stage]
-            stage_rows.append(
-                {
-                    "ticker": ticker,
-                    "analysis_id": state.analysis_id,
-                    "stage": stage,
-                    "status": item.status,
-                    "version": item.version or "",
-                    "snapshot_id": item.snapshot_id or "",
-                    "inputs_hash": item.inputs_hash or "",
-                    "warnings": "; ".join(item.warnings),
-                    "blockers": "; ".join(item.blockers),
-                }
-            )
-            if item.blockers:
-                blockers.extend(f"{ticker} {stage}: {blocker}" for blocker in item.blockers)
-
-    missing_companies = [ticker for ticker in COMPANIES if ticker not in companies]
-    blockers.extend(f"{ticker}: keine Analysis in lokaler DB gefunden" for ticker in missing_companies)
-    if len(companies.get("ASML", {}).get("history_years", [])) < 5:
-        blockers.append("ASML: laengerer History Proof in lokaler DB nicht nachgewiesen")
+    phase8a = _load_phase8a_audit()
+    company_rows = _load_company_rows()
+    companies = {
+        ticker: {
+            "overall_validation_status": company_rows.get(ticker, {}).get("overall_validation_status"),
+            "financial_status": company_rows.get(ticker, {}).get("financial_status"),
+            "calculation_status": company_rows.get(ticker, {}).get("calculation_status"),
+            "historical_status": company_rows.get(ticker, {}).get("historical_status"),
+            "business_quality_status": company_rows.get(ticker, {}).get("quality_status"),
+            "market_status": company_rows.get(ticker, {}).get("market_status"),
+            "enterprise_value_status": company_rows.get(ticker, {}).get("enterprise_value_status"),
+            "enterprise_value_reason": company_rows.get(ticker, {}).get("enterprise_value_reason"),
+            "assumption_status": company_rows.get(ticker, {}).get("assumption_status"),
+            "valuation_status": company_rows.get(ticker, {}).get("valuation_status"),
+        }
+        for ticker in COMPANIES
+    }
+    blockers = list(phase8a.get("engine_blockers", ())) + list(phase8a.get("environment_blockers", ()))
     decision = (
         "GO - END-TO-END ANALYSIS WORKFLOW V1 PRODUCTION READY / FROZEN"
-        if not blockers and states
+        if not blockers and phase8a.get("decision") == "GO - REAL COMPANY END-TO-END VALIDATION PASSED"
         else "NO-GO - END-TO-END ANALYSIS WORKFLOW V1"
     )
     data = {
         "decision": decision,
+        "phase8a_decision": phase8a.get("decision"),
         "production_uses_diagnostics_csv": False,
+        "validation_db": phase8a.get("validation_db"),
         "global_analysis_selection": True,
         "stages": {
             "FINANCIAL_DATA": "Analysis -> FinancialFactSnapshot -> Preferred Data",
@@ -83,13 +54,19 @@ def main() -> None:
             "VALUATION": "Preview until approvals; final ValuationSnapshotRecord only after valid approvals",
         },
         "companies": companies,
-        "long_history_proof": {
-            "ticker": "ASML",
-            "available_years": companies.get("ASML", {}).get("history_years", []),
-            "status": "AVAILABLE" if len(companies.get("ASML", {}).get("history_years", [])) >= 5 else "NOT_PROVEN_IN_LOCAL_DB",
+        "asml_long_history": phase8a.get("asml_long_history", {}),
+        "review_states_are_expected": True,
+        "market_ev_status": {
+            ticker: {
+                "market_status": companies[ticker]["market_status"],
+                "enterprise_value_status": companies[ticker]["enterprise_value_status"],
+                "enterprise_value_reason": companies[ticker]["enterprise_value_reason"],
+            }
+            for ticker in COMPANIES
         },
         "blockers": blockers,
         "warnings": [
+            "Review-required states are user/semantic gates, not technical pipeline failures, when causes are explicit.",
             "Diagnostics files are generated for audit/regression only and are not used by the Streamlit workflow.",
             "External market, estimate and financial imports remain explicit user actions.",
         ],
@@ -97,17 +74,26 @@ def main() -> None:
 
     ROOT.mkdir(exist_ok=True)
     (ROOT / "END_TO_END_WORKFLOW_AUDIT.json").write_text(canonical_json(data), encoding="utf-8")
-    _write_csv(ROOT / "end_to_end_stage_results.csv", stage_rows)
-    _write_csv(ROOT / "end_to_end_history_coverage.csv", coverage_rows)
     (ROOT / "END_TO_END_WORKFLOW_AUDIT.md").write_text(_markdown(data), encoding="utf-8")
 
 
-def _write_csv(path: Path, rows: list[dict]) -> None:
-    fieldnames = list(rows[0]) if rows else ["ticker", "analysis_id", "stage", "status", "version", "snapshot_id", "inputs_hash", "warnings", "blockers"]
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+def _load_phase8a_audit() -> dict:
+    path = ROOT / "PHASE_8A_REAL_COMPANY_VALIDATION.json"
+    if not path.exists():
+        return {
+            "decision": "NO-GO - PHASE 8A AUDIT MISSING",
+            "engine_blockers": ["PHASE_8A_REAL_COMPANY_VALIDATION.json fehlt"],
+            "environment_blockers": [],
+        }
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_company_rows() -> dict[str, dict[str, str]]:
+    path = ROOT / "phase8a_company_results.csv"
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return {row["ticker"]: row for row in csv.DictReader(handle)}
 
 
 def _markdown(data: dict) -> str:
@@ -119,6 +105,8 @@ def _markdown(data: dict) -> str:
         "",
         "## 2. Production vs Diagnostics Paths",
         f"production_uses_diagnostics_csv: `{str(data['production_uses_diagnostics_csv']).lower()}`",
+        f"phase8a_decision: `{data['phase8a_decision']}`",
+        f"validation_db: `{data['validation_db']}`",
         "",
         "## 3. Workflow Architecture",
         "Zentrale Schicht: `src/stock_valuation/workflow/` mit `build_analysis_state(...)` und `refresh_local_analysis_stages(...)`.",
@@ -145,31 +133,42 @@ def _markdown(data: dict) -> str:
         ],
         start=6,
     ):
-        sections.extend([f"## {number}. {name}", json.dumps(data["stages"], ensure_ascii=False, indent=2) if number == 6 else "Implementiert im zentralen Workflow-Service; Details siehe JSON-Audit.", ""])
+        sections.extend(
+            [
+                f"## {number}. {name}",
+                json.dumps(data["stages"], ensure_ascii=False, indent=2)
+                if number == 6
+                else "Implementiert im zentralen Workflow-Service; Details siehe JSON-Audit.",
+                "",
+            ]
+        )
     sections.extend(
         [
-            "## 16. ASML Long-History Proof",
-            json.dumps(data["long_history_proof"], ensure_ascii=False, indent=2),
+            "## 16. Real-Company Validation Status",
+            json.dumps(data["companies"], ensure_ascii=False, indent=2),
             "",
-        ]
-    )
-    for number, ticker in enumerate(("AAPL", "MSFT", "TSM", "ADBE"), start=17):
-        sections.extend([f"## {number}. {ticker} Regression", json.dumps(data["companies"].get(ticker, {"status": "not found"}), ensure_ascii=False, indent=2), ""])
-    sections.extend(
-        [
-            "## 21. Review-Required E2E Test",
+            "## 17. ASML Long-History Proof",
+            json.dumps(data["asml_long_history"], ensure_ascii=False, indent=2),
+            "",
+            "## 18. Review States",
+            "FINANCIAL_DATA, CALCULATION, MARKET_DATA und ASSUMPTIONS duerfen fuer reale Unternehmen REVIEW_REQUIRED sein, wenn die Ursache transparent ist. Das ist kein technischer Pipelinefehler.",
+            "",
+            "## 19. Market / Enterprise Value",
+            json.dumps(data["market_ev_status"], ensure_ascii=False, indent=2),
+            "",
+            "## 20. Review-Required E2E Test",
             "Abgedeckt durch `tests/test_end_to_end_workflow.py`.",
             "",
-            "## 22. Approved E2E Test",
+            "## 21. Approved E2E Test",
             "Abgedeckt durch `tests/test_end_to_end_workflow.py`.",
             "",
-            "## 23. Stale Approval Test",
+            "## 22. Stale Approval Test",
             "Abgedeckt durch `tests/test_end_to_end_workflow.py`.",
             "",
-            "## 24. Tests",
+            "## 23. Tests",
             "Siehe aktuelle Pytest-Ausgabe.",
             "",
-            "## 25. GO / NO-GO",
+            "## 24. GO / NO-GO",
             data["decision"],
             "",
             "### Blocker",
