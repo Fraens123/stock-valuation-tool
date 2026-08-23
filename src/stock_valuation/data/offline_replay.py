@@ -65,6 +65,16 @@ def _identity_value(text: str, label: str) -> str:
     return match.group(1).strip().strip("`")
 
 
+def _identity_value_any(text: str, labels: tuple[str, ...]) -> str:
+    for label in labels:
+        match = re.search(rf"^- {re.escape(label)}:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+        if match:
+            return match.group(1).strip().strip("`")
+    raise OfflineReplayError(
+        "Im Prüfpaket fehlt eine erwartete Identitätsangabe: " + ", ".join(labels)
+    )
+
+
 def parse_review_package(content: bytes | str) -> ParsedReviewPackage:
     text = _decode(content)
     block = re.search(
@@ -88,7 +98,10 @@ def parse_review_package(content: bytes | str) -> ParsedReviewPackage:
     exchange_text = _identity_value(text, "Börse/Region")
     as_of_raw = _identity_value(text, "Analyse-Stichtag")
     revision_raw = _identity_value(text, "Revision")
-    years_raw = _identity_value(text, "Zu prüfende Geschäftsjahre")
+    years_raw = _identity_value_any(
+        text,
+        ("Zu prüfende Geschäftsjahre", "Vollständig zu prüfende aktuelle Geschäftsjahre"),
+    )
 
     try:
         as_of_date = date.fromisoformat(as_of_raw)
@@ -119,7 +132,10 @@ def _decimal(value: Any) -> Decimal | None:
         raise OfflineReplayError(f"Ungültiger Zahlenwert im Prüfpaket: {value!r}") from exc
 
 
-def _validate_result_against_package(parsed: ParsedReviewPackage, content: bytes | str) -> dict[str, Any]:
+def _validate_result_against_package(
+    parsed: ParsedReviewPackage,
+    content: bytes | str,
+) -> dict[str, Any]:
     text = _decode(content)
     try:
         payload = json.loads(text)
@@ -157,9 +173,9 @@ def replay_review_files(
     """Rebuild a development snapshot from an exported package and its review result.
 
     This is intentionally an offline/development path. It reconstructs only the facts contained in
-    the review package (typically 2-5 years), not the complete historical Alpha Vantage dataset.
-    Old database fact IDs are remapped to newly created rows and the result package is rewritten in
-    memory to the new package identity before it is passed through the normal review importer.
+    the review package, not the complete historical provider dataset. Old database fact IDs are
+    remapped to newly created rows and the result package is rewritten in memory to the new package
+    identity before it is passed through the normal review importer.
     """
     parsed = parse_review_package(package_content)
     old_result = _validate_result_against_package(parsed, result_content)
@@ -215,7 +231,7 @@ def replay_review_files(
             source_type=str(row.get("source_type") or "").strip() or None,
             source_url=str(row.get("source_url") or "").strip() or None,
             is_cross_check_only=False,
-            note="Offline-Replay aus exportiertem ChatGPT-Prüfpaket.",
+            note=str(row.get("note") or "").strip() or "Offline-Replay aus exportiertem ChatGPT-Prüfpaket.",
         )
         session.add(fact)
         session.flush()
@@ -245,7 +261,9 @@ def replay_review_files(
             json.dumps(transformed, ensure_ascii=False).encode("utf-8"),
         )
     except AIReviewError as exc:
-        raise OfflineReplayError(f"Rekonstruierte Prüfergebnisse konnten nicht importiert werden: {exc}") from exc
+        raise OfflineReplayError(
+            f"Rekonstruierte Prüfergebnisse konnten nicht importiert werden: {exc}"
+        ) from exc
 
     return OfflineReplaySummary(
         company_id=company.id,
