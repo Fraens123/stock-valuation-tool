@@ -26,6 +26,7 @@ class AIReviewError(RuntimeError):
 
 REVIEW_SCHEMA_VERSION = "1.0"
 VALID_VERDICTS = {"PASS", "WARN", "FAIL", "UNKLAR"}
+EXTENSION_REVIEW_WINDOW_YEARS = 10
 
 
 @dataclass(frozen=True)
@@ -57,22 +58,48 @@ def _review_facts(
     analysis: Analysis,
     years: int,
 ) -> list[FinancialFactSnapshot]:
+    """Return recent full facts plus unresolved SEC extension candidates from the 10-year window.
+
+    This avoids forcing a full 10-year deep review just because one old filing uses a company-
+    specific XBRL concept. The normal selected years remain fully reviewed; extension candidates
+    from the historical mapping window are appended so one ChatGPT package can close those gaps.
+    """
     preferred = load_preferred_financial_facts(session, analysis.id)
-    available_years = sorted({fact.period_end.year for fact in preferred if fact.value is not None})
-    selected_years = set(available_years[-max(1, years) :])
-    return [
+    eligible = [
         fact
         for fact in preferred
         if fact.value is not None
-        and fact.period_end.year in selected_years
         and not fact.is_cross_check_only
         and fact.statement in {"income_statement", "balance_sheet", "cash_flow"}
     ]
+    available_years = sorted({fact.period_end.year for fact in eligible})
+    selected_years = set(available_years[-max(1, years) :])
+    recent = [fact for fact in eligible if fact.period_end.year in selected_years]
+
+    if available_years:
+        last_year = available_years[-1]
+        first_mapping_year = last_year - EXTENSION_REVIEW_WINDOW_YEARS + 1
+        extension_candidates = [
+            fact
+            for fact in eligible
+            if fact.provider == "sec_filing_extension"
+            and first_mapping_year <= fact.period_end.year <= last_year
+        ]
+    else:
+        extension_candidates = []
+
+    unique = {fact.id: fact for fact in [*recent, *extension_candidates]}
+    return sorted(unique.values(), key=lambda row: (row.period_end, row.statement, row.metric))
 
 
-def _package_payload(analysis: Analysis, facts: list[FinancialFactSnapshot], years: int) -> dict[str, Any]:
+def _package_payload(
+    analysis: Analysis,
+    facts: list[FinancialFactSnapshot],
+    years: int,
+) -> dict[str, Any]:
     # Keep this payload limited to snapshot identity/data. The package_id therefore remains stable
     # when explanatory review instructions improve, while still changing whenever snapshot facts do.
+    mapping_candidate_count = sum(fact.provider == "sec_filing_extension" for fact in facts)
     return {
         "schema_version": REVIEW_SCHEMA_VERSION,
         "analysis": {
@@ -85,6 +112,7 @@ def _package_payload(analysis: Analysis, facts: list[FinancialFactSnapshot], yea
             "revision": analysis.revision_number,
         },
         "years_requested": years,
+        "mapping_candidate_count": mapping_candidate_count,
         "facts": [
             {
                 "fact_id": fact.id,
@@ -98,8 +126,9 @@ def _package_payload(analysis: Analysis, facts: list[FinancialFactSnapshot], yea
                 "provider_field": fact.provider_field,
                 "source_type": fact.source_type,
                 "source_url": fact.source_url,
+                "note": fact.note,
             }
-            for fact in sorted(facts, key=lambda row: (row.period_end, row.statement, row.metric))
+            for fact in facts
         ],
     }
 
@@ -131,6 +160,7 @@ def build_chatgpt_review_package(
     deterministic = run_deterministic_audit(session, analysis)
     selected_years = {fact.period_end.year for fact in facts}
     checks = [item for item in deterministic if item.year in selected_years]
+    mapping_candidate_count = int(payload.get("mapping_candidate_count") or 0)
 
     ticker = _safe_filename_part(analysis.company.ticker.upper())
     result_filename = (
@@ -162,6 +192,13 @@ def build_chatgpt_review_package(
         indent=2,
     )
 
+    mapping_note = (
+        f" Zusätzlich enthält das Paket {mapping_candidate_count} noch nicht freigegebene "
+        f"SEC-Company-Extension-Kandidat(en) aus dem letzten {EXTENSION_REVIEW_WINDOW_YEARS}-Jahres-Fenster."
+        if mapping_candidate_count
+        else ""
+    )
+
     content = f"""# ChatGPT-Prüfpaket – historische Finanzdaten
 
 ## Auftrag an ChatGPT
@@ -182,8 +219,11 @@ Die JSON-Datei wird anschließend in das lokale Aktienanalyse-Tool zurückgelade
 - Börse/Region: {analysis.company.exchange or 'nicht hinterlegt'}
 - Analyse-Stichtag: {analysis.as_of_date}
 - Revision: R{analysis.revision_number}
-- Zu prüfende Geschäftsjahre: {years}
+- Vollständig zu prüfende aktuelle Geschäftsjahre: {years}
 - Fakten im Paket: {len(facts)}
+- SEC-Company-Extension-Mappingkandidaten: {mapping_candidate_count}
+
+Die ausgewählten aktuellen Geschäftsjahre werden vollständig geprüft.{mapping_note}
 
 ## Verbindliche Prüfregeln
 
@@ -193,19 +233,21 @@ Die JSON-Datei wird anschließend in das lokale Aktienanalyse-Tool zurückgelade
 4. Prüfe Geschäftsjahr, Berichtswährung, Einheit, Rechnungslegungsstandard und Konsolidierungskreis.
 5. Verwechsle keine Quartalswerte mit Jahreswerten.
 6. Providerfelder können semantisch breiter oder enger sein als die offizielle Abschlusszeile. Die unten angegebenen **internen Felddefinitionen sind verbindlich**. Wenn die Definition nicht identisch ist: `UNKLAR` oder `FAIL` mit Erklärung, nicht gewaltsam gleichsetzen.
-7. Beachte Restatements. Verwende die am Analyse-Stichtag maßgebliche veröffentlichte Zahl, soweit eindeutig feststellbar.
-8. `official_value` muss immer in derselben Basiseinheit wie der importierte Wert stehen. Beispiel: 281724000000 statt 281724 Mio.
-9. Wenn keine belastbare Primärquelle gefunden wird: `official_value=null`, `status=UNKLAR`.
-10. Statusregeln:
+7. **Sonderregel `provider=sec_filing_extension`:** Das ist nur ein maschinell erkannter Kandidat aus einem firmeneigenen XBRL-Tag, keine bereits akzeptierte Zuordnung. Prüfe `provider_field`, `note`, den offiziellen Filing-Link und die wirtschaftliche Bedeutung besonders streng. `PASS` ist nur erlaubt, wenn der Kandidat exakt dasselbe interne Feld abbildet.
+8. **Bei `short_term_debt`:** Prüfe ausdrücklich, ob der Kandidat sämtliche kurzfristigen zinstragenden Schulden gemäß interner Definition umfasst. Falls mehrere Komponenten addiert werden müssen, darf der einzelne Kandidat nicht `PASS` bekommen. Gib bei sicher ermittelbarer Gesamtsumme `FAIL` mit der korrekten `official_value` und offizieller Quelle zurück.
+9. Beachte Restatements. Verwende die am Analyse-Stichtag maßgebliche veröffentlichte Zahl, soweit eindeutig feststellbar.
+10. `official_value` muss immer in derselben Basiseinheit wie der importierte Wert stehen. Beispiel: 281724000000 statt 281724 Mio.
+11. Wenn keine belastbare Primärquelle gefunden wird: `official_value=null`, `status=UNKLAR`.
+12. Statusregeln:
     - `PASS`: gleicher wirtschaftlicher Sachverhalt und <= 0,5 % Abweichung.
     - `WARN`: gleicher Sachverhalt und > 0,5 bis <= 2 % Abweichung oder geringe nachvollziehbare Rundungs-/Darstellungsfrage.
-    - `FAIL`: > 2 % Abweichung oder klar falsche semantische Zuordnung.
+    - `FAIL`: > 2 % Abweichung oder klar falsche/zu enge/zu breite semantische Zuordnung.
     - `UNKLAR`: keine sichere Zuordnung/Primärquelle.
-11. Für `WARN`/`FAIL` muss bei sicherer offizieller Zahl eine konkrete offizielle Quellen-URL angegeben werden.
-12. Ändere keine Daten. Du lieferst ausschließlich Prüfergebnisse.
-13. Gib **genau einen Finding-Eintrag für jeden `fact_id`** zurück und erfinde keine zusätzlichen IDs.
-14. Die Felder `package_id`, `schema_version`, `years_requested` und die Unternehmensidentität müssen unverändert übernommen werden.
-15. Erstelle am Ende die JSON-Datei zum Herunterladen. Kein Markdown in der JSON-Datei.
+13. Für `WARN`/`FAIL` muss bei sicherer offizieller Zahl eine konkrete offizielle Quellen-URL angegeben werden.
+14. Ändere keine Daten. Du lieferst ausschließlich Prüfergebnisse.
+15. Gib **genau einen Finding-Eintrag für jeden `fact_id`** zurück und erfinde keine zusätzlichen IDs.
+16. Die Felder `package_id`, `schema_version`, `years_requested` und die Unternehmensidentität müssen unverändert übernommen werden.
+17. Erstelle am Ende die JSON-Datei zum Herunterladen. Kein Markdown in der JSON-Datei.
 
 ## Verbindliche interne Felddefinitionen
 
@@ -377,8 +419,12 @@ def import_chatgpt_review_result(
                 verdict=verdict,
                 provider=fact.provider,
                 provider_field=fact.provider_field,
-                official_label=(str(item.get("official_label")) if item.get("official_label") else None),
-                source_title=(str(item.get("source_title")) if item.get("source_title") else None),
+                official_label=(
+                    str(item.get("official_label")) if item.get("official_label") else None
+                ),
+                source_title=(
+                    str(item.get("source_title")) if item.get("source_title") else None
+                ),
                 source_url=(str(item.get("source_url")) if item.get("source_url") else None),
                 reason=str(item.get("reason") or ""),
             )
@@ -431,7 +477,9 @@ def accept_ai_review_finding(
         currency=finding.currency,
         unit="currency",
         statement=finding.statement,
-        source_name=finding.source_title or finding.official_label or "ChatGPT-geprüfte Primärquelle",
+        source_name=(
+            finding.source_title or finding.official_label or "ChatGPT-geprüfte Primärquelle"
+        ),
         source_url=finding.source_url,
         note=(
             f"Vom Nutzer aus ChatGPT-Dateiprüfung übernommen. {finding.reason or ''} "
