@@ -13,6 +13,17 @@ from stock_valuation.data.providers.response_cache import ProviderResponseCache
 GLEIF_BASE_URL = "https://api.gleif.org/api/v1"
 LEI_PATTERN = re.compile(r"^[A-Z0-9]{20}$")
 
+# Legal-form abbreviations are frequently punctuated differently across registries/providers.
+# Normalize only well-known suffixes; never merge arbitrary initials inside an entity name.
+CORPORATE_SUFFIX_ALIASES: dict[tuple[str, ...], str] = {
+    ("n", "v"): "nv",
+    ("s", "a"): "sa",
+    ("s", "p", "a"): "spa",
+    ("a", "g"): "ag",
+    ("p", "l", "c"): "plc",
+    ("l", "t", "d"): "ltd",
+}
+
 
 class GLEIFProviderError(RuntimeError):
     pass
@@ -27,7 +38,19 @@ class LEICandidate:
 
 
 def _normalized_name(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+    cleaned = value.casefold().replace(".", "").replace(",", " ")
+    tokens = re.findall(r"[a-z0-9]+", cleaned)
+
+    for parts, replacement in sorted(
+        CORPORATE_SUFFIX_ALIASES.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if len(tokens) >= len(parts) and tuple(tokens[-len(parts) :]) == parts:
+            tokens = [*tokens[: -len(parts)], replacement]
+            break
+
+    return " ".join(tokens)
 
 
 class GLEIFProvider:
@@ -125,7 +148,7 @@ class GLEIFProvider:
         return [candidate for candidate in candidates if candidate is not None]
 
     def resolve_lei(self, legal_name: str, *, country: str | None = None) -> LEICandidate | None:
-        """Resolve only a sufficiently safe legal-name match; never guess among fuzzy entities."""
+        """Resolve only a sufficiently safe legal-name match; never guess among ambiguous entities."""
         candidates = self.search_by_name(legal_name, limit=20)
         if not candidates:
             return None
@@ -133,17 +156,20 @@ class GLEIFProvider:
         country_code = (country or "").strip().upper()
 
         exact = [row for row in candidates if _normalized_name(row.legal_name) == target]
+        if not exact:
+            return None
+
         if country_code:
             country_exact = [row for row in exact if row.country == country_code]
             if len(country_exact) == 1:
                 return country_exact[0]
+            # With an explicit country, never fall back to an entity from another jurisdiction.
+            return None
+
+        # Without a country discriminator, any multiple exact legal-name match is ambiguous,
+        # even if only one record happens to be currently ISSUED.
         if len(exact) == 1:
             return exact[0]
-
-        # Prefer an active/issued record only if it is the sole exact-name candidate.
-        active = [row for row in exact if row.registration_status == "ISSUED"]
-        if len(active) == 1:
-            return active[0]
         return None
 
     def get_by_lei(self, lei: str) -> LEICandidate | None:
