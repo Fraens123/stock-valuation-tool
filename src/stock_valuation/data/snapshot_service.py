@@ -39,7 +39,7 @@ def _add_financial_fact(
             provider=fact.provider,
             provider_field=fact.provider_field,
             source_type=source_type,
-            source_url=source_url,
+            source_url=fact.source_url or source_url,
             filing_date=fact.filing_date,
             retrieved_at=fact.retrieved_at,
             is_restated=False,
