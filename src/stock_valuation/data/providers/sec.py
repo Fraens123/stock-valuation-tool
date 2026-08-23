@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import requests
 
-from stock_valuation.data.types import NormalizedFinancialFact
 from stock_valuation.data.providers.base import ProviderResponseError
+from stock_valuation.data.providers.response_cache import ProviderResponseCache
+from stock_valuation.data.types import NormalizedFinancialFact
 
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -137,6 +140,17 @@ class SECProviderError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class SECCompanyCandidate:
+    cik: str
+    ticker: str
+    name: str
+
+
+def _normalized_name(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
 class SECCompanyFactsProvider:
     """Official SEC EDGAR XBRL adapter for companies that report to the SEC.
 
@@ -144,9 +158,19 @@ class SECCompanyFactsProvider:
     for example `Your Name your.email@example.com`. No API key is required.
     """
 
-    def __init__(self, user_agent: str | None = None, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        user_agent: str | None = None,
+        timeout: int = 30,
+        *,
+        use_cache: bool = True,
+    ) -> None:
         self.user_agent = (user_agent or os.getenv("SEC_USER_AGENT") or "").strip()
         self.timeout = timeout
+        self.use_cache = use_cache
+        self.cache = ProviderResponseCache("sec")
+        self.cache_hits = 0
+        self.network_requests = 0
         if not self.user_agent:
             raise ValueError(
                 "SEC_USER_AGENT fehlt. In `.env` z. B. `SEC_USER_AGENT=Name email@example.com` "
@@ -154,12 +178,20 @@ class SECCompanyFactsProvider:
             )
 
     def _get_json(self, url: str) -> dict[str, Any]:
+        cache_params = {"url": url}
+        if self.use_cache:
+            cached = self.cache.get("GET", cache_params)
+            if cached is not None:
+                self.cache_hits += 1
+                return cached
+
         headers = {
             "User-Agent": self.user_agent,
             "Accept-Encoding": "gzip, deflate",
         }
         try:
             response = requests.get(url, headers=headers, timeout=self.timeout)
+            self.network_requests += 1
             response.raise_for_status()
             payload = response.json()
         except requests.RequestException as exc:
@@ -168,7 +200,42 @@ class SECCompanyFactsProvider:
             raise ProviderResponseError("SEC lieferte keine gültige JSON-Antwort.") from exc
         if not isinstance(payload, dict):
             raise ProviderResponseError("SEC lieferte ein unerwartetes Antwortformat.")
+        if self.use_cache:
+            self.cache.put("GET", cache_params, payload)
         return payload
+
+    def search_companies(self, query: str, *, limit: int = 10) -> list[SECCompanyCandidate]:
+        """Search the SEC's public ticker/CIK directory locally after one cached download."""
+        term = query.strip()
+        if not term:
+            return []
+        payload = self._get_json(SEC_TICKERS_URL)
+        normalized_term = _normalized_name(term)
+        ticker_term = term.upper()
+        scored: list[tuple[tuple[int, int, str], SECCompanyCandidate]] = []
+        for row in payload.values():
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or "").strip().upper()
+            name = str(row.get("title") or "").strip()
+            cik = str(row.get("cik_str") or "").zfill(10)
+            if not ticker or not name or not cik:
+                continue
+            normalized_name = _normalized_name(name)
+            if ticker == ticker_term:
+                rank = 0
+            elif normalized_name == normalized_term:
+                rank = 1
+            elif ticker.startswith(ticker_term) and ticker_term:
+                rank = 2
+            elif normalized_term and normalized_term in normalized_name:
+                rank = 3
+            else:
+                continue
+            candidate = SECCompanyCandidate(cik=cik, ticker=ticker, name=name)
+            scored.append(((rank, len(name), ticker), candidate))
+        scored.sort(key=lambda item: item[0])
+        return [candidate for _, candidate in scored[: max(1, int(limit))]]
 
     def resolve_cik(self, ticker: str) -> tuple[str, str] | None:
         payload = self._get_json(SEC_TICKERS_URL)
@@ -182,6 +249,16 @@ class SECCompanyFactsProvider:
             title = str(row.get("title") or normalized)
             return cik, title
         return None
+
+    def resolve_company(self, ticker: str, name: str | None = None) -> SECCompanyCandidate | None:
+        direct = self.resolve_cik(ticker)
+        if direct is not None:
+            return SECCompanyCandidate(cik=direct[0], ticker=ticker.strip().upper(), name=direct[1])
+        if not name:
+            return None
+        target = _normalized_name(name)
+        exact = [row for row in self.search_companies(name, limit=20) if _normalized_name(row.name) == target]
+        return exact[0] if len(exact) == 1 else None
 
     def get_company_facts(self, cik: str) -> dict[str, Any]:
         normalized = str(cik).strip().replace("CIK", "").zfill(10)
