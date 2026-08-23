@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
+from datetime import date
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from stock_valuation.valuation.models import (
     VALUATION_ENGINE_VERSION,
@@ -15,6 +18,24 @@ from stock_valuation.valuation.models import (
 )
 
 
+def _canonical_default(value):
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return str(value)
+
+
+def canonical_json(payload: object) -> str:
+    return json.dumps(payload, default=_canonical_default, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_hash(payload: object) -> str:
+    return stable_hash((canonical_json(payload),))
+
+
 def assumptions_payload(
     scenarios: tuple[DCFScenario, ...],
     *,
@@ -26,6 +47,7 @@ def assumptions_payload(
     generic = all(item.assumption_source == "GENERIC_V1_DEFAULT" for item in scenarios)
     return {
         "assumption_set": "GENERIC_V1_DEFAULT" if generic else "CUSTOM",
+        "assumption_source": "GENERIC_V1_DEFAULT" if generic else "CUSTOM_EXPLICIT",
         "scenarios": [asdict(item) for item in scenarios],
         "normalization_method": normalization_method,
         "outlier_threshold": outlier_threshold,
@@ -51,10 +73,10 @@ def create_valuation_snapshot(
     historical_context: dict,
     created_at: str | None = None,
 ) -> ValuationSnapshot:
-    assumptions_hash = stable_hash((repr(assumptions),))
+    assumptions_hash = canonical_hash(assumptions)
     result_hashes = tuple(item.inputs_hash for item in valuation_results)
-    quality_context_hash = stable_hash((repr(quality_context),))
-    historical_context_hash = stable_hash((repr(historical_context),))
+    quality_context_hash = canonical_hash(quality_context)
+    historical_context_hash = canonical_hash(historical_context)
     inputs_hash = stable_hash(
         tuple(item.inputs_hash for item in normalized_inputs)
         + result_hashes
@@ -62,8 +84,10 @@ def create_valuation_snapshot(
             quality_context_hash,
             historical_context_hash,
             market.market_snapshot_id,
+            f"market_snapshot_id:{market.market_snapshot_id}",
             market.inputs_hash,
             assumptions_hash,
+            f"assumptions_hash:{assumptions_hash}",
             VALUATION_ENGINE_VERSION,
         )
     )
@@ -77,7 +101,18 @@ def create_valuation_snapshot(
             VALUATION_ENGINE_VERSION,
         )
     )
-    input_refs = tuple(ref for item in normalized_inputs for ref in item.input_refs) + market.input_refs
+    input_refs = (
+        tuple(ref for item in normalized_inputs for ref in item.input_refs)
+        + tuple(ref for item in valuation_results for ref in item.input_refs)
+        + tuple(historical_context.get("input_refs", ()))
+        + market.input_refs
+        + (
+            f"quality_context_hash:{quality_context_hash}",
+            f"historical_context_hash:{historical_context_hash}",
+            f"market_snapshot_id:{market.market_snapshot_id}",
+            f"assumptions_hash:{assumptions_hash}",
+        )
+    )
     return ValuationSnapshot(
         analysis_id=analysis_id,
         analysis_as_of_date=market.analysis_as_of_date,

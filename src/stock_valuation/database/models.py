@@ -251,6 +251,30 @@ class MarketDataSnapshotRecord(Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ValuationSnapshotRecord(Base):
+    __tablename__ = "valuation_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    snapshot_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    analysis_as_of_date: Mapped[date] = mapped_column(Date, index=True)
+    market_snapshot_id: Mapped[str] = mapped_column(String(160), index=True)
+    market_data_version: Mapped[str] = mapped_column(String(80))
+    financial_data_reference: Mapped[str] = mapped_column(Text)
+    calculation_version: Mapped[str] = mapped_column(String(80))
+    historical_analysis_version: Mapped[str] = mapped_column(String(80))
+    quality_version: Mapped[str] = mapped_column(String(80))
+    valuation_version: Mapped[str] = mapped_column(String(80))
+    assumptions_hash: Mapped[str] = mapped_column(String(128), index=True)
+    inputs_hash: Mapped[str] = mapped_column(String(128), index=True)
+    ticker: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    base_fair_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    trading_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    assumption_source: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class QualitativeAssessment(Base):
     __tablename__ = "qualitative_assessments"
 

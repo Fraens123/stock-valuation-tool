@@ -1,0 +1,17 @@
+{
+  "blockers": [],
+  "checks": {
+    "append_only_idempotent": true,
+    "canonical_hash_reproducible": true,
+    "contexts_and_warnings_after_reload": true,
+    "market_snapshot_persisted_linkage": true,
+    "missing_market_snapshot_blocked": true,
+    "quality_context_changes_hash_only": true,
+    "snapshot_id_collision_blocked": true,
+    "survives_new_db_session": true,
+    "valuation_math_changed": false,
+    "valuation_snapshots_table_exists": true,
+    "wrong_analysis_blocked": true
+  },
+  "decision": "GO – VALUATION ENGINE V1 PRODUCTION READY / FROZEN"
+}

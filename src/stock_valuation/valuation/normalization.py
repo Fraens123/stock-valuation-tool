@@ -58,6 +58,8 @@ def normalize_three_year_metric(
         value = Decimal(str(median(values)))
         method = "three_year_median"
     issues = _outlier_issues(values)
+    if method == "three_year_median" and len(usable) == 2:
+        issues = issues + ("PARTIAL_NORMALIZATION_WINDOW",)
     return NormalizedValue(
         metric_id,
         method,

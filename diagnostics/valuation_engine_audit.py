@@ -29,6 +29,7 @@ from stock_valuation.valuation.models import (
 from stock_valuation.valuation.multiples import current_market_multiples
 from stock_valuation.valuation.normalization import normalize_three_year_metric
 from stock_valuation.valuation.snapshot import assumptions_payload, create_valuation_snapshot
+from stock_valuation.valuation.snapshot import canonical_hash
 from stock_valuation.valuation.summary import dcf_summary
 
 
@@ -203,7 +204,7 @@ def _quality_context() -> dict[str, dict[str, str]]:
             if row["quality_version"]:
                 context.setdefault("quality_version", row["quality_version"])
     for context in output.values():
-        context["context_hash"] = stable_hash((repr(context),))
+        context["context_hash"] = canonical_hash(context)
     return output
 
 
@@ -263,7 +264,7 @@ def _historical_context() -> dict[str, dict[str, object]]:
             target["missing_years"][row["metric_id"]] = row["value"]
     for target in context.values():
         target["historical_window"] = sorted(target["historical_window"])
-        target["context_hash"] = stable_hash(tuple(target["input_refs"]) + (repr(target),))
+        target["context_hash"] = canonical_hash(target)
     return context
 
 
@@ -651,6 +652,19 @@ def _markdown(payload: dict) -> str:
         "",
         "- Diagnostics derive a deterministic market_snapshot_id from ticker, analysis date, market input hashes, and market data version.",
         "- Production callers can provide a persistent market_snapshot_id through MarketSnapshotInput.",
+        "- Diagnostic rows are marked as DIAGNOSTIC_SNAPSHOT_REFERENCE unless persisted through valuation_snapshots.",
+        "- Production persistence requires PERSISTED_MARKET_SNAPSHOT_REFERENCE via market_data_snapshots.",
+        "",
+        "## Diagnostics Mode",
+        "",
+        "- diagnostics/valuation_engine_audit.py reads frozen CSV artifacts and produces reproducible diagnostic snapshots.",
+        "- This mode does not claim that the CSV-derived market_snapshot_id is already stored in market_data_snapshots.",
+        "",
+        "## Production Persistence Mode",
+        "",
+        "- stock_valuation.valuation.persistence persists append-only ValuationSnapshotRecord rows in valuation_snapshots.",
+        "- Production persistence verifies that market_snapshot_id exists in market_data_snapshots and belongs to the same analysis_id.",
+        "- Missing or cross-analysis market snapshots block persistence with VALUATION_NOT_READY.",
         "",
         "## Assumption Snapshot",
         "",

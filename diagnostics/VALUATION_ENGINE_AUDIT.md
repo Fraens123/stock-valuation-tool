@@ -44,6 +44,19 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 
 - Diagnostics derive a deterministic market_snapshot_id from ticker, analysis date, market input hashes, and market data version.
 - Production callers can provide a persistent market_snapshot_id through MarketSnapshotInput.
+- Diagnostic rows are marked as DIAGNOSTIC_SNAPSHOT_REFERENCE unless persisted through valuation_snapshots.
+- Production persistence requires PERSISTED_MARKET_SNAPSHOT_REFERENCE via market_data_snapshots.
+
+## Diagnostics Mode
+
+- diagnostics/valuation_engine_audit.py reads frozen CSV artifacts and produces reproducible diagnostic snapshots.
+- This mode does not claim that the CSV-derived market_snapshot_id is already stored in market_data_snapshots.
+
+## Production Persistence Mode
+
+- stock_valuation.valuation.persistence persists append-only ValuationSnapshotRecord rows in valuation_snapshots.
+- Production persistence verifies that market_snapshot_id exists in market_data_snapshots and belongs to the same analysis_id.
+- Missing or cross-analysis market snapshots block persistence with VALUATION_NOT_READY.
 
 ## Assumption Snapshot
 
@@ -66,7 +79,7 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 
 - Latest fiscal year used: FY2025
 - Market snapshot ID: c21bae2ef59abe4e07ebf74fd6a7269bdba02514ec13a8f8a5db36e90246bdaf
-- Valuation snapshot ID: ad21a2cce849fa4e5db2a1dfc957a48b59f246f345d8bcd7d498e27f153e512d
+- Valuation snapshot ID: 68edfbe99d3a5d69f0f85c7e9911346e0b2fdf936779f93d6b5d781a8b3a20cb
 - Normalized FCF: 9099000000.0 EUR
 - Normalization issues: OUTLIER_REVIEW
 - Quality score: 8.033333333333333333333333333
@@ -83,14 +96,14 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 - Base upside/downside: -0.7406406765039914966766832626
 - Base margin of safety: -2.855654720719495680687145223
 - Warnings: ASSUMPTIONS_NOT_COMPANY_SPECIFIC, OUTLIER_REVIEW
-- Inputs hash: efe78bc04e1e7f66c770a3bc5b94ffe33b19a96760e98db8a782cea02c260e65
+- Inputs hash: 6b011fbcb973e36dc32e68888b6cc74827c7b0981dede96fa80e126d0de8b367
 - Statuses: AVAILABLE
 
 ### AAPL
 
 - Latest fiscal year used: FY2025
 - Market snapshot ID: 17d2091c7c905f7089ab7e8bbf00d7be6b7d9e766343c7fb080c04848ab8b004
-- Valuation snapshot ID: 47657d43d0046c7b2fe24772230db6a354f1f2408bb608e22874a6ca0d4eb864
+- Valuation snapshot ID: d89fb4c42c3201f719de56351a9df9f6aee08d0a225c36c7e31a3c64f7c15f3c
 - Normalized FCF: 99584000000.0 USD
 - Normalization issues: None
 - Quality score: 7.707323658043125340595157266
@@ -107,14 +120,14 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 - Base upside/downside: -0.6346658151807723509715771518
 - Base margin of safety: -1.737219897707666409686777004
 - Warnings: ASSUMPTIONS_NOT_COMPANY_SPECIFIC
-- Inputs hash: def0c3cd15aed310a4497bddd60fc0f3f4a0efdfa2f6d41b14883db8c5d11555
+- Inputs hash: 1f01789121c75462dec0c4bd65ad334878b8c45c7891f28e113f020fa521fcbe
 - Statuses: AVAILABLE
 
 ### MSFT
 
 - Latest fiscal year used: FY2026
 - Market snapshot ID: 5790bd4e7777a39768a574a27421c72fa62640b2c10217e494e17c7f19ee7aa0
-- Valuation snapshot ID: 66699ddacc3d0bd476e26ebcdedf46ca218637df6d4b28e47beb90f482595bf8
+- Valuation snapshot ID: 5ef7d5a5de1461a693c1296f879e90432ef22fc616746bea83489dbdae614d61
 - Normalized FCF: 71611000000.0 USD
 - Normalization issues: None
 - Quality score: 7.971099601711631218802991919
@@ -131,14 +144,14 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 - Base upside/downside: -0.6694637744785514306972509360
 - Base margin of safety: -2.025387000842090082028852508
 - Warnings: ASSUMPTIONS_NOT_COMPANY_SPECIFIC
-- Inputs hash: c87237e3441acab36ca17f792a08d761a2b5fb2ef41c1c233df53c8b194bb0c3
+- Inputs hash: fbd3b81fa7c159019e5e313f421ac4aee80541e2cb8fc9adc897b6f1ee7aa7d9
 - Statuses: AVAILABLE
 
 ### TSM
 
 - Latest fiscal year used: FY2025
 - Market snapshot ID: 09ef981fd9e4dbc2167fa46ab1c32b903ed20d56dd059f5a876762db4c8fa02f
-- Valuation snapshot ID: 3aea274e1ba0e2e1e2f8c41d5c1d7ce2be9e9e892fe1468aa4cb9227c89a1f6c
+- Valuation snapshot ID: dd3324a2ddc6461f70a8d625950f789b6b58d5c537f8d65a3e6ac9fac38bb49b
 - Normalized FCF: 870170600000.0 TWD
 - Normalization issues: OUTLIER_REVIEW
 - Quality score: 8.266973142126208103773367806
@@ -155,14 +168,14 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 - Base upside/downside: -0.7915637417094391763588504684
 - Base margin of safety: -3.797629779968496362120676224
 - Warnings: ASSUMPTIONS_NOT_COMPANY_SPECIFIC, OUTLIER_REVIEW
-- Inputs hash: 02c0a4d73d546664b0ef8475bdc280370ce25699f90c7b3243e49b4ccf0ee3d3
+- Inputs hash: 541daa803241a2228817a9646bbe717be7674ab55cf9ae94e78be302bacca9af
 - Statuses: AVAILABLE
 
 ### ADBE
 
 - Latest fiscal year used: FY2025
 - Market snapshot ID: c9e720a6e941f94f1da3c9aaa54108e6fd3cd0da4b527249b3527357d3f3f61b
-- Valuation snapshot ID: aae1131dc90dc2437b39e562f6d22f9478ee06151027cd31a21ad46e9091cd52
+- Valuation snapshot ID: 2a02d5879140aa6530c00e5c239acdf41c3d90fdc17f0cf89fb2090cbddbd7eb
 - Normalized FCF: 7873000000.0 USD
 - Normalization issues: None
 - Quality score: 8.255825793366261170620653158
@@ -179,7 +192,7 @@ Decision: **GO – VALUATION ENGINE V1 FROZEN**
 - Base upside/downside: 0.191591703649017980416793474
 - Base margin of safety: 0.1607863692423383177690540024
 - Warnings: ASSUMPTIONS_NOT_COMPANY_SPECIFIC
-- Inputs hash: 9414e5367fe0d45ae61cd183b4e7a742c42b126b0e348f0c522fa9db495f8c49
+- Inputs hash: b1700ba4012ad00efeaf9211bcaee45db9dad6a8373c4b2888c0da65049f7b2b
 - Statuses: AVAILABLE
 
 ## Regression Results
