@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from stock_valuation.data.history_mapping_audit import audit_history_mapping
 from stock_valuation.data.providers.sec_filing import SECFilingFallbackProvider, SECFilingGap
 from stock_valuation.data.providers.sec_text import SECFilingTextFallbackProvider, SECFilingTextResult
 from stock_valuation.data.snapshot_service import replace_financial_facts
+from stock_valuation.data.types import NormalizedFinancialFact
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot
 
 
@@ -41,6 +42,26 @@ def _base_sec_facts(session: Session, analysis_id: int) -> list[FinancialFactSna
     )
 
 
+def _normalized_from_snapshot(fact: FinancialFactSnapshot) -> NormalizedFinancialFact:
+    return NormalizedFinancialFact(
+        statement=fact.statement,
+        metric=fact.metric,
+        period_end=fact.period_end,
+        period_type=fact.period_type,
+        value=fact.value,
+        provider_value=fact.provider_value,
+        currency=fact.currency,
+        unit=fact.unit or "currency",
+        provider=fact.provider or "sec_filing_extension",
+        provider_field=fact.provider_field or "",
+        filing_date=fact.filing_date,
+        retrieved_at=fact.retrieved_at,
+        is_cross_check_only=fact.is_cross_check_only,
+        note=fact.note,
+        source_url=fact.source_url,
+    )
+
+
 def sync_sec_history_text_candidates(
     session: Session,
     analysis: Analysis,
@@ -49,9 +70,9 @@ def sync_sec_history_text_candidates(
 ) -> SECHistoryCompletionResult:
     """Fill remaining 10-year SEC gaps with review-only official filing table candidates.
 
-    This is the final automated SEC discovery stage. It never marks a table extraction as
-    calculation-ready. Candidates are stored separately and stay blocked until the normal semantic
-    review returns PASS or a reviewed correction is explicitly accepted.
+    The final table/text discovery stage feeds candidates into the existing `sec_filing_extension`
+    semantic-review path. That keeps one user workflow: recent years plus older open candidates are
+    reviewed in the same ChatGPT package. A table candidate is never calculation-ready before PASS.
     """
     cik_row = get_provider_symbol(session, analysis.company, provider="sec", purpose="cik")
     if cik_row is None:
@@ -70,14 +91,6 @@ def sync_sec_history_text_candidates(
     ]
 
     if not gaps:
-        replace_financial_facts(
-            session,
-            analysis,
-            [],
-            provider="sec_filing_text_candidate",
-            source_url="https://www.sec.gov/Archives/edgar/data/",
-            source_type="primary_source",
-        )
         return SECHistoryCompletionResult(
             True,
             0,
@@ -106,19 +119,50 @@ def sync_sec_history_text_candidates(
         gaps,
         base_facts,
     )
-    count = replace_financial_facts(
+
+    # The router has just refreshed the current XBRL-extension candidates. Preserve those and append
+    # table candidates under the same review-only provider so the existing review package includes
+    # older candidates automatically. A `text-table:` provider field keeps provenance explicit.
+    existing_extension = [
+        _normalized_from_snapshot(fact)
+        for fact in base_facts
+        if fact.provider == "sec_filing_extension"
+    ]
+    text_candidates = [
+        replace(fact, provider="sec_filing_extension")
+        for fact in result.facts
+    ]
+    merged: dict[tuple[str, object], NormalizedFinancialFact] = {
+        (fact.metric, fact.period_end): fact for fact in existing_extension
+    }
+    for fact in text_candidates:
+        merged.setdefault((fact.metric, fact.period_end), fact)
+
+    replace_financial_facts(
         session,
         analysis,
-        result.facts,
+        merged.values(),
+        provider="sec_filing_extension",
+        source_url="https://www.sec.gov/Archives/edgar/data/",
+        source_type="primary_source",
+    )
+    # Clean up any experimental rows from the dedicated provider name if a development snapshot
+    # already contains them. New table candidates use the unified review provider above.
+    replace_financial_facts(
+        session,
+        analysis,
+        [],
         provider="sec_filing_text_candidate",
         source_url="https://www.sec.gov/Archives/edgar/data/",
         source_type="primary_source",
     )
+
+    count = len(text_candidates)
     unresolved = len(result.unresolved)
     if count:
         message = (
-            f"{count} offizielle Tabellen-/Textkandidat(en) gefunden; sie bleiben bis zur "
-            "semantischen Prüfung blockiert."
+            f"{count} offizielle Tabellen-/Textkandidat(en) gefunden; sie werden automatisch in das "
+            "normale ChatGPT-Prüfpaket aufgenommen und bleiben bis zum PASS blockiert."
         )
     else:
         message = "Keine ausreichend eindeutigen Tabellen-/Textkandidaten gefunden."
