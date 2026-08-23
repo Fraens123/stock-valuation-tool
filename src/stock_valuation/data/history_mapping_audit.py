@@ -188,7 +188,14 @@ def audit_history_mapping(
             for year, fact in representative_by_year.items()
         }
 
-        provider_fields = tuple(sorted({_clean(fact.provider_field, _clean(fact.provider)) for fact in metric_facts}))
+        provider_fields = tuple(
+            sorted(
+                {
+                    _clean(fact.provider_field, _clean(fact.provider))
+                    for fact in metric_facts
+                }
+            )
+        )
         providers = tuple(sorted({_clean(fact.provider) for fact in metric_facts}))
         currencies = tuple(sorted({_clean(fact.currency) for fact in metric_facts}))
         taxonomies = tuple(sorted({_taxonomy(fact) for fact in metric_facts}))
@@ -198,7 +205,10 @@ def audit_history_mapping(
         if missing_years:
             reasons.append("fehlende Jahre: " + ", ".join(str(year) for year in missing_years))
         if duplicate_years:
-            reasons.append("mehrere Geschäftsjahres-Enden im selben Jahr: " + ", ".join(str(year) for year in duplicate_years))
+            reasons.append(
+                "mehrere Geschäftsjahres-Enden im selben Jahr: "
+                + ", ".join(str(year) for year in duplicate_years)
+            )
         if len(provider_fields) > 1:
             reasons.append(f"Originalfeld wechselte ({len(provider_fields)} Varianten)")
         if len(providers) > 1:
@@ -210,11 +220,19 @@ def audit_history_mapping(
 
         if missing_years:
             status = "GAP"
-        elif duplicate_years or len(provider_fields) > 1 or len(providers) > 1 or len(currencies) > 1 or len(taxonomies) > 1:
+        elif (
+            duplicate_years
+            or len(provider_fields) > 1
+            or len(providers) > 1
+            or len(currencies) > 1
+            or len(taxonomies) > 1
+        ):
             status = "REVIEW"
         else:
             status = "PASS"
-            reasons.append("10-Jahres-Serie vollständig und Mapping technisch unverändert.")
+            reasons.append(
+                f"{requested_years}-Jahres-Serie vollständig und Mapping technisch unverändert."
+            )
 
         rows.append(
             HistoryMappingRow(
