@@ -19,8 +19,10 @@ SEC_COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json
 
 ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 
-# Ordered candidates: first matching concept wins for a metric. Company-specific extensions
-# are deliberately excluded; this provider uses only standardized SEC US-GAAP/IFRS taxonomies.
+# Ordered candidates are resolved per period end, not once for the entire company history.
+# This preserves legitimate standard-tag transitions across years while keeping the preferred
+# semantic concept when two candidate concepts exist for the same period. Company-specific
+# extensions are deliberately excluded.
 CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     "revenue": (
         ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
@@ -42,8 +44,14 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("ifrs-full", "ProfitLossFromOperatingActivities"),
     ),
     "pretax_income": (
-        ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"),
-        ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"),
+        (
+            "us-gaap",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        ),
+        (
+            "us-gaap",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        ),
         ("ifrs-full", "ProfitLossBeforeTax"),
     ),
     "net_income": (
@@ -257,7 +265,11 @@ class SECCompanyFactsProvider:
         if not name:
             return None
         target = _normalized_name(name)
-        exact = [row for row in self.search_companies(name, limit=20) if _normalized_name(row.name) == target]
+        exact = [
+            row
+            for row in self.search_companies(name, limit=20)
+            if _normalized_name(row.name) == target
+        ]
         return exact[0] if len(exact) == 1 else None
 
     def get_company_facts(self, cik: str) -> dict[str, Any]:
@@ -314,7 +326,7 @@ def _annual_entries(concept: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
 
 
 def _best_entries_for_concept(concept: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    # Keep the latest filed annual fact for each period end. This naturally prefers later
+    # Keep the latest filed annual fact for each exact period end. This naturally prefers later
     # restatements/comparatives while preserving filing metadata in the snapshot.
     selected: dict[date, tuple[str, dict[str, Any]]] = {}
     for unit, entry in _annual_entries(concept):
@@ -332,6 +344,32 @@ def _best_entries_for_concept(concept: dict[str, Any]) -> list[tuple[str, dict[s
     return [selected[key] for key in sorted(selected)]
 
 
+def _best_entries_for_metric(
+    facts_root: dict[str, Any],
+    candidates: tuple[tuple[str, str], ...],
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    """Resolve ordered standard concepts per period end instead of per whole history.
+
+    Candidate order remains the semantic priority for collisions on the same date. Lower-priority
+    standard concepts are used only for period ends not covered by a higher-priority concept. This
+    exposes legitimate taxonomy/tag changes instead of turning them into artificial history gaps.
+    """
+    selected: dict[date, tuple[str, str, str, dict[str, Any]]] = {}
+    for taxonomy, concept_name in candidates:
+        taxonomy_payload = facts_root.get(taxonomy) or {}
+        if not isinstance(taxonomy_payload, dict):
+            continue
+        concept_payload = taxonomy_payload.get(concept_name)
+        if not isinstance(concept_payload, dict):
+            continue
+        for unit, entry in _best_entries_for_concept(concept_payload):
+            period_end = _date(entry.get("end"))
+            if period_end is None or period_end in selected:
+                continue
+            selected[period_end] = (taxonomy, concept_name, unit, entry)
+    return [selected[key] for key in sorted(selected)]
+
+
 def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinancialFact]:
     facts_root = payload.get("facts") or {}
     if not isinstance(facts_root, dict):
@@ -340,21 +378,10 @@ def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinanc
     normalized: list[NormalizedFinancialFact] = []
     retrieved = datetime.now(timezone.utc)
     for metric, candidates in CONCEPT_MAP.items():
-        chosen_taxonomy: str | None = None
-        chosen_concept: str | None = None
-        concept_payload: dict[str, Any] | None = None
-        for taxonomy, concept_name in candidates:
-            taxonomy_payload = facts_root.get(taxonomy) or {}
-            candidate_payload = taxonomy_payload.get(concept_name) if isinstance(taxonomy_payload, dict) else None
-            if isinstance(candidate_payload, dict) and _annual_entries(candidate_payload):
-                chosen_taxonomy = taxonomy
-                chosen_concept = concept_name
-                concept_payload = candidate_payload
-                break
-        if concept_payload is None or chosen_taxonomy is None or chosen_concept is None:
-            continue
-
-        for unit, entry in _best_entries_for_concept(concept_payload):
+        for chosen_taxonomy, chosen_concept, unit, entry in _best_entries_for_metric(
+            facts_root,
+            candidates,
+        ):
             value = _decimal(entry.get("val"))
             period_end = _date(entry.get("end"))
             if value is None or period_end is None:
@@ -362,7 +389,8 @@ def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinanc
             economic_value = abs(value) if metric in POSITIVE_OUTFLOW_METRICS else value
             statement = (
                 "cash_flow"
-                if metric in {
+                if metric
+                in {
                     "operating_cash_flow",
                     "capital_expenditures",
                     "intangible_purchases",
@@ -370,7 +398,8 @@ def normalize_sec_companyfacts(payload: dict[str, Any]) -> list[NormalizedFinanc
                     "dividends_paid",
                 }
                 else "balance_sheet"
-                if metric in {
+                if metric
+                in {
                     "total_assets",
                     "current_assets",
                     "cash_and_equivalents",
