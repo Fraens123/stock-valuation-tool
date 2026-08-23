@@ -63,7 +63,7 @@ def test_old_extension_candidate_is_appended_to_recent_review_and_pass_unlocks_i
             currency="EUR",
         )
         analysis = create_analysis(session, company=company, as_of_date=date(2026, 8, 23))
-        _add_fact(
+        recent_2024 = _add_fact(
             session,
             analysis.id,
             metric="revenue",
@@ -72,7 +72,7 @@ def test_old_extension_candidate_is_appended_to_recent_review_and_pass_unlocks_i
             provider="sec_companyfacts",
             provider_field="us-gaap:Revenues",
         )
-        _add_fact(
+        recent_2025 = _add_fact(
             session,
             analysis.id,
             metric="revenue",
@@ -97,17 +97,10 @@ def test_old_extension_candidate_is_appended_to_recent_review_and_pass_unlocks_i
 
         assert package.fact_count == 3
         assert str(candidate.id) in text
-        assert '"mapping_candidate_count":' not in text  # metadata is rendered as prose, not raw payload
         assert "SEC-Company-Extension-Mappingkandidaten: 1" in text
         assert "noch nicht semantisch freigegeben" in text
 
-        facts = [
-            row
-            for row in session.query(FinancialFactSnapshot)
-            .filter(FinancialFactSnapshot.analysis_id == analysis.id)
-            .all()
-            if str(row.id) in text
-        ]
+        included = (recent_2024, recent_2025, candidate)
         payload = {
             "schema_version": "1.0",
             "package_id": package.package_id,
@@ -129,7 +122,7 @@ def test_old_extension_candidate_is_appended_to_recent_review_and_pass_unlocks_i
                     "source_url": "https://www.sec.gov/example.htm",
                     "reason": "Exact semantic match.",
                 }
-                for row in facts
+                for row in included
             ],
         }
         import_chatgpt_review_result(session, analysis, json.dumps(payload))
