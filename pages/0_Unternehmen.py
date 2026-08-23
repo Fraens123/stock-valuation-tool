@@ -161,6 +161,7 @@ if candidates:
                 )
             st.session_state.pop("official_company_candidates", None)
             st.session_state.pop("official_company_search_notes", None)
+            st.session_state["selected_analysis_id"] = analysis.id
             st.success(
                 f"{candidate.name}: Analyse R{analysis.revision_number} angelegt. "
                 "Jetzt **Finanzdaten** öffnen und `Finanzdaten laden / aktualisieren` drücken."

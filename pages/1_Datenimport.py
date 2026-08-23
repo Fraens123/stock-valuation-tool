@@ -117,8 +117,15 @@ if not options:
     st.info("Zuerst unter **Unternehmen** eine Aktie auswählen und eine Analyse anlegen.")
     st.stop()
 
-selected_label = st.selectbox("Analyse", list(options))
+current_id = st.session_state.get("selected_analysis_id")
+option_ids = list(options.values())
+selected_label = st.selectbox(
+    "Analyse",
+    list(options),
+    index=option_ids.index(current_id) if current_id in option_ids else 0,
+)
 analysis_id = options[selected_label]
+st.session_state["selected_analysis_id"] = analysis_id
 
 with get_session() as session:
     analysis = get_analysis(session, analysis_id)

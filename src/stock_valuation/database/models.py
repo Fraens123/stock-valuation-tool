@@ -275,6 +275,20 @@ class ValuationSnapshotRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class AnalysisStageSnapshot(Base):
+    __tablename__ = "analysis_stage_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(80), index=True)
+    snapshot_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    engine_version: Mapped[str] = mapped_column(String(80))
+    inputs_hash: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(40), index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class QualitativeAssessment(Base):
     __tablename__ = "qualitative_assessments"
 

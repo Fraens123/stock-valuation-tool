@@ -68,8 +68,15 @@ if not options:
     st.info("Zuerst eine Analyse anlegen.")
     st.stop()
 
-selected = st.selectbox("Analyse", list(options))
+current_id = st.session_state.get("selected_analysis_id")
+option_ids = list(options.values())
+selected = st.selectbox(
+    "Analyse",
+    list(options),
+    index=option_ids.index(current_id) if current_id in option_ids else 0,
+)
 analysis_id = options[selected]
+st.session_state["selected_analysis_id"] = analysis_id
 
 with get_session() as session:
     analysis = get_analysis(session, analysis_id)

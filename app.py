@@ -10,7 +10,6 @@ from stock_valuation.analyses.comparison import compare_analyses
 from stock_valuation.analyses.service import (
     AnalysisFrozenError,
     InvalidAnalysisTransition,
-    complete_analysis,
     create_revision,
     get_analysis,
     list_analyses,
@@ -22,6 +21,7 @@ from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.reports.pdf import build_snapshot_report, snapshot_report_filename
 from stock_valuation.ui.navigation import render_navigation
+from stock_valuation.workflow.service import complete_analysis_if_ready
 
 
 st.set_page_config(page_title="Übersicht", layout="wide")
@@ -109,8 +109,16 @@ with manage_tab:
         st.caption("Keine Analyse vorhanden.")
     else:
         options = {analysis_label(item): item.id for item in analyses}
-        selected_label = st.selectbox("Analyse", list(options), key="manage-analysis")
+        current_id = st.session_state.get("selected_analysis_id")
+        option_ids = list(options.values())
+        selected_label = st.selectbox(
+            "Analyse",
+            list(options),
+            index=option_ids.index(current_id) if current_id in option_ids else 0,
+            key="manage-analysis",
+        )
         selected_id = options[selected_label]
+        st.session_state["selected_analysis_id"] = selected_id
 
         with get_session() as session:
             selected = get_analysis(session, selected_id)
@@ -161,9 +169,9 @@ with manage_tab:
                         st.rerun()
                 if actions[1].button("Analyse abschließen und einfrieren", type="primary"):
                     try:
-                        complete_analysis(session, selected)
+                        complete_analysis_if_ready(session, selected)
                         st.rerun()
-                    except (AnalysisFrozenError, InvalidAnalysisTransition) as exc:
+                    except (AnalysisFrozenError, InvalidAnalysisTransition, ValueError) as exc:
                         st.error(str(exc))
             else:
                 st.info(

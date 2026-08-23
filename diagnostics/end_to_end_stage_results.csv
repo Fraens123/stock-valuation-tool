@@ -1,0 +1,8 @@
+ticker,analysis_id,stage,status,version,snapshot_id,inputs_hash,warnings,blockers
+ASML,1,FINANCIAL_DATA,NOT_RUN,,,,,
+ASML,1,CALCULATION,NOT_RUN,,,,,
+ASML,1,HISTORICAL_ANALYSIS,NOT_RUN,,,,,
+ASML,1,BUSINESS_QUALITY,NOT_RUN,,,,,
+ASML,1,MARKET_DATA,NOT_RUN,,,,,
+ASML,1,ASSUMPTIONS,NOT_RUN,,,,,
+ASML,1,VALUATION,NOT_RUN,,,,,
