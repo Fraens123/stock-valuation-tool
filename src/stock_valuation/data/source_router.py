@@ -14,6 +14,11 @@ from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.providers.esef_registry import ESEFRegistryError, ESEFRegistryProvider
 from stock_valuation.data.providers.gleif import GLEIFProvider, GLEIFProviderError
 from stock_valuation.data.providers.sec import SECCompanyFactsProvider, SECProviderError
+from stock_valuation.data.providers.sec_filing import (
+    SECFilingFallbackError,
+    SECFilingFallbackProvider,
+    SECFilingFallbackResult,
+)
 from stock_valuation.data.snapshot_service import replace_financial_facts
 from stock_valuation.data.types import NormalizedFinancialFact
 from stock_valuation.database.models import Analysis
@@ -46,6 +51,16 @@ class FinancialSourceResult:
 class SECProviderLike(Protocol):
     def resolve_company(self, ticker: str, name: str | None = None): ...
     def get_normalized_financials(self, cik: str) -> list[NormalizedFinancialFact]: ...
+
+
+class SECFilingProviderLike(Protocol):
+    def gap_facts(
+        self,
+        cik: str,
+        base_facts: list[NormalizedFinancialFact],
+        *,
+        years: int = 10,
+    ) -> SECFilingFallbackResult: ...
 
 
 class GLEIFProviderLike(Protocol):
@@ -98,11 +113,63 @@ def _store_primary(
     return count
 
 
+def _supplement_sec_filing_gaps(
+    session: Session,
+    analysis: Analysis,
+    *,
+    cik: str,
+    base_facts: list[NormalizedFinancialFact],
+    provider: SECFilingProviderLike,
+    attempts: list[SourceAttempt],
+) -> int:
+    """Fill only Company-Facts gaps from the original SEC XBRL filing.
+
+    This stays inside the SEC accounting source. Standard taxonomy facts can be persisted as
+    primary-source supplements. Missing fields that require a company extension remain unresolved
+    and are surfaced in the router message instead of being guessed.
+    """
+    result = provider.gap_facts(cik, base_facts, years=10)
+    supplemented = list(result.facts)
+    count = replace_financial_facts(
+        session,
+        analysis,
+        supplemented,
+        provider="sec_filing_xbrl",
+        source_url="https://www.sec.gov/Archives/edgar/data/",
+        source_type="primary_source",
+    )
+    unresolved_count = len(result.unresolved)
+    if count:
+        status = "supplemented"
+        message = (
+            f"{count} fehlende Standard-XBRL-Fakten aus {result.filings_checked} Originalfiling(s) ergänzt."
+        )
+    else:
+        status = "checked_no_standard_fill"
+        message = "Originalfilings geprüft; keine zusätzliche sichere Standard-XBRL-Zuordnung gefunden."
+    if unresolved_count:
+        message += (
+            f" {unresolved_count} Feld/Jahr-Kombination(en) bleiben offen und benötigen "
+            "Extension-/Textprüfung."
+        )
+    attempts.append(
+        SourceAttempt(
+            "SEC Original-Filing",
+            status,
+            count,
+            str(cik),
+            message,
+        )
+    )
+    return count
+
+
 def sync_best_available_financials(
     session: Session,
     analysis: Analysis,
     *,
     sec_provider: SECProviderLike | None = None,
+    sec_filing_provider: SECFilingProviderLike | None = None,
     gleif_provider: GLEIFProviderLike | None = None,
     esef_provider: ESEFProviderLike | None = None,
     alpha_provider: AlphaVantageProvider | None = None,
@@ -111,10 +178,10 @@ def sync_best_available_financials(
 ) -> FinancialSourceResult:
     """Load one coherent historical dataset from the best available source.
 
-    Routing order is intentionally source-level rather than field-level to avoid silently mixing
-    accounting bases within a single historical series:
+    Routing order is source-level to avoid silently mixing accounting bases:
 
-    1. SEC Company Facts for SEC-reporting issuers.
+    1. SEC Company Facts for SEC-reporting issuers, with a targeted original-filing XBRL fallback
+       for missing standard concepts inside the same SEC reporting basis.
     2. ESEF via GLEIF LEI for issuers not sufficiently covered by SEC.
     3. Alpha Vantage only as a fallback when no official structured source is usable.
 
@@ -161,8 +228,54 @@ def sync_best_available_financials(
                         source_url=f"https://data.sec.gov/api/xbrl/companyfacts/CIK{str(cik).zfill(10)}.json",
                     )
                     currency = _report_currency(facts)
-                    attempts.append(SourceAttempt("SEC", "selected", count, str(cik), "Offizielle SEC-XBRL-Daten."))
-                    return FinancialSourceResult("SEC", count, tuple(attempts), currency)
+                    attempts.append(
+                        SourceAttempt(
+                            "SEC Company Facts",
+                            "selected",
+                            count,
+                            str(cik),
+                            "Offizielle aggregierte SEC-XBRL-Daten.",
+                        )
+                    )
+
+                    filing = sec_filing_provider
+                    if filing is None and isinstance(sec, SECCompanyFactsProvider):
+                        try:
+                            filing = SECFilingFallbackProvider(
+                                user_agent=sec.user_agent,
+                                timeout=sec.timeout,
+                                use_cache=sec.use_cache,
+                            )
+                        except ValueError as exc:
+                            attempts.append(
+                                SourceAttempt("SEC Original-Filing", "unavailable", message=str(exc))
+                            )
+                    filing_count = 0
+                    if filing is not None:
+                        try:
+                            filing_count = _supplement_sec_filing_gaps(
+                                session,
+                                analysis,
+                                cik=str(cik),
+                                base_facts=facts,
+                                provider=filing,
+                                attempts=attempts,
+                            )
+                        except (SECFilingFallbackError, ProviderError, ValueError) as exc:
+                            attempts.append(
+                                SourceAttempt(
+                                    "SEC Original-Filing",
+                                    "error",
+                                    identifier=str(cik),
+                                    message=str(exc),
+                                )
+                            )
+                    return FinancialSourceResult(
+                        "SEC",
+                        count + filing_count,
+                        tuple(attempts),
+                        currency,
+                    )
                 attempts.append(
                     SourceAttempt(
                         "SEC",
@@ -208,7 +321,15 @@ def sync_best_available_financials(
                     source_url="https://filings.xbrl.org/",
                 )
                 currency = _report_currency(facts)
-                attempts.append(SourceAttempt("ESEF", "selected", count, lei, "Offizielle ESEF/iXBRL-Daten über filings.xbrl.org."))
+                attempts.append(
+                    SourceAttempt(
+                        "ESEF",
+                        "selected",
+                        count,
+                        lei,
+                        "Offizielle ESEF/iXBRL-Daten über filings.xbrl.org.",
+                    )
+                )
                 return FinancialSourceResult("ESEF", count, tuple(attempts), currency)
             attempts.append(
                 SourceAttempt(
@@ -239,7 +360,9 @@ def sync_best_available_financials(
                 provider="alphavantage",
                 purpose="fundamentals",
             )
-            alpha_symbol = alpha_symbol_row.symbol if alpha_symbol_row is not None else analysis.company.ticker
+            alpha_symbol = (
+                alpha_symbol_row.symbol if alpha_symbol_row is not None else analysis.company.ticker
+            )
             try:
                 facts = alpha.get_normalized_financials(alpha_symbol, period_type="FY")
                 if facts:
@@ -251,15 +374,26 @@ def sync_best_available_financials(
                         source_url="https://www.alphavantage.co/documentation/#fundamentals",
                         source_type="provider",
                     )
-                    attempts.append(SourceAttempt("Alpha Vantage", "selected_fallback", count, alpha_symbol))
+                    attempts.append(
+                        SourceAttempt("Alpha Vantage", "selected_fallback", count, alpha_symbol)
+                    )
                     return FinancialSourceResult(
                         "Alpha Vantage",
                         count,
                         tuple(attempts),
                         _report_currency(facts),
                     )
-                attempts.append(SourceAttempt("Alpha Vantage", "not_found", identifier=alpha_symbol))
+                attempts.append(
+                    SourceAttempt("Alpha Vantage", "not_found", identifier=alpha_symbol)
+                )
             except (ProviderError, ValueError) as exc:
-                attempts.append(SourceAttempt("Alpha Vantage", "error", identifier=alpha_symbol, message=str(exc)))
+                attempts.append(
+                    SourceAttempt(
+                        "Alpha Vantage",
+                        "error",
+                        identifier=alpha_symbol,
+                        message=str(exc),
+                    )
+                )
 
     return FinancialSourceResult(None, 0, tuple(attempts), None)
