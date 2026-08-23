@@ -19,20 +19,24 @@ PRIMARY_SOURCE_PROVIDERS = {
     "sec_companyfacts",
     "sec_filing_xbrl",
     "sec_filing_extension",
+    "sec_filing_text_candidate",
 }
 
-# A primary source proves provenance, but not automatically that one XBRL concept has exactly the
-# same economic scope as our internal field. These provider/metric combinations therefore require
-# an explicit semantic PASS (or a confirmed manual override) before downstream calculations.
+# A primary source proves provenance, but not automatically that one XBRL concept or extracted
+# filing-table row has exactly the same economic scope as our internal field. These combinations
+# therefore require an explicit semantic PASS (or a confirmed manual override) before calculations.
 PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
     ("sec_companyfacts", "short_term_debt"),
     ("sec_filing_xbrl", "short_term_debt"),
 }
-PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED = {"sec_filing_extension"}
+PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED = {
+    "sec_filing_extension",
+    "sec_filing_text_candidate",
+}
 
 # These definitions describe what the internal raw-data keys mean. They are intentionally narrower
-# than arbitrary provider labels so unusual provider/extension concepts can be rejected when their
-# economic meaning is broader or different.
+# than arbitrary provider labels so unusual provider/extension/text concepts can be rejected when
+# their economic meaning is broader or different.
 FIELD_DEFINITIONS: dict[str, str] = {
     "ppe_net": (
         "Netto-Sachanlagen (Property, Plant & Equipment) für den operativen Betrieb. Separat "
@@ -130,8 +134,11 @@ def _semantic_primary_state(
     fact: FinancialFactSnapshot,
     finding: AIReviewFinding | None,
 ) -> PreferredDataState:
-    """Require a semantic review for a known ambiguous primary-source mapping."""
-    is_extension = fact.provider == "sec_filing_extension"
+    """Require a semantic review for a known ambiguous primary-source mapping/candidate."""
+    is_review_candidate = fact.provider in {
+        "sec_filing_extension",
+        "sec_filing_text_candidate",
+    }
     if finding is not None and _finding_matches_fact(finding, fact):
         verdict = finding.verdict.upper()
         if verdict == "PASS":
@@ -152,7 +159,7 @@ def _semantic_primary_state(
             calculation_ready=False,
             reason=(
                 finding.reason
-                or "Offizielle Zahl vorhanden, aber die XBRL-Feldsemantik ist für unser internes Feld noch nicht freigegeben."
+                or "Offizielle Zahl vorhanden, aber die Feldsemantik ist für unser internes Feld noch nicht freigegeben."
             ),
             review_verdict=verdict,
             review_decision=finding.decision,
@@ -166,11 +173,11 @@ def _semantic_primary_state(
             review_verdict=finding.verdict,
             review_decision=finding.decision,
         )
-    if is_extension:
+    if is_review_candidate:
         reason = (
-            "Offizielle SEC-Zahl aus einem firmeneigenen XBRL-Extension-Tag. Der Importer hat nur "
-            "einen Mapping-Kandidaten erkannt; vor Berechnungen muss die wirtschaftliche Bedeutung "
-            "gegen das interne Feld semantisch bestätigt werden."
+            "Offizieller SEC-Filing-Kandidat. Der Importer hat nur einen möglichen Mapping-/Tabellenwert "
+            "erkannt; vor Berechnungen müssen wirtschaftliche Bedeutung, Periode und Einheit gegen das "
+            "interne Feld semantisch bestätigt werden."
         )
     else:
         reason = (
