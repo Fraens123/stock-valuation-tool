@@ -14,6 +14,8 @@ FX_REQUIRED = "FX_REQUIRED"
 INVALID_ASSUMPTION = "INVALID_ASSUMPTION"
 INVALID_SHARE_COUNT = "INVALID_SHARE_COUNT"
 ADR_RATIO_REQUIRED = "ADR_RATIO_REQUIRED"
+GENERIC_ASSUMPTION_SOURCE = "GENERIC_V1_DEFAULT"
+ASSUMPTIONS_NOT_COMPANY_SPECIFIC = "ASSUMPTIONS_NOT_COMPANY_SPECIFIC"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ class MarketSnapshotInput:
     ticker: str
     company: str
     analysis_as_of_date: str
+    market_snapshot_id: str
+    market_data_version: str
     security_type: str
     price: Decimal | None
     market_cap: Decimal | None
@@ -72,6 +76,8 @@ class NormalizedValue:
     issues: tuple[str, ...]
     input_refs: tuple[str, ...]
     inputs_hash: str
+    used_fiscal_years: tuple[int, ...] = ()
+    input_values: tuple[Decimal, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,7 @@ class DCFScenario:
     annual_growth_rate: Decimal
     discount_rate: Decimal
     terminal_growth_rate: Decimal
+    assumption_source: str = GENERIC_ASSUMPTION_SOURCE
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,29 @@ class ValuationSummary:
     input_refs: tuple[str, ...]
     inputs_hash: str
     valuation_version: str = VALUATION_ENGINE_VERSION
+
+
+@dataclass(frozen=True)
+class ValuationSnapshot:
+    analysis_id: str
+    analysis_as_of_date: str
+    market_snapshot_id: str
+    market_data_version: str
+    financial_data_reference: str
+    calculation_version: str
+    historical_analysis_version: str
+    quality_version: str
+    valuation_version: str
+    assumptions: dict
+    assumptions_hash: str
+    normalized_inputs: dict
+    valuation_results: dict
+    quality_context: dict
+    historical_context: dict
+    input_refs: tuple[str, ...]
+    inputs_hash: str
+    created_at: str
+    snapshot_id: str
 
 
 def stable_hash(parts: tuple[str, ...]) -> str:

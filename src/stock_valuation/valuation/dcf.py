@@ -3,7 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from stock_valuation.valuation.models import (
+    ASSUMPTIONS_NOT_COMPANY_SPECIFIC,
     AVAILABLE,
+    GENERIC_ASSUMPTION_SOURCE,
     INVALID_ASSUMPTION,
     UNAVAILABLE,
     DCFProjectionRow,
@@ -24,6 +26,9 @@ def equity_dcf(ticker: str, normalized_fcf: NormalizedValue, scenario: DCFScenar
         issues.append("NORMALIZED_FCF_UNAVAILABLE")
     if normalized_fcf.value is not None and normalized_fcf.value <= 0:
         issues.append("NORMALIZED_FCF_NOT_POSITIVE")
+    non_blocking_issues = list(normalized_fcf.issues)
+    if scenario.assumption_source == GENERIC_ASSUMPTION_SOURCE:
+        non_blocking_issues.append(ASSUMPTIONS_NOT_COMPANY_SPECIFIC)
     if issues:
         return DCFResult(
             ticker,
@@ -33,7 +38,7 @@ def equity_dcf(ticker: str, normalized_fcf: NormalizedValue, scenario: DCFScenar
             normalized_fcf.currency,
             None,
             (),
-            tuple(issues),
+            tuple(issues + non_blocking_issues),
             normalized_fcf.input_refs,
             normalized_fcf.inputs_hash,
         )
@@ -59,7 +64,7 @@ def equity_dcf(ticker: str, normalized_fcf: NormalizedValue, scenario: DCFScenar
         normalized_fcf.currency,
         terminal_value,
         tuple(projections),
-        (),
+        tuple(non_blocking_issues),
         normalized_fcf.input_refs,
         stable_hash((normalized_fcf.inputs_hash, str(scenario))),
     )

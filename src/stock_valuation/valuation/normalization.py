@@ -19,6 +19,8 @@ def normalize_three_year_metric(
         if point.status == "AVAILABLE" and point.value is not None
     )
     input_refs = tuple(point.input_ref for point in usable)
+    used_fiscal_years = tuple(point.fiscal_year for point in usable)
+    input_values = tuple(point.value for point in usable if point.value is not None)
     if len(usable) < 2:
         return NormalizedValue(
             metric_id,
@@ -29,6 +31,8 @@ def normalize_three_year_metric(
             ("INSUFFICIENT_HISTORY",),
             input_refs,
             stable_hash(tuple(point.inputs_hash for point in usable)),
+            used_fiscal_years,
+            input_values,
         )
     currencies = {point.currency for point in usable}
     if len(currencies) != 1:
@@ -41,8 +45,10 @@ def normalize_three_year_metric(
             ("CURRENCY_MISMATCH",),
             input_refs,
             stable_hash(tuple(point.inputs_hash for point in usable)),
+            used_fiscal_years,
+            input_values,
         )
-    values = tuple(point.value for point in usable if point.value is not None)
+    values = input_values
     if method == "three_year_average":
         value = sum(values) / Decimal(len(values))
     elif method == "weighted_recent_average":
@@ -61,6 +67,8 @@ def normalize_three_year_metric(
         issues,
         input_refs,
         stable_hash(tuple(point.inputs_hash for point in usable)),
+        used_fiscal_years,
+        input_values,
     )
 
 

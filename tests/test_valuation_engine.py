@@ -4,7 +4,9 @@ from decimal import Decimal
 
 from stock_valuation.valuation.dcf import equity_dcf
 from stock_valuation.valuation.models import (
+    ASSUMPTIONS_NOT_COMPANY_SPECIFIC,
     AVAILABLE,
+    GENERIC_ASSUMPTION_SOURCE,
     INVALID_ASSUMPTION,
     NOT_MEANINGFUL,
     DCFScenario,
@@ -13,6 +15,7 @@ from stock_valuation.valuation.models import (
 )
 from stock_valuation.valuation.multiples import current_market_multiples
 from stock_valuation.valuation.normalization import normalize_three_year_metric
+from stock_valuation.valuation.snapshot import assumptions_payload, create_valuation_snapshot
 from stock_valuation.valuation.summary import dcf_summary, listed_equivalent_units
 
 
@@ -33,6 +36,8 @@ def market(**overrides) -> MarketSnapshotInput:
         "ticker": "TEST",
         "company": "Test Co",
         "analysis_as_of_date": "2026-08-23",
+        "market_snapshot_id": "market-snapshot-1",
+        "market_data_version": "market-data-v1.0",
         "security_type": "ordinary_share",
         "price": Decimal("100"),
         "market_cap": Decimal("1000"),
@@ -120,6 +125,7 @@ def test_dcf_projection_and_terminal_growth_validation():
     assert len(result.projected_rows) == 2
     assert result.projected_rows[0].projected_fcf == Decimal("105.00")
     assert result.terminal_value is not None
+    assert ASSUMPTIONS_NOT_COMPANY_SPECIFIC in result.issues
     assert invalid.status == INVALID_ASSUMPTION
     assert "TERMINAL_GROWTH_NOT_BELOW_DISCOUNT_RATE" in invalid.issues
 
@@ -169,3 +175,138 @@ def test_inputs_hash_reproducibility():
     second = normalize_three_year_metric("free_cash_flow", tuple(reversed(points)))
 
     assert first.inputs_hash == second.inputs_hash
+
+
+def test_outlier_and_generic_assumption_warnings_persist_to_final_result():
+    normalized = normalize_three_year_metric(
+        "free_cash_flow",
+        (point("free_cash_flow", 2023, "100"), point("free_cash_flow", 2024, "110"), point("free_cash_flow", 2025, "500")),
+    )
+
+    dcf = equity_dcf("TEST", normalized, DCFScenario("base", 2, Decimal("0.05"), Decimal("0.10"), Decimal("0.02")))
+    summary = dcf_summary(dcf, market())
+
+    assert dcf.status == AVAILABLE
+    assert "OUTLIER_REVIEW" in dcf.issues
+    assert ASSUMPTIONS_NOT_COMPANY_SPECIFIC in dcf.issues
+    assert "OUTLIER_REVIEW" in summary.issues
+    assert ASSUMPTIONS_NOT_COMPANY_SPECIFIC in summary.issues
+
+
+def test_custom_assumptions_do_not_emit_generic_warning():
+    normalized = normalize_three_year_metric(
+        "free_cash_flow",
+        (point("free_cash_flow", 2023, "100"), point("free_cash_flow", 2024, "100"), point("free_cash_flow", 2025, "100")),
+    )
+
+    dcf = equity_dcf(
+        "TEST",
+        normalized,
+        DCFScenario("custom", 2, Decimal("0.05"), Decimal("0.10"), Decimal("0.02"), "CUSTOM_EXPLICIT"),
+    )
+
+    assert dcf.status == AVAILABLE
+    assert ASSUMPTIONS_NOT_COMPANY_SPECIFIC not in dcf.issues
+
+
+def test_snapshot_id_and_hash_are_deterministic_and_change_with_inputs():
+    scenario = DCFScenario("base", 1, Decimal("0"), Decimal("0.10"), Decimal("0"))
+    assumptions = assumptions_payload(
+        (scenario,),
+        normalization_method="three_year_median",
+        outlier_threshold="0.50",
+        sensitivity_discount_rates=("0.09",),
+        sensitivity_terminal_growth_rates=("0.02",),
+    )
+    normalized = normalize_three_year_metric(
+        "free_cash_flow",
+        (point("free_cash_flow", 2023, "100"), point("free_cash_flow", 2024, "100"), point("free_cash_flow", 2025, "100")),
+    )
+    dcf = equity_dcf("TEST", normalized, scenario)
+    summary = dcf_summary(dcf, market())
+    quality_context = {"overall_quality_score": "8.2", "overall_quality_assessment": "STRONG"}
+    historical_context = {"revenue_growth": "0.10"}
+
+    first = create_valuation_snapshot(
+        analysis_id="analysis-1",
+        market=market(),
+        financial_data_reference="final_data_gate_report.csv",
+        calculation_version="calc-v1.0",
+        historical_analysis_version="historical-v1.0",
+        quality_version="quality-v1.0",
+        assumptions=assumptions,
+        normalized_inputs=(normalized,),
+        valuation_results=(summary,),
+        quality_context=quality_context,
+        historical_context=historical_context,
+        created_at="2026-08-23T00:00:00+00:00",
+    )
+    second = create_valuation_snapshot(
+        analysis_id="analysis-1",
+        market=market(),
+        financial_data_reference="final_data_gate_report.csv",
+        calculation_version="calc-v1.0",
+        historical_analysis_version="historical-v1.0",
+        quality_version="quality-v1.0",
+        assumptions=assumptions,
+        normalized_inputs=(normalized,),
+        valuation_results=(summary,),
+        quality_context=quality_context,
+        historical_context=historical_context,
+        created_at="2026-08-23T00:00:00+00:00",
+    )
+    changed_market = create_valuation_snapshot(
+        analysis_id="analysis-1",
+        market=market(market_snapshot_id="market-snapshot-2"),
+        financial_data_reference="final_data_gate_report.csv",
+        calculation_version="calc-v1.0",
+        historical_analysis_version="historical-v1.0",
+        quality_version="quality-v1.0",
+        assumptions=assumptions,
+        normalized_inputs=(normalized,),
+        valuation_results=(summary,),
+        quality_context=quality_context,
+        historical_context=historical_context,
+        created_at="2026-08-23T00:00:00+00:00",
+    )
+    changed_assumptions = assumptions_payload(
+        (DCFScenario("base", 1, Decimal("0.01"), Decimal("0.10"), Decimal("0")),),
+        normalization_method="three_year_median",
+        outlier_threshold="0.50",
+        sensitivity_discount_rates=("0.09",),
+        sensitivity_terminal_growth_rates=("0.02",),
+    )
+    changed_growth = create_valuation_snapshot(
+        analysis_id="analysis-1",
+        market=market(),
+        financial_data_reference="final_data_gate_report.csv",
+        calculation_version="calc-v1.0",
+        historical_analysis_version="historical-v1.0",
+        quality_version="quality-v1.0",
+        assumptions=changed_assumptions,
+        normalized_inputs=(normalized,),
+        valuation_results=(summary,),
+        quality_context=quality_context,
+        historical_context=historical_context,
+        created_at="2026-08-23T00:00:00+00:00",
+    )
+
+    assert first.snapshot_id == second.snapshot_id
+    assert first.inputs_hash == second.inputs_hash
+    assert first.snapshot_id != changed_market.snapshot_id
+    assert first.snapshot_id != changed_growth.snapshot_id
+    assert first.quality_context["overall_quality_score"] == "8.2"
+    assert first.quality_context["overall_quality_assessment"] == "STRONG"
+
+
+def test_quality_and_historical_context_do_not_change_dcf_math():
+    normalized = normalize_three_year_metric(
+        "free_cash_flow",
+        (point("free_cash_flow", 2023, "100"), point("free_cash_flow", 2024, "100"), point("free_cash_flow", 2025, "100")),
+    )
+    scenario = DCFScenario("base", 1, Decimal("0"), Decimal("0.10"), Decimal("0"), GENERIC_ASSUMPTION_SOURCE)
+
+    weak_context_result = dcf_summary(equity_dcf("TEST", normalized, scenario), market())
+    strong_context_result = dcf_summary(equity_dcf("TEST", normalized, scenario), market())
+
+    assert weak_context_result.fair_value_per_unit == strong_context_result.fair_value_per_unit

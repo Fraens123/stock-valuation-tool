@@ -15,16 +15,30 @@ from stock_valuation.valuation.assumptions import (
     DEFAULT_SENSITIVITY_DISCOUNT_RATES,
     DEFAULT_SENSITIVITY_TERMINAL_GROWTH_RATES,
     NORMALIZATION_METHOD,
+    OUTLIER_DEVIATION_THRESHOLD,
 )
 from stock_valuation.valuation.dcf import equity_dcf
-from stock_valuation.valuation.models import AVAILABLE, DCFScenario, FinancialPoint, MarketSnapshotInput, stable_hash
+from stock_valuation.valuation.models import (
+    AVAILABLE,
+    VALUATION_ENGINE_VERSION,
+    DCFScenario,
+    FinancialPoint,
+    MarketSnapshotInput,
+    stable_hash,
+)
 from stock_valuation.valuation.multiples import current_market_multiples
 from stock_valuation.valuation.normalization import normalize_three_year_metric
+from stock_valuation.valuation.snapshot import assumptions_payload, create_valuation_snapshot
 from stock_valuation.valuation.summary import dcf_summary
 
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKERS = ("ASML", "AAPL", "MSFT", "TSM", "ADBE")
+FINANCIAL_DATA_REFERENCE = "diagnostics/final_data_gate_report.csv"
+CALCULATION_VERSION = "calc-v1.0"
+HISTORICAL_ANALYSIS_VERSION = "historical-v1.0"
+QUALITY_VERSION = "quality-v1.0"
+MARKET_DATA_VERSION = "market-data-v1.0"
 
 
 def _decimal(value: str | None) -> Decimal | None:
@@ -122,10 +136,18 @@ def _market_inputs() -> dict[str, MarketSnapshotInput]:
             for ref in row.get("input_refs", "").split(";")
             if ref
         )
+        market_inputs_hash = stable_hash(
+            tuple(row["inputs_hash"] for row in (market_cap_row, ev_row) if row and row.get("inputs_hash"))
+        )
+        market_snapshot_id = stable_hash(
+            (ticker, market_cap_row["analysis_as_of_date"], market_inputs_hash, MARKET_DATA_VERSION)
+        )
         markets[ticker] = MarketSnapshotInput(
             ticker=ticker,
             company=market_cap_row["company"],
             analysis_as_of_date=market_cap_row["analysis_as_of_date"],
+            market_snapshot_id=market_snapshot_id,
+            market_data_version=MARKET_DATA_VERSION,
             security_type=market_cap_row["security_type"],
             price=_decimal(market_cap_row["price"]),
             market_cap=_decimal(market_cap_row["value"]),
@@ -138,9 +160,7 @@ def _market_inputs() -> dict[str, MarketSnapshotInput]:
             adr_ratio=_decimal(market_cap_row["adr_ratio"]),
             underlying_share_ratio=_decimal(market_cap_row["underlying_share_ratio"]),
             input_refs=refs,
-            inputs_hash=stable_hash(
-                tuple(row["inputs_hash"] for row in (market_cap_row, ev_row) if row and row.get("inputs_hash"))
-            ),
+            inputs_hash=market_inputs_hash,
         )
     return markets
 
@@ -150,12 +170,101 @@ def _quality_context() -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
     output: dict[str, dict[str, str]] = {}
+    component_ids = {
+        "profitability",
+        "margin_quality",
+        "cashflow_quality",
+        "growth",
+        "balance_sheet",
+        "capital_efficiency",
+        "stability",
+    }
     for row in _read_csv(path):
         if row["ticker"] not in TICKERS:
             continue
-        if row["metric_id"] == "overall_business_quality_score":
-            output[row["ticker"]] = row
+        ticker = row["ticker"]
+        context = output.setdefault(ticker, {"components": {}})
+        if row["metric_id"] == "overall_quality_score":
+            context.update(
+                {
+                    "overall_quality_score": row["score"],
+                    "overall_quality_assessment": row["assessment"],
+                    "quality_version": row["quality_version"],
+                    "years": row["years"],
+                    "quality_inputs_hash": row["inputs_hash"],
+                }
+            )
+        elif row["category"] == "component_score" and row["metric_id"] in component_ids:
+            context["components"][row["metric_id"]] = {
+                "score": row["score"],
+                "status": row["status"],
+                "input_metrics": row["input_metrics"],
+            }
+            if row["quality_version"]:
+                context.setdefault("quality_version", row["quality_version"])
+    for context in output.values():
+        context["context_hash"] = stable_hash((repr(context),))
     return output
+
+
+def _historical_context() -> dict[str, dict[str, object]]:
+    path = BASE_DIR / "historical_analysis_results.csv"
+    if not path.exists():
+        return {}
+    context: dict[str, dict[str, object]] = {}
+    wanted_growth = {"revenue", "net_income", "free_cash_flow"}
+    wanted_margins = {
+        "gross_margin",
+        "operating_margin",
+        "net_margin",
+        "ebitda_margin",
+        "free_cash_flow_margin",
+    }
+    for row in _read_csv(path):
+        ticker = row["ticker"]
+        if ticker not in TICKERS:
+            continue
+        target = context.setdefault(
+            ticker,
+            {
+                "historical_analysis_version": row["calculation_version"],
+                "historical_window": set(),
+                "revenue_growth": [],
+                "earnings_growth": [],
+                "fcf_growth": [],
+                "margin_trend": {},
+                "volatility": {},
+                "negative_years": {},
+                "missing_years": {},
+                "data_confidence": "AVAILABLE",
+                "input_refs": [],
+            },
+        )
+        if row["fiscal_year"]:
+            target["historical_window"].add(row["fiscal_year"])
+        ref = f"historical_analysis:{ticker}:{row['category']}:{row['metric_id']}:{row['fiscal_year']}:{row['window']}"
+        target["input_refs"].append(ref)
+        if row["category"] == "yoy_growth" and row["status"] == AVAILABLE and row["metric_id"] in wanted_growth:
+            key = {
+                "revenue": "revenue_growth",
+                "net_income": "earnings_growth",
+                "free_cash_flow": "fcf_growth",
+            }[row["metric_id"]]
+            target[key].append({"fiscal_year": row["fiscal_year"], "value": row["value"]})
+        elif row["category"] == "cagr" and row["status"] == AVAILABLE and row["metric_id"] in wanted_growth:
+            target.setdefault("cagr", {}).setdefault(row["metric_id"], {})[row["window"]] = row["value"]
+        elif row["category"] == "margin_trends" and row["metric_id"] in wanted_margins:
+            target["margin_trend"][row["metric_id"]] = row["value"]
+        elif row["window"] == "volatility" and row["metric_id"] in wanted_growth | wanted_margins:
+            target["volatility"][row["metric_id"]] = row["value"]
+        elif row["window"] == "negative_years" and row["metric_id"] in wanted_growth | wanted_margins:
+            target["negative_years"][row["metric_id"]] = row["value"]
+        elif row["window"] == "missing_years" and row["metric_id"] in wanted_growth | wanted_margins:
+            target["missing_years"][row["metric_id"]] = row["value"]
+    for target in context.values():
+        target["historical_window"] = sorted(target["historical_window"])
+        target["context_hash"] = stable_hash(tuple(target["input_refs"]) + (repr(target),))
+    return context
 
 
 def _latest_points(
@@ -208,8 +317,17 @@ def build_audit() -> dict:
     calculations = _calculation_points()
     markets = _market_inputs()
     quality = _quality_context()
+    historical = _historical_context()
+    assumptions = assumptions_payload(
+        DEFAULT_DCF_SCENARIOS,
+        normalization_method=NORMALIZATION_METHOD,
+        outlier_threshold=str(OUTLIER_DEVIATION_THRESHOLD),
+        sensitivity_discount_rates=tuple(str(item) for item in DEFAULT_SENSITIVITY_DISCOUNT_RATES),
+        sensitivity_terminal_growth_rates=tuple(str(item) for item in DEFAULT_SENSITIVITY_TERMINAL_GROWTH_RATES),
+    )
     valuation_rows: list[dict[str, str]] = []
     sensitivity_rows: list[dict[str, str]] = []
+    snapshot_rows: list[dict[str, str]] = []
     company_payload: dict[str, dict] = {}
     blockers: list[str] = []
 
@@ -220,8 +338,10 @@ def build_audit() -> dict:
             continue
         latest = _latest_points(ticker, financials, calculations)
         company_rows: list[dict[str, str]] = []
+        valuation_results = []
 
         for result in current_market_multiples(latest, market):
+            valuation_results.append(result)
             row = _result_row(
                 ticker,
                 market.company,
@@ -273,6 +393,7 @@ def build_audit() -> dict:
             dcf = equity_dcf(ticker, normalized_fcf, scenario)
             summary = dcf_summary(dcf, market)
             summaries.append(summary)
+            valuation_results.append(summary)
             row = _result_row(
                 ticker,
                 market.company,
@@ -294,6 +415,7 @@ def build_audit() -> dict:
             scenario_payload[scenario.scenario] = {
                 "dcf": asdict(dcf),
                 "summary": asdict(summary),
+                "assumptions": asdict(scenario),
             }
 
         for discount_rate in DEFAULT_SENSITIVITY_DISCOUNT_RATES:
@@ -323,12 +445,59 @@ def build_audit() -> dict:
             if row["status"] not in {AVAILABLE, "NOT_MEANINGFUL"}:
                 blockers.append(f"{ticker}: {row['metric_id']} {row['status']} {row['issues']}")
 
+        quality_context = quality.get(ticker, {})
+        historical_context = historical.get(ticker, {})
+        if not quality_context.get("overall_quality_score"):
+            blockers.append(f"{ticker}: quality context missing overall_quality_score")
+        if not historical_context:
+            blockers.append(f"{ticker}: historical context missing")
+        snapshot = create_valuation_snapshot(
+            analysis_id=f"valuation-v1:{ticker}:{market.analysis_as_of_date}",
+            market=market,
+            financial_data_reference=FINANCIAL_DATA_REFERENCE,
+            calculation_version=CALCULATION_VERSION,
+            historical_analysis_version=historical_context.get(
+                "historical_analysis_version",
+                HISTORICAL_ANALYSIS_VERSION,
+            ),
+            quality_version=quality_context.get("quality_version", QUALITY_VERSION),
+            assumptions=assumptions,
+            normalized_inputs=normalized_rows,
+            valuation_results=tuple(valuation_results),
+            quality_context=quality_context,
+            historical_context=historical_context,
+            created_at=f"{market.analysis_as_of_date}T00:00:00+00:00",
+        )
+        snapshot_rows.append(
+            {
+                "ticker": ticker,
+                "company": market.company,
+                "analysis_id": snapshot.analysis_id,
+                "analysis_as_of_date": snapshot.analysis_as_of_date,
+                "market_snapshot_id": snapshot.market_snapshot_id,
+                "valuation_snapshot_id": snapshot.snapshot_id,
+                "assumptions_hash": snapshot.assumptions_hash,
+                "inputs_hash": snapshot.inputs_hash,
+                "quality_score": str(quality_context.get("overall_quality_score", "")),
+                "quality_assessment": str(quality_context.get("overall_quality_assessment", "")),
+                "historical_context_available": str(bool(historical_context)),
+                "warnings": ";".join(sorted({issue for row in company_rows for issue in row["issues"].split(";") if issue})),
+                "status": "AVAILABLE" if not any(row["status"] not in {AVAILABLE, "NOT_MEANINGFUL"} for row in company_rows) else "UNAVAILABLE",
+            }
+        )
+
         company_payload[ticker] = {
             "company": market.company,
-            "quality_context": quality.get(ticker, {}),
+            "market_snapshot_id": market.market_snapshot_id,
+            "valuation_snapshot_id": snapshot.snapshot_id,
+            "quality_context": quality_context,
+            "historical_context": historical_context,
             "latest_fiscal_year": max(point.fiscal_year for point in latest.values()),
+            "normalized_inputs": {result.metric_id: asdict(result) for result in normalized_rows},
+            "assumptions": assumptions,
             "rows": company_rows,
             "scenarios": scenario_payload,
+            "snapshot": asdict(snapshot),
         }
 
     decision = "GO – VALUATION ENGINE V1 FROZEN" if not blockers else "NO-GO – VALUATION ENGINE V1"
@@ -338,6 +507,7 @@ def build_audit() -> dict:
         "companies": company_payload,
         "valuation_rows": valuation_rows,
         "sensitivity_rows": sensitivity_rows,
+        "snapshot_rows": snapshot_rows,
         "methodology": {
             "inputs": [
                 "diagnostics/final_data_gate_report.csv",
@@ -347,6 +517,7 @@ def build_audit() -> dict:
                 "diagnostics/market_data_live_results.csv",
             ],
             "normalization_method": NORMALIZATION_METHOD,
+            "assumption_source": "GENERIC_V1_DEFAULT",
             "dcf_type": "Equity DCF; net debt is not subtracted.",
             "ev_multiple_policy": "EV-based current multiples use enterprise_value; market-cap multiples use market_cap.",
             "recommendation_policy": "No BUY/SELL/HOLD output.",
@@ -357,6 +528,7 @@ def build_audit() -> dict:
 def write_outputs(payload: dict) -> None:
     valuation_path = BASE_DIR / "valuation_results.csv"
     sensitivity_path = BASE_DIR / "dcf_sensitivity.csv"
+    snapshot_path = BASE_DIR / "valuation_snapshot_results.csv"
     json_path = BASE_DIR / "VALUATION_ENGINE_AUDIT.json"
     markdown_path = BASE_DIR / "VALUATION_ENGINE_AUDIT.md"
 
@@ -400,6 +572,28 @@ def write_outputs(payload: dict) -> None:
         writer.writeheader()
         writer.writerows(payload["sensitivity_rows"])
 
+    with snapshot_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "ticker",
+                "company",
+                "analysis_id",
+                "analysis_as_of_date",
+                "market_snapshot_id",
+                "valuation_snapshot_id",
+                "assumptions_hash",
+                "inputs_hash",
+                "quality_score",
+                "quality_assessment",
+                "historical_context_available",
+                "warnings",
+                "status",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(payload["snapshot_rows"])
+
     def default(value):
         if isinstance(value, Decimal):
             return str(value)
@@ -429,21 +623,92 @@ def _markdown(payload: dict) -> str:
         "- Equity DCF scenarios: Bear/Base/Bull with explicit centralized assumptions.",
         "- Summary: fair value per listed ordinary/ADR/ADS unit, upside/downside, margin of safety.",
         "",
+        "## Quality Context Integration",
+        "",
+        "- Business Quality is loaded from overall_quality_score plus component scores.",
+        "- Quality context is persisted for review and provenance only.",
+        "- Quality does not change DCF cash flows, discount rates, fair values, or multiples.",
+        "",
+        "## Historical Context Integration",
+        "",
+        "- Historical Analysis is loaded as read-only context for Phase 7.",
+        "- Included context covers growth, CAGR, margin trends, volatility, negative years, and missing years where available.",
+        "- Historical context does not derive or modify DCF assumptions in V1.",
+        "",
+        "## Warning Propagation",
+        "",
+        "- Non-blocking upstream warnings are propagated through DCF and final Valuation Summary.",
+        "- OUTLIER_REVIEW remains visible when normalized inputs are still usable.",
+        "- Generic V1 DCF assumptions are marked with ASSUMPTIONS_NOT_COMPANY_SPECIFIC.",
+        "",
+        "## Valuation Snapshot Architecture",
+        "",
+        "- Each company receives an immutable ValuationSnapshot payload in the JSON audit.",
+        "- Snapshot identity is deterministic from analysis_id, analysis date, market_snapshot_id, assumptions_hash, inputs_hash, and valuation version.",
+        "- Same inputs and assumptions produce the same reproducibility hash; changed inputs produce a new snapshot.",
+        "",
+        "## Market Snapshot Linkage",
+        "",
+        "- Diagnostics derive a deterministic market_snapshot_id from ticker, analysis date, market input hashes, and market data version.",
+        "- Production callers can provide a persistent market_snapshot_id through MarketSnapshotInput.",
+        "",
+        "## Assumption Snapshot",
+        "",
+        "- Bear/Base/Bull assumptions are stored inside every valuation snapshot.",
+        "- The default V1 assumptions are marked as GENERIC_V1_DEFAULT, not company-specific forecasts.",
+        "",
+        "## Generic vs Company-Specific Assumptions",
+        "",
+        "- Current V1 DCF values are available but carry ASSUMPTIONS_NOT_COMPANY_SPECIFIC.",
+        "- Company-specific assumption derivation is reserved for Phase 7.",
+        "",
+        "## Persistence / Immutability",
+        "",
+        "- valuation_snapshot_results.csv records market_snapshot_id, valuation_snapshot_id, assumptions_hash, and inputs_hash.",
+        "- No old valuation result is overwritten in the snapshot model; new inputs create new deterministic snapshot identities.",
+        "",
         "## Companies",
         "",
     ]
     for ticker, company in payload["companies"].items():
         statuses = sorted({row["status"] for row in company["rows"]})
         latest_year = company["latest_fiscal_year"]
+        normalized_fcf = company["normalized_inputs"]["free_cash_flow"]
+        quality_context = company["quality_context"]
+        summaries = {
+            scenario: company["scenarios"][scenario]["summary"]
+            for scenario in ("bear", "base", "bull")
+        }
         lines.extend(
             [
                 f"### {ticker}",
                 "",
                 f"- Latest fiscal year used: FY{latest_year}",
+                f"- Market snapshot ID: {company['market_snapshot_id']}",
+                f"- Valuation snapshot ID: {company['valuation_snapshot_id']}",
+                f"- Normalized FCF: {normalized_fcf['value']} {normalized_fcf['currency']}",
+                f"- Normalization issues: {', '.join(normalized_fcf['issues']) or 'None'}",
+                f"- Quality score: {quality_context.get('overall_quality_score', '')}",
+                f"- Quality assessment: {quality_context.get('overall_quality_assessment', '')}",
+                f"- Historical context availability: {bool(company['historical_context'])}",
+                f"- DCF assumption source: {company['assumptions']['assumption_set']}",
+                f"- Bear assumptions: {company['scenarios']['bear']['assumptions']}",
+                f"- Base assumptions: {company['scenarios']['base']['assumptions']}",
+                f"- Bull assumptions: {company['scenarios']['bull']['assumptions']}",
+                f"- Bear fair value: {summaries['bear']['fair_value_per_unit']} {summaries['bear']['trading_currency']}",
+                f"- Base fair value: {summaries['base']['fair_value_per_unit']} {summaries['base']['trading_currency']}",
+                f"- Bull fair value: {summaries['bull']['fair_value_per_unit']} {summaries['bull']['trading_currency']}",
+                f"- Market price: {summaries['base']['market_price']} {summaries['base']['trading_currency']}",
+                f"- Base upside/downside: {summaries['base']['upside_downside']}",
+                f"- Base margin of safety: {summaries['base']['margin_of_safety']}",
+                f"- Warnings: {', '.join(sorted({issue for row in company['rows'] for issue in row['issues'].split(';') if issue})) or 'None'}",
+                f"- Inputs hash: {company['snapshot']['inputs_hash']}",
                 f"- Statuses: {', '.join(statuses)}",
                 "",
             ]
         )
+    lines.extend(["## Regression Results", ""])
+    lines.append("- Valuation snapshot, context, warning propagation, and deterministic hash tests are covered by tests/test_valuation_engine.py.")
     lines.extend(["## Blockers", ""])
     if payload["blockers"]:
         lines.extend(f"- {blocker}" for blocker in payload["blockers"])
@@ -456,6 +721,7 @@ def _markdown(payload: dict) -> str:
             "",
             "- diagnostics/valuation_results.csv",
             "- diagnostics/dcf_sensitivity.csv",
+            "- diagnostics/valuation_snapshot_results.csv",
             "- diagnostics/VALUATION_ENGINE_AUDIT.json",
         ]
     )

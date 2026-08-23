@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from stock_valuation.valuation.multiples import convert_financial_to_trading
 from stock_valuation.valuation.models import (
+    ASSUMPTIONS_NOT_COMPANY_SPECIFIC,
     ADR_RATIO_REQUIRED,
     AVAILABLE,
     INVALID_SHARE_COUNT,
@@ -13,6 +14,14 @@ from stock_valuation.valuation.models import (
     ValuationSummary,
     stable_hash,
 )
+
+NON_BLOCKING_WARNINGS = {
+    "OUTLIER_REVIEW",
+    "INSUFFICIENT_HISTORY_WARNING",
+    "QUALITY_CONTEXT_WARNING",
+    "DATA_CONFIDENCE_WARNING",
+    ASSUMPTIONS_NOT_COMPANY_SPECIFIC,
+}
 
 
 def dcf_summary(dcf_result: DCFResult, market: MarketSnapshotInput) -> ValuationSummary:
@@ -25,7 +34,8 @@ def dcf_summary(dcf_result: DCFResult, market: MarketSnapshotInput) -> Valuation
     units, unit_issue = listed_equivalent_units(market)
     if unit_issue:
         issues.append(unit_issue)
-    if equity_value is None or units is None or issues:
+    blocking_issues = [issue for issue in issues if issue not in NON_BLOCKING_WARNINGS]
+    if equity_value is None or units is None or blocking_issues:
         return _summary(dcf_result, market, None, UNAVAILABLE, issues)
     fair_value = equity_value / units
     return _summary(dcf_result, market, fair_value, AVAILABLE, issues)
