@@ -192,6 +192,31 @@ def test_primary_source_and_manual_override_are_calculation_ready() -> None:
         assert states["ppe_net"].calculation_ready is True
 
 
+def test_sec_short_term_debt_requires_semantic_review_even_as_primary_source() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        debt = _fact(
+            session,
+            analysis.id,
+            "short_term_debt",
+            "2999",
+            provider="sec_companyfacts",
+            provider_field="us-gaap:LongTermDebtCurrent",
+            source_type="primary_source",
+        )
+
+        state = load_preferred_data_states(session, analysis.id, metrics=["short_term_debt"])[0]
+        assert state.quality_status == "primary_semantic_review_required"
+        assert state.calculation_ready is False
+
+        _review(session, analysis.id, debt, "PASS")
+        state = load_preferred_data_states(session, analysis.id, metrics=["short_term_debt"])[0]
+        assert state.quality_status == "primary_reviewed_pass"
+        assert state.calculation_ready is True
+
+
 def test_internal_definitions_cover_microsoft_mapping_problems() -> None:
     assert "Operating-Lease-Right-of-Use-Assets" in FIELD_DEFINITIONS["ppe_net"]
     assert "Fälligkeit innerhalb von zwölf Monaten" in FIELD_DEFINITIONS["short_term_debt"]
