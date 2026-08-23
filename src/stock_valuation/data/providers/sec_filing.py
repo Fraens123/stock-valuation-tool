@@ -167,7 +167,11 @@ def _rows_from_columns(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _filing_refs(payload: dict[str, Any]) -> list[SECFilingRef]:
-    recent = payload.get("filings", {}).get("recent") if isinstance(payload.get("filings"), dict) else None
+    recent = (
+        payload.get("filings", {}).get("recent")
+        if isinstance(payload.get("filings"), dict)
+        else None
+    )
     columns = recent if isinstance(recent, dict) else payload
     refs: list[SECFilingRef] = []
     for row in _rows_from_columns(columns if isinstance(columns, dict) else {}):
@@ -206,7 +210,9 @@ def _parse_contexts(root: ET.Element) -> dict[str, _Context]:
         instant = period.find(f"{{{XBRLI_NS}}}instant")
         end = period.find(f"{{{XBRLI_NS}}}endDate")
         start = period.find(f"{{{XBRLI_NS}}}startDate")
-        period_end = _date(instant.text if instant is not None else end.text if end is not None else None)
+        period_end = _date(
+            instant.text if instant is not None else end.text if end is not None else None
+        )
         period_start = _date(start.text) if start is not None else None
         if period_end is None:
             continue
@@ -377,12 +383,19 @@ class SECFilingFallbackProvider:
             response.raise_for_status()
             text = response.text
         except requests.RequestException as exc:
-            raise SECFilingFallbackError(f"SEC-Filing-Dokument konnte nicht geladen werden: {exc}") from exc
+            raise SECFilingFallbackError(
+                f"SEC-Filing-Dokument konnte nicht geladen werden: {exc}"
+            ) from exc
         if self.use_cache:
             self.cache.put_text("GET_TEXT", params, text)
         return text
 
-    def list_annual_filings(self, cik: str, *, target_years: Iterable[int] | None = None) -> list[SECFilingRef]:
+    def list_annual_filings(
+        self,
+        cik: str,
+        *,
+        target_years: Iterable[int] | None = None,
+    ) -> list[SECFilingRef]:
         normalized = str(cik).strip().replace("CIK", "").zfill(10)
         payload = self._get_json(SEC_SUBMISSIONS_URL.format(cik=normalized))
         refs = _filing_refs(payload)
@@ -397,9 +410,12 @@ class SECFilingFallbackProvider:
                 if targets:
                     filing_from = _date(item.get("filingFrom"))
                     filing_to = _date(item.get("filingTo"))
-                    relevant_filing_years = {year for target in targets for year in (target, target + 1)}
+                    relevant_filing_years = {
+                        year for target in targets for year in (target, target + 1)
+                    }
                     if filing_from and filing_to and not any(
-                        filing_from.year <= year <= filing_to.year for year in relevant_filing_years
+                        filing_from.year <= year <= filing_to.year
+                        for year in relevant_filing_years
                     ):
                         continue
                 extra = self._get_json(SEC_SUBMISSION_FILE_URL.format(name=item["name"]))
@@ -408,15 +424,17 @@ class SECFilingFallbackProvider:
         deduped = {ref.accession_number: ref for ref in refs}
         return sorted(deduped.values(), key=lambda ref: (ref.report_date, ref.filing_date))
 
-    def find_filing(self, cik: str, year: int) -> SECFilingRef | None:
+    def filings_for_year(self, cik: str, year: int) -> list[SECFilingRef]:
         candidates = [
             ref
             for ref in self.list_annual_filings(cik, target_years=[year])
             if ref.report_date.year == year
         ]
-        if not candidates:
-            return None
-        return sorted(candidates, key=lambda ref: (ref.filing_date, ref.form))[-1]
+        return sorted(candidates, key=lambda ref: (ref.filing_date, ref.form), reverse=True)
+
+    def find_filing(self, cik: str, year: int) -> SECFilingRef | None:
+        candidates = self.filings_for_year(cik, year)
+        return candidates[0] if candidates else None
 
     def _archive_base(self, cik: str, filing: SECFilingRef) -> str:
         cik_number = str(int(str(cik).strip().replace("CIK", "")))
@@ -487,51 +505,66 @@ class SECFilingFallbackProvider:
         filings_checked = 0
         for year in sorted({year for _, year in missing}):
             needed = {metric for metric, target_year in missing if target_year == year}
-            filing = self.find_filing(cik, year)
-            if filing is None:
-                unresolved.extend(
-                    SECFilingGap(metric, year, "no_filing", "Kein passendes SEC-Jahresfiling gefunden.")
-                    for metric in sorted(needed)
-                )
-                continue
-            instance = self._instance_document(cik, filing)
-            filing_url = self._archive_base(cik, filing) + (filing.primary_document or "")
-            if instance is None:
+            filings = self.filings_for_year(cik, year)
+            if not filings:
                 unresolved.extend(
                     SECFilingGap(
                         metric,
                         year,
-                        "no_xbrl_instance",
-                        "Originalfiling gefunden, aber keine lesbare XBRL-Instanz im Archiv.",
-                        filing_url,
+                        "no_filing",
+                        "Kein passendes SEC-Jahresfiling gefunden.",
                     )
                     for metric in sorted(needed)
                 )
                 continue
-            instance_url, content = instance
-            filings_checked += 1
-            parsed = parse_xbrl_instance(
-                content,
-                report_date=filing.report_date,
-                filing_date=filing.filing_date,
-                form=filing.form,
-                source_url=instance_url,
-                expected_currency=expected_currency,
-            )
-            by_metric = {fact.metric: fact for fact in parsed}
-            for metric in sorted(needed):
-                fact = by_metric.get(metric)
-                if fact is not None:
-                    output.append(fact)
-                else:
-                    unresolved.append(
-                        SECFilingGap(
-                            metric,
-                            year,
-                            "semantic_review_required",
-                            "Im Originalfiling wurde für dieses Feld kein erlaubter Standard-XBRL-Tag gefunden; Company-Extension oder Textzeile muss semantisch geprüft werden.",
-                            filing_url,
-                        )
-                    )
 
-        return SECFilingFallbackResult(tuple(output), tuple(unresolved), filings_checked)
+            found: dict[str, NormalizedFinancialFact] = {}
+            last_filing_url: str | None = None
+            readable_instance_found = False
+            for filing in filings:
+                filing_url = self._archive_base(cik, filing) + (filing.primary_document or "")
+                last_filing_url = filing_url
+                instance = self._instance_document(cik, filing)
+                if instance is None:
+                    continue
+                readable_instance_found = True
+                instance_url, content = instance
+                filings_checked += 1
+                parsed = parse_xbrl_instance(
+                    content,
+                    report_date=filing.report_date,
+                    filing_date=filing.filing_date,
+                    form=filing.form,
+                    source_url=instance_url,
+                    expected_currency=expected_currency,
+                )
+                by_metric = {fact.metric: fact for fact in parsed}
+                for metric in sorted(needed - set(found)):
+                    fact = by_metric.get(metric)
+                    if fact is not None:
+                        found[metric] = fact
+                if needed.issubset(found):
+                    break
+
+            output.extend(found.values())
+            for metric in sorted(needed - set(found)):
+                if readable_instance_found:
+                    status = "semantic_review_required"
+                    reason = (
+                        "Im Originalfiling wurde für dieses Feld kein erlaubter Standard-XBRL-Tag "
+                        "gefunden; Company-Extension oder Textzeile muss semantisch geprüft werden."
+                    )
+                else:
+                    status = "no_xbrl_instance"
+                    reason = (
+                        "Jahresfiling gefunden, aber keine lesbare XBRL-Instanz im SEC-Archiv."
+                    )
+                unresolved.append(
+                    SECFilingGap(metric, year, status, reason, last_filing_url)
+                )
+
+        return SECFilingFallbackResult(
+            tuple(sorted(output, key=lambda fact: (fact.period_end, fact.metric))),
+            tuple(unresolved),
+            filings_checked,
+        )
