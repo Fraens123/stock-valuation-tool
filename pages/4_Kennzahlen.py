@@ -97,7 +97,7 @@ def _render_percentage_series(
     st.line_chart(visible.set_index("Jahr")[value_label])
     st.dataframe(
         visible.sort_values("Jahr", ascending=False),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")},
     )
@@ -112,9 +112,8 @@ def _render_percentage_series(
 
 st.title("Kennzahlenanalyse")
 st.caption(
-    "Kennzahlen werden ausschließlich aus dem gespeicherten Analyse-Snapshot und der verifizierten "
-    "Preferred-Data-Schicht berechnet. Ein ungeprüfter Alpha-Vantage-Wert ist kein automatischer "
-    "Berechnungsinput. Diese Seite verursacht keine API-Requests."
+    "Kennzahlen werden automatisch aus dem gespeicherten Analyse-Snapshot und der verifizierten "
+    "Preferred-Data-Schicht abgeleitet. Diese Seite verursacht keine externen API-Requests."
 )
 
 with get_session() as session:
@@ -141,6 +140,19 @@ with get_session() as session:
     header[2].metric("Revision", f"R{analysis.revision_number}")
     header[3].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
 
+# Derived metrics behave like a local cache: on editable analyses they are synchronized whenever
+# the page is opened/rerun. Identical input hashes cause no database rewrite.
+auto_calculation_error: str | None = None
+if editable and preferred_states:
+    try:
+        with get_session() as session:
+            current = get_analysis(session, analysis_id)
+            if current is None:
+                raise ValueError("Analyse nicht gefunden.")
+            calculate_and_store_phase_3a(session, current)
+    except (MetricDataQualityError, AnalysisFrozenError, ValueError) as exc:
+        auto_calculation_error = str(exc)
+
 st.divider()
 st.subheader("Berechnungsbasis – Preferred Data")
 if not preferred_states:
@@ -164,8 +176,8 @@ else:
     cols[3].metric("Primärquelle / Override", source_count)
 
     st.caption(
-        "Priorität: bestätigter Override → Primärquelle → geprüfter Providerwert. Alpha Vantage "
-        "bleibt als Rohdatenquelle gespeichert, wird aber ohne Freigabe nicht still verwendet."
+        "Priorität: bestätigter Override → Primärquelle → geprüfter Providerwert. "
+        "Berechnete Kennzahlen werden automatisch aktualisiert, wenn sich freigegebene Inputs ändern."
     )
 
     with st.expander("Preferred-Data-Status im Detail", expanded=False):
@@ -190,56 +202,25 @@ else:
                     for state in recent_states
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
 st.divider()
 st.subheader("Kapitel 2 – Ertrag und Rentabilität")
-method_rows = [
-    {
-        "Kennzahl": _metric_title(state.metric_id),
-        "Status": METHOD_STATUS[state.status],
-        "Warum": state.reason,
-    }
-    for state in phase_3a_method_states()
-]
-st.dataframe(pd.DataFrame(method_rows), use_container_width=True, hide_index=True)
-
-st.info(
-    "EBIT- und EBITDA-Marge sind methodisch freigegeben. ROE, Umsatzrendite, Kapitalumschlag, "
-    "Gesamtkapitalrendite, ROCE und Umsatzverdienstrate warten noch auf die verifizierte Buchdefinition."
+st.caption(
+    "Methodisch freigegebene Kennzahlen werden automatisch aus Preferred Data berechnet. "
+    "Für Änderungen an Rohdaten oder Reviews ist kein zusätzlicher Berechnungsbutton nötig."
 )
 
-if editable:
-    if st.button("Aktive Kennzahlen aus Preferred Data berechnen", type="primary"):
-        try:
-            with get_session() as session:
-                current = get_analysis(session, analysis_id)
-                if current is None:
-                    raise ValueError("Analyse nicht gefunden.")
-                counts = calculate_and_store_phase_3a(session, current)
-            st.success(
-                "Berechnung gespeichert: "
-                f"{counts.get('ebit_margin', 0)} EBIT-Margen-Jahreswerte, "
-                f"{counts.get('ebitda_margin', 0)} EBITDA-Margen-Jahreswerte. "
-                "Es wurden ausschließlich berechnungsbereite Preferred-Data-Inputs verwendet."
-            )
-            if counts.get("ebitda_margin", 0) == 0:
-                st.info(
-                    "EBITDA-Marge blieb blockiert, weil mindestens ein benötigter Input – typischerweise "
-                    "D&A – nicht eindeutig freigegeben ist."
-                )
-            st.rerun()
-        except (MetricDataQualityError, AnalysisFrozenError, ValueError) as exc:
-            st.error(str(exc))
-else:
+if auto_calculation_error:
+    st.warning(auto_calculation_error)
+elif not editable:
     st.caption(
-        "Diese Analyse ist eingefroren. Gespeicherte Kennzahlen können angezeigt, aber nicht "
-        "mit einer neueren Berechnungsversion überschrieben werden."
+        "Die Analyse ist eingefroren. Angezeigt werden die mit dieser Revision gespeicherten "
+        "Kennzahlen; sie werden nicht nachträglich verändert."
     )
 
-st.divider()
 metric_heading("ebit_margin")
 st.caption(
     "EBIT / Revenue aus verifizierter Preferred Data. Für ASML bleibt die validierte "
@@ -249,7 +230,7 @@ _render_percentage_series(
     analysis_id,
     "ebit_margin",
     "EBIT-Marge %",
-    empty_message="Noch keine berechnungsbereite EBIT-Margen-Serie gespeichert.",
+    empty_message="Für die EBIT-Marge sind aktuell keine vollständig freigegebenen Jahresinputs vorhanden.",
 )
 
 st.divider()
@@ -261,18 +242,33 @@ _render_percentage_series(
     analysis_id,
     "ebitda_margin",
     "EBITDA-Marge %",
-    empty_message="Noch keine berechnungsbereite EBITDA-Margen-Serie gespeichert.",
+    empty_message="Für die EBITDA-Marge sind aktuell keine vollständig freigegebenen Jahresinputs vorhanden.",
 )
 
-st.divider()
-st.subheader("Noch offene Kennzahlen dieses Kapitels")
-for state in phase_3a_method_states():
-    if state.status == "implemented":
-        continue
-    info = get_metric_info(state.metric_id) or {}
-    chapter = info.get("chapter", "—")
-    kindle = info.get("kindle_page", "—")
-    st.markdown(
-        f"**{_metric_title(state.metric_id)}** — {METHOD_STATUS[state.status]}  "
-        f"\nKapitel {chapter}, Kindle-Seite {kindle}: {state.reason}"
+open_states = [state for state in phase_3a_method_states() if state.status != "implemented"]
+with st.expander(
+    f"Weitere Kennzahlen dieses Kapitels – Methodik noch offen ({len(open_states)})",
+    expanded=False,
+):
+    st.caption(
+        "Diese Kennzahlen werden erst aktiviert, wenn die jeweilige Buchdefinition verifiziert ist. "
+        "Bis dahin wird keine Formel geraten."
     )
+    method_rows = [
+        {
+            "Kennzahl": _metric_title(state.metric_id),
+            "Status": METHOD_STATUS[state.status],
+            "Warum": state.reason,
+        }
+        for state in open_states
+    ]
+    st.dataframe(pd.DataFrame(method_rows), width="stretch", hide_index=True)
+
+    for state in open_states:
+        info = get_metric_info(state.metric_id) or {}
+        chapter = info.get("chapter", "—")
+        kindle = info.get("kindle_page", "—")
+        st.markdown(
+            f"**{_metric_title(state.metric_id)}** — {METHOD_STATUS[state.status]}  "
+            f"\nKapitel {chapter}, Kindle-Seite {kindle}: {state.reason}"
+        )
