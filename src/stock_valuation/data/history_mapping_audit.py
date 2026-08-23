@@ -4,9 +4,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stock_valuation.data.resolution import DEFAULT_PROVIDER_PRIORITY, load_preferred_financial_facts
+from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
 from stock_valuation.database.models import Analysis, FinancialFactSnapshot
 
 
@@ -71,7 +73,7 @@ def _taxonomy(fact: FinancialFactSnapshot) -> str:
 
 def _provider_family(provider: str | None) -> str:
     normalized = _clean(provider).lower()
-    if normalized in {"sec_companyfacts", "sec_filing_xbrl"}:
+    if normalized in {"sec_companyfacts", "sec_filing_xbrl", "sec_filing_extension"}:
         return "sec"
     return normalized
 
@@ -87,12 +89,7 @@ def _effective_year_facts(
     year_facts: list[FinancialFactSnapshot],
     fiscal_year_end: tuple[int, int] | None,
 ) -> list[FinancialFactSnapshot]:
-    """Prefer the company's normal fiscal-year end over opening/restatement instants.
-
-    Annual XBRL can contain an opening balance (for example 1 January) and the actual fiscal-year
-    end in the same calendar year. When the normal fiscal-year-end date is present, the opening
-    instant is not a second fiscal year and must not create a false duplicate warning.
-    """
+    """Prefer the company's normal fiscal-year end over opening/restatement instants."""
     if fiscal_year_end is None:
         return year_facts
     matching = [
@@ -141,7 +138,7 @@ def _change_years(year_to_field: dict[int, str]) -> tuple[int, ...]:
 
 
 def _base_facts(session: Session, analysis_id: int) -> list[FinancialFactSnapshot]:
-    """Use the underlying imported source, not a later manual correction, for mapping continuity."""
+    """Use underlying imported sources for mapping continuity; do not hide them with overrides."""
     facts = load_preferred_financial_facts(
         session,
         analysis_id,
@@ -158,6 +155,50 @@ def _base_facts(session: Session, analysis_id: int) -> list[FinancialFactSnapsho
     ]
 
 
+def _latest_review_index(session: Session, analysis_id: int) -> dict[tuple[str, object], AIReviewFinding]:
+    findings = session.scalars(
+        select(AIReviewFinding)
+        .join(AIReviewRun, AIReviewFinding.run_id == AIReviewRun.id)
+        .where(AIReviewFinding.analysis_id == analysis_id)
+        .order_by(AIReviewRun.created_at.desc(), AIReviewFinding.id.desc())
+    ).all()
+    result: dict[tuple[str, object], AIReviewFinding] = {}
+    for finding in findings:
+        result.setdefault((finding.metric, finding.period_end), finding)
+    return result
+
+
+def _override_keys(session: Session, analysis_id: int) -> set[tuple[str, object]]:
+    rows = session.scalars(
+        select(FinancialFactSnapshot).where(
+            FinancialFactSnapshot.analysis_id == analysis_id,
+            FinancialFactSnapshot.provider == "manual_override",
+            FinancialFactSnapshot.period_type == "FY",
+        )
+    ).all()
+    return {(row.metric, row.period_end) for row in rows if row.value is not None}
+
+
+def _extension_mapping_resolved(
+    fact: FinancialFactSnapshot,
+    review_index: dict[tuple[str, object], AIReviewFinding],
+    override_keys: set[tuple[str, object]],
+) -> bool:
+    if fact.provider != "sec_filing_extension":
+        return False
+    key = (fact.metric, fact.period_end)
+    if key in override_keys:
+        return True
+    finding = review_index.get(key)
+    if finding is None or finding.verdict.upper() != "PASS":
+        return False
+    if finding.provider != fact.provider or finding.provider_field != fact.provider_field:
+        return False
+    if finding.imported_value is None or fact.value is None:
+        return False
+    return finding.imported_value == fact.value
+
+
 def audit_history_mapping(
     session: Session,
     analysis: Analysis,
@@ -167,11 +208,10 @@ def audit_history_mapping(
 ) -> HistoryMappingAudit:
     """Audit longitudinal mapping consistency without network access or semantic guessing.
 
-    PASS means the requested history is complete and uses one accounting-source family, currency,
-    taxonomy and original provider/XBRL field. SEC Company Facts and an original SEC filing are one
-    source family; the latter is merely a fallback extraction path. REVIEW means the series is
-    complete but a mapping property changes. GAP means at least one requested fiscal year has no
-    value. REVIEW/GAP is a prompt for inspection, not proof that a reported number is wrong.
+    PASS means the requested history is complete and its technical changes are either absent or an
+    SEC company-extension change was explicitly resolved by semantic PASS/accepted override.
+    REVIEW means a complete series still has an unresolved mapping/source/currency/taxonomy change.
+    GAP means at least one requested fiscal year has no candidate/value at all.
     """
     requested_years = max(1, int(years))
     facts = [
@@ -191,6 +231,8 @@ def audit_history_mapping(
             rows=(),
         )
 
+    review_index = _latest_review_index(session, analysis.id)
+    override_keys = _override_keys(session, analysis.id)
     fiscal_year_end = _normal_fiscal_year_end(facts)
     last_year = max(fact.period_end.year for fact in facts)
     first_year = last_year - requested_years + 1
@@ -246,6 +288,31 @@ def audit_history_mapping(
         taxonomies = tuple(sorted({_taxonomy(fact) for fact in effective_metric_facts}))
         change_years = _change_years(year_to_field)
 
+        extension_facts = [
+            fact for fact in effective_metric_facts if fact.provider == "sec_filing_extension"
+        ]
+        extension_resolved = bool(extension_facts) and all(
+            _extension_mapping_resolved(fact, review_index, override_keys)
+            for fact in extension_facts
+        )
+        non_extension_fields = {
+            _clean(fact.provider_field, _clean(fact.provider))
+            for fact in effective_metric_facts
+            if fact.provider != "sec_filing_extension"
+        }
+        non_extension_taxonomies = {
+            _taxonomy(fact)
+            for fact in effective_metric_facts
+            if fact.provider != "sec_filing_extension"
+        }
+        field_change_requires_review = len(provider_fields) > 1
+        taxonomy_change_requires_review = len(taxonomies) > 1
+        if extension_resolved:
+            if len(non_extension_fields) <= 1:
+                field_change_requires_review = False
+            if len(non_extension_taxonomies) <= 1:
+                taxonomy_change_requires_review = False
+
         reasons: list[str] = []
         if missing_years:
             reasons.append("fehlende Jahre: " + ", ".join(str(year) for year in missing_years))
@@ -254,30 +321,33 @@ def audit_history_mapping(
                 "mehrere echte Geschäftsjahres-Enden im selben Jahr: "
                 + ", ".join(str(year) for year in duplicate_years)
             )
-        if len(provider_fields) > 1:
+        if field_change_requires_review:
             reasons.append(f"Originalfeld wechselte ({len(provider_fields)} Varianten)")
         if len(provider_families) > 1:
             reasons.append("Quellenfamilie wechselte: " + ", ".join(sorted(provider_families)))
         if len(currencies) > 1:
             reasons.append("Währung wechselte: " + ", ".join(currencies))
-        if len(taxonomies) > 1:
+        if taxonomy_change_requires_review:
             reasons.append("Taxonomie wechselte: " + ", ".join(taxonomies))
+        if extension_resolved:
+            reasons.append("SEC-Company-Extension-Mapping semantisch bestätigt")
 
         if missing_years:
             status = "GAP"
         elif (
             duplicate_years
-            or len(provider_fields) > 1
+            or field_change_requires_review
             or len(provider_families) > 1
             or len(currencies) > 1
-            or len(taxonomies) > 1
+            or taxonomy_change_requires_review
         ):
             status = "REVIEW"
         else:
             status = "PASS"
-            reasons.append(
-                f"{requested_years}-Jahres-Serie vollständig und Mapping technisch unverändert."
-            )
+            if not reasons:
+                reasons.append(
+                    f"{requested_years}-Jahres-Serie vollständig und Mapping technisch unverändert."
+                )
 
         rows.append(
             HistoryMappingRow(
