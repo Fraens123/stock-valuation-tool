@@ -223,6 +223,34 @@ class MetricSnapshot(Base):
     inputs_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class MarketDataSnapshotRecord(Base):
+    __tablename__ = "market_data_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    snapshot_id: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    analysis_as_of_date: Mapped[date] = mapped_column(Date, index=True)
+    provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_symbol: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    ticker: Mapped[str] = mapped_column(String(80), index=True)
+    exchange: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    security_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    trading_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    financial_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    shares_outstanding: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    share_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    share_basis: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    filing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    fx_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    net_debt_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inputs_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class QualitativeAssessment(Base):
     __tablename__ = "qualitative_assessments"
 

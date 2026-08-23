@@ -10,6 +10,7 @@ MARKET_DATA_VERSION = "market-data-v1.0"
 AVAILABLE = "AVAILABLE"
 UNAVAILABLE = "UNAVAILABLE"
 STALE = "STALE"
+LOOKAHEAD_BLOCKED = "LOOKAHEAD_BLOCKED"
 CURRENCY_MATCH = "CURRENCY_MATCH"
 FX_REQUIRED = "FX_REQUIRED"
 FX_UNAVAILABLE = "FX_UNAVAILABLE"
@@ -18,6 +19,14 @@ INVALID_SHARE_COUNT = "INVALID_SHARE_COUNT"
 DATE_MISMATCH = "DATE_MISMATCH"
 VALUATION_NOT_READY = "VALUATION_NOT_READY"
 MISSING_PRICE = "MISSING_PRICE"
+SHARE_COUNT_CURRENT = "SHARE_COUNT_CURRENT"
+SHARE_COUNT_STALE = "SHARE_COUNT_STALE"
+SHARE_COUNT_UNAVAILABLE = "SHARE_COUNT_UNAVAILABLE"
+LISTING_REVIEW_REQUIRED = "LISTING_REVIEW_REQUIRED"
+
+SHARE_BASIS_ORDINARY = "ORDINARY_SHARES"
+SHARE_BASIS_ADR_UNITS = "ADR_UNITS"
+SHARE_BASIS_ADS_UNITS = "ADS_UNITS"
 
 
 @dataclass(frozen=True)
@@ -27,6 +36,7 @@ class ListingData:
     trading_currency: str
     security_type: str
     primary_listing: bool
+    liquidity_priority: int | None = None
     isin: str | None = None
     adr_ratio: Decimal | None = None
     underlying_share_ratio: Decimal | None = None
@@ -65,6 +75,7 @@ class NormalizedShareData:
     provider_field: str | None = None
     unit: str = "shares"
     provenance: str | None = None
+    share_basis: str = SHARE_BASIS_ORDINARY
 
 
 @dataclass(frozen=True)
