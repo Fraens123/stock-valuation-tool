@@ -2,193 +2,163 @@
 
 ## Phase 2 – generischer offizieller Quellen-Router und historische Datenqualität
 
-Historische Ist-Daten dürfen nicht mehr von Alpha Vantage als Pflichtquelle abhängen. ASML bleibt ein Referenzfall, aber die normale Suche/Importlogik muss für beliebige Unternehmen funktionieren.
+Historische Ist-Daten dürfen nicht von Alpha Vantage als Pflichtquelle abhängen. ASML bleibt ein Referenzfall, aber Such-, Import- und Prüflogik müssen generisch für beliebige Unternehmen funktionieren.
 
 ## Aktuell implementiert
 
-### 1. Providerunabhängige Unternehmensidentität
+### 1. Providerunabhängige Identität
 
-- `src/stock_valuation/companies/discovery.py`
-- `src/stock_valuation/data/providers/sec.py`
-- `src/stock_valuation/data/providers/gleif.py`
+- SEC: Ticker/Name → CIK
+- GLEIF: Legal Name → LEI
+- Ticker, CIK, LEI und Provider-Symbole bleiben getrennte Identifikatoren.
+- Die normale Unternehmenssuche benötigt Alpha Vantage nicht.
 
-Normaler Suchweg:
-
-```text
-Name/Ticker
-  ├─ SEC-Verzeichnis → Ticker + CIK
-  └─ GLEIF → Legal Entity + LEI
-```
-
-CIK und LEI werden getrennt vom Börsenticker in `CompanyProviderSymbol` gespeichert.
-
-Die Streamlit-Seite `Unternehmen` verwendet für die normale Suche nicht mehr Alpha Vantage.
-
-### 2. Historischer Source Router
-
-- `src/stock_valuation/data/source_router.py`
+### 2. Source Router
 
 Standardreihenfolge:
 
 1. SEC Company Facts
 2. ESEF/xBRL-JSON
-3. Alpha Vantage nur wenn der Nutzer den Fallback ausdrücklich aktiviert
+3. Alpha Vantage nur als expliziter Fallback
 
-Der Router wählt zunächst eine kohärente historische Quelle und mischt nicht still verschiedene Provider innerhalb einer Abschlussserie.
+Der Router mischt keine unterschiedlichen Rechnungslegungsbasen feldweise zu einem scheinbar einheitlichen Abschluss.
 
-### 3. SEC
+### 3. SEC Company Facts
 
-- kein API-Key
-- lokal erforderlich: `SEC_USER_AGENT`
-- öffentliches Ticker/CIK-Verzeichnis wird gecacht
-- Company Facts wird gecacht
-- Standardkonzepte aus `us-gaap` und `ifrs-full` werden normalisiert
-- Company Extensions werden nicht geraten
-- alternative standardisierte Konzepte werden **pro Periodenende** aufgelöst, nicht mehr einmal für die gesamte Historie
-- dadurch werden legitime XBRL-Tagwechsel als Mapping-Verlauf sichtbar, statt künstliche Lücken zu erzeugen
-- wenn mehrere erlaubte Konzepte dasselbe Periodenende abdecken, gewinnt die dokumentierte Konzept-Priorität
+- kein API-Key, aber lokaler `SEC_USER_AGENT`
+- Ticker-/CIK-Verzeichnis und Company Facts werden gecacht
+- Standardkonzepte aus `us-gaap` und `ifrs-full`
+- alternative Standardkonzepte werden pro Periodenende aufgelöst
+- Company Extensions werden nicht automatisch geraten
+- `short_term_debt` bleibt semantisch gated
 
-Bekannte semantische Sperre:
-- `sec_companyfacts + short_term_debt` ist trotz Primärquelle **nicht automatisch calculation-ready**, weil die interne Definition mehrere kurzfristige Schuldenkonzepte umfassen kann.
-- Die SEC-Konzeptauswahl aggregiert solche Schuldenkomponenten nicht blind.
-- Ein passender ChatGPT-Review `PASS` oder bestätigter Override kann das Feld freigeben.
+### 4. SEC Original-Filing-Fallback
 
-### 4. GLEIF
+Siehe `docs/SEC_FILING_FALLBACK.md`.
 
-- kein API-Key
-- Name → LEI
-- dient nur der Identität, nicht als Finanzdatenquelle
-- automatische Auflösung nur bei ausreichend eindeutigem Legal-Name-Match
-- Responses werden lokal gecacht
+Neue generische Ergänzung:
+
+```text
+Company Facts
+  ↓ Lücke im 10-Jahres-Fenster
+SEC Submissions
+  ↓
+Originales 10-K / 20-F / 40-F
+  ↓
+XBRL-Instanz aus Filing-Archiv
+  ↓
+Standardtag sicher → sec_filing_xbrl ergänzen
+kein Standardtag → offen / Extension- oder Textprüfung erforderlich
+```
+
+Regeln:
+- nur Lücken werden ergänzt; Company Facts gewinnt bei identischem Metric/Period-Paar,
+- Filing- und Submissions-Daten werden lokal gecacht,
+- Amendments werden berücksichtigt, dürfen aber den vollständigen ursprünglichen Bericht nicht verdecken,
+- keine automatische Extension-Zuordnung,
+- kein fehlender Wert wird als Null erfunden,
+- `short_term_debt` bleibt auch aus `sec_filing_xbrl` bis zur semantischen Freigabe blockiert.
 
 ### 5. ESEF
 
-- `src/stock_valuation/data/providers/esef_registry.py`
-- LEI → Filings über `filings.xbrl.org`
-- xBRL-JSON wird bevorzugt
-- nur standardisierte `ifrs-full`-Konzepte werden automatisch gemappt
-- jährliche Duration-Facts für GuV/Cashflow
-- Instant-Facts für Bilanz
-- segmentierte/dimensionale Facts werden nicht still als Konzernsumme verwendet
-- konkrete Filing-/Report-URL wird pro Fact gespeichert, soweit vorhanden
-- heruntergeladene Registry-/Filingdaten werden lokal gecacht
+- LEI über GLEIF
+- Filings über `filings.xbrl.org`
+- Standardkonzepte aus `ifrs-full`
+- dimensionale Facts und Extensions werden nicht still als Konzernwerte übernommen
+- konkrete Filing-/Report-URL bleibt als Provenienz erhalten
 
-Der bestehende ESEF-XHTML/ZIP-Parser bleibt als technischer Fallback im Code.
+### 6. Preferred Data
 
-### 6. Finanzdaten-UI
+- Source Resolution und Calculation Readiness sind getrennt.
+- `sec_filing_xbrl` ist offizielle Primärquelle, aber niedriger priorisiert als `sec_companyfacts`.
+- manuelle Overrides bleiben höchste Korrekturebene.
+- bekannte semantisch mehrdeutige Primärquellenfelder bleiben blockiert.
 
-`pages/1_Datenimport.py`:
+### 7. 10-Jahres-Mapping-Check
 
-- Hauptbutton: `Finanzdaten laden / aktualisieren`
-- SEC → ESEF → optional Alpha-Fallback
-- zeigt Router-Versuche in einem technischen Expander
-- historische Daten funktionieren ohne Alpha-Vantage-Key
-- Analystenschätzungen sind ein separater optionaler Schritt
-- ChatGPT-Prüfung bleibt für semantischen Cross-Check und Provider-Kontrolle
+`src/stock_valuation/data/history_mapping_audit.py`
 
-### 7. Preferred Data
+Prüft automatisch und ohne Netzwerk:
+- 10-Jahres-Abdeckung,
+- Original-XBRL-/Providerfeld,
+- Tagwechsel,
+- Quelle/Quellenfamilie,
+- Währung,
+- Taxonomie,
+- echte mehrere Geschäftsjahresenden.
 
-- `esef_xbrl_json` ist als Primärquelle integriert
-- Source Priority und Calculation Readiness bleiben getrennt
-- manuelle Overrides bleiben höchste praktische Korrekturebene
-- Primärquellenwerte mit bekannter semantischer Mehrdeutigkeit können blockiert bleiben
+Status:
+- `PASS`: vollständig und technisch stabil,
+- `REVIEW`: vollständig, aber Mappingänderung,
+- `GAP`: mindestens ein Jahr fehlt.
 
-### 8. Generischer 10-Jahres-Mapping-Check
+`sec_companyfacts` und `sec_filing_xbrl` gelten als eine SEC-Quellenfamilie. Ein zusätzlicher Opening-/Restatement-Stichtag erzeugt keinen False Positive, wenn der normale Geschäftsjahresendwert vorhanden ist.
 
-- `src/stock_valuation/data/history_mapping_audit.py`
-- arbeitet ausschließlich auf dem gespeicherten Snapshot; kein Netzwerk/API-Request
-- keine Unternehmens-Sonderlogik
-- prüft standardmäßig die letzten 10 Geschäftsjahre je importiertem internem Feld
-- prüft:
-  - Jahresabdeckung/Lücken
-  - Original-XBRL-/Provider-Feld
-  - Tagwechsel und Wechseljahr
-  - zugrunde liegende Quelle
-  - Berichtswährung
-  - Taxonomie (`us-gaap`, `ifrs-full` bzw. Provider-Taxonomie)
-  - mehrere Geschäftsjahres-Enden innerhalb desselben Kalenderjahres
-- Status:
-  - `PASS`: 10/10 und technisch unverändertes Mapping
-  - `REVIEW`: vollständige Serie, aber Tag-/Quellen-/Währungs-/Taxonomiewechsel oder doppeltes Geschäftsjahresende
-  - `GAP`: mindestens ein Jahr fehlt
-- Tagwechsel sind ausdrücklich **kein automatischer Fehler**; sie lösen nur fachliche Prüfung aus.
-- manuelle Overrides werden für die Mapping-Kontinuität nicht anstelle der zugrunde liegenden Originalquelle verwendet.
-- Anzeige ist automatisch auf `Kennzahlen`; kein zusätzlicher Berechnungs-/Prüfbutton.
-- stabile Detailzeilen sind standardmäßig eingeklappt, Auffälligkeiten werden automatisch aufgeklappt.
+### 8. Kennzahlen-UX
 
-### 9. Kennzahlen-UX
+- aktive Kennzahlen synchronisieren sich automatisch aus Preferred Data,
+- kein manueller Berechnungsbutton,
+- methodisch offene Kennzahlen bleiben eingeklappt,
+- Mapping-Auffälligkeiten werden auf derselben Kennzahlen-Seite angezeigt.
 
-- aktive Kennzahlen werden beim Öffnen der Seite automatisch aus Preferred Data synchronisiert
-- kein manueller Button `Aktive Kennzahlen aus Preferred Data berechnen`
-- identische Input-Hashes führen zu keinem unnötigen Datenbank-Rewrite
-- methodisch noch offene Kennzahlen bleiben eingeklappt
-- `primary_reviewed_pass` wird in der Preferred-Data-Zusammenfassung korrekt als geprüfte Primärquelle gezählt
+### 9. Cache / Entwicklung
 
-### 10. Cache / Entwicklung
-
-- Alpha-Vantage-Cache bleibt erhalten
-- SEC/GLEIF/ESEF verwenden ebenfalls lokale Caches unter `data/cache/`
-- Cache-Verzeichnis ist gitignored
-- Offline-Replay bleibt im Code und in Tests, ist aber nicht mehr in der normalen Streamlit-Oberfläche sichtbar
+- Alpha Vantage, SEC, SEC-Filings, GLEIF und ESEF verwenden lokale Caches unter `data/cache/`,
+- Cache ist gitignored,
+- Offline-Replay bleibt nur im Code/Test und ist aus der normalen UI entfernt.
 
 ## Neue/angepasste Tests in diesem Block
 
-- `tests/test_esef_registry.py`
-- `tests/test_gleif_provider.py`
-- `tests/test_company_discovery.py`
-- `tests/test_source_router.py`
-- `tests/test_preferred_data.py` erweitert um semantisches SEC-Schuldengate
-- `tests/test_history_mapping_audit.py`
-  - stabile 10-Jahres-Serie
-  - Tagwechsel als REVIEW
-  - fehlendes Jahr als GAP
-  - Quellen-/Währungs-/Taxonomiewechsel
-  - manueller Override verdeckt die Original-Mappingserie nicht
-  - ältere Jahre außerhalb des 10-Jahres-Fensters beeinflussen den Status nicht
-- `tests/test_sec_provider.py`
-  - alternative Standard-XBRL-Tags werden über unterschiedliche Jahre gemeinsam importiert
-  - höhere Konzeptpriorität gewinnt nur bei gleicher Periode
-- bestehende SEC-/ESEF-/Alpha-/Replay-Tests bleiben bestehen
+- `tests/test_sec_filing_provider.py`
+  - Standardfakten aus Original-XBRL-Instanz
+  - dimensionale und Company-Extension-Fakten werden nicht automatisch übernommen
+  - `short_term_debt` bleibt ein roher Standardfakt für das spätere semantische Gate
+- `tests/test_source_router_sec_filing.py`
+  - Company-Facts-Lücke wird als separate `sec_filing_xbrl`-Primärquelle ergänzt
+- `tests/test_sec_filing_preferred_data.py`
+  - Company Facts gewinnt bei gleicher Periode
+  - Filing-OCF ist calculation-ready
+  - Filing-`short_term_debt` bleibt blockiert
+- `tests/test_history_mapping_fiscal_year_end.py`
+  - Opening Balance im selben Kalenderjahr ist kein zweites FY
+  - Company Facts und Filing-Fallback sind eine Quellenfamilie
+- bestehende Router-/SEC-/History-/Preferred-Data-Tests bleiben bestehen.
 
-**Wichtig:** Neue Tests dieses Blocks müssen lokal mit `pytest -q` ausgeführt werden. Aktueller Stand darf erst danach als grün bezeichnet werden.
+**Wichtig:** Dieser Stand darf erst nach lokalem `pytest -q` als grün bezeichnet werden.
 
 ## Nächster Live-Abnahmetest
 
 1. `git pull`
 2. `pytest -q`
 3. `streamlit run app.py`
-4. ASML R1 unter `Finanzdaten` einmal `Finanzdaten laden / aktualisieren` ausführen, damit der vorhandene gecachte SEC-Rohdatensatz mit der neuen periodischen Konzeptauflösung neu normalisiert wird.
-5. Danach `Kennzahlen` öffnen und 10-Jahres-Mapping erneut prüfen:
-   - `dividends_paid`: sollte bei vorhandenem alternativen Standardtag nicht mehr künstlich nach 2018 abbrechen
-   - `operating_cash_flow` 2016: erneut bewerten
-   - `shareholders_equity` 2018: doppelte Periodenenden gezielt prüfen
-   - `short_term_debt` 2016/2017: nicht als Null erfinden; nur echte SEC-Fakten verwenden
-6. danach dieselbe Logik an weiteren Unternehmen testen:
-   - Microsoft – SEC US-GAAP
-   - Siemens – ESEF/IFRS, soweit Registry-Abdeckung vorhanden
-   - LVMH – ESEF/IFRS, soweit Registry-Abdeckung vorhanden
-7. bei Tagwechseln nicht automatisch korrigieren; zuerst fachliche Semantik/Primärquelle prüfen.
+4. ASML R1 → `Finanzdaten` → `Finanzdaten laden / aktualisieren`
+5. Im Quellen-Router prüfen:
+   - `SEC Company Facts`
+   - `SEC Original-Filing`
+   - Anzahl ergänzter Standardfakten
+   - Anzahl offen gebliebener Extension-/Textfälle
+6. Danach `Kennzahlen` öffnen und 10-Jahres-Mapping erneut prüfen.
+7. Erwartete ASML-Schwerpunkte aus dem bisherigen Audit:
+   - `operating_cash_flow` 2016: Filing-Fallback sollte prüfen, ob ein Standardtag ergänzt werden kann,
+   - `short_term_debt` 2016/2017: Standardfakt darf ergänzt werden, bleibt aber semantisch gated,
+   - `dividends_paid` 2019–2025: wenn nur Company-Extension/Textzeile vorhanden ist, muss die Lücke sichtbar offen bleiben,
+   - `shareholders_equity` 2018: Opening-/Restatement-Instant soll keinen falschen Doppel-FY-Hinweis mehr erzeugen.
+8. Danach dieselbe Architektur an mindestens einem weiteren SEC-Unternehmen (z. B. Microsoft) und anschließend einem ESEF-Unternehmen testen.
 
-## Bekannte Grenzen / bewusst noch offen
+## Bewusst offene Grenzen
 
 - SEC + ESEF sind keine vollständige Weltabdeckung.
-- `filings.xbrl.org` kann je Land/Jahr lückenhaft sein; fehlender Registry-Treffer ist nicht gleichbedeutend mit fehlendem Geschäftsbericht.
-- Company-spezifische XBRL Extension-Tags werden derzeit nicht automatisch gemappt.
-- Ein generischer automatischer Discovery-Fallback zu nationalen ESEF/OAM-Registern ist noch offen.
-- Analystenschätzungen benötigen weiterhin einen separaten Provider oder manuelle Daten.
-- Aktienkurs/Marktlisting und historische Rechnungslegungsdaten bleiben getrennte Aufgaben.
-- ISIN/LEI/CIK/Ticker-Mapping kann weiter verbessert werden.
-- Source Router mischt bewusst nicht automatisch Provider feldweise; spätere Cross-Checks können mehrere Quellen parallel speichern.
-- Der 10-Jahres-Mapping-Check erkennt technische Kontinuität/Änderungen, aber erklärt einen Tagwechsel nicht automatisch als wirtschaftlich gleichwertig. Dafür bleibt semantische Prüfung erforderlich.
+- Company Extensions werden noch nicht automatisch semantisch auf interne Felder gemappt.
+- Ein gezielter Review-Workflow für verbleibende Filing-Extension-Kandidaten ist der nächste mögliche Datenqualitätsblock, falls der Live-Test solche Lücken bestätigt.
+- Analystenschätzungen benötigen weiterhin separaten Provider oder manuelle Daten.
+- Aktienkurs/Marktdaten bleiben eine getrennte Aufgabe.
 
 ## Noch offene Kapitel-2-Methodik
 
-Weiterhin Buchverifikation erforderlich:
+Keine Formeln eigenmächtig festlegen:
 - ROE — Kindle S. 94
 - Umsatzrendite — Kindle S. 101
 - Kapitalumschlag — Kindle S. 107
 - Gesamtkapitalrendite — Kindle S. 109
 - ROCE — Kindle S. 111
 - Umsatzverdienstrate — Kindle S. 114
-
-Keine dieser Formeln eigenmächtig festlegen.
