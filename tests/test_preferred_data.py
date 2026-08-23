@@ -13,10 +13,14 @@ from stock_valuation.data.preferred_data import (
 )
 from stock_valuation.database.ai_review_models import AIReviewFinding, AIReviewRun
 from stock_valuation.database.models import Base, FinancialFactSnapshot
+from stock_valuation.metrics.engine import MetricPoint
 from stock_valuation.metrics.service import (
     MetricDataQualityError,
+    calculate_and_store_phase_3a,
     calculate_ebit_margin_series,
     calculate_ebitda_margin_series,
+    load_metric_series,
+    replace_metric_points,
 )
 
 
@@ -248,3 +252,70 @@ def test_generic_ebit_margin_uses_verified_ebit_but_ebitda_blocks_on_unclear_d_a
 
         with pytest.raises(MetricDataQualityError):
             calculate_ebitda_margin_series(session, analysis)
+
+
+def test_metric_sync_does_not_rewrite_identical_series() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        point = MetricPoint(
+            metric_id="ebit_margin",
+            period_end=date(2025, 6, 30),
+            value=Decimal("0.25"),
+            unit="decimal_ratio",
+            inputs_hash="same-inputs",
+        )
+
+        replace_metric_points(session, analysis, [point], metric_id="ebit_margin")
+        first_id = load_metric_series(session, analysis.id, "ebit_margin")[0].id
+
+        replace_metric_points(session, analysis, [point], metric_id="ebit_margin")
+        second_id = load_metric_series(session, analysis.id, "ebit_margin")[0].id
+
+        assert second_id == first_id
+
+
+def test_auto_sync_removes_stale_ebitda_when_input_becomes_blocked() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        analysis = _analysis(session)
+        _fact(
+            session,
+            analysis.id,
+            "revenue",
+            "200",
+            provider="manual_override",
+            source_type="manual",
+        )
+        _fact(
+            session,
+            analysis.id,
+            "ebit",
+            "50",
+            provider="manual_override",
+            source_type="manual",
+        )
+        d_and_a = _fact(
+            session,
+            analysis.id,
+            "depreciation_amortization",
+            "10",
+            provider="manual_override",
+            source_type="manual",
+        )
+
+        counts = calculate_and_store_phase_3a(session, analysis)
+        assert counts["ebitda_margin"] == 1
+        assert len(load_metric_series(session, analysis.id, "ebitda_margin")) == 1
+
+        d_and_a.provider = "alphavantage"
+        d_and_a.source_type = "provider"
+        d_and_a.provider_field = "depreciationAndAmortization"
+        session.commit()
+
+        counts = calculate_and_store_phase_3a(session, analysis)
+        assert counts["ebit_margin"] == 1
+        assert counts["ebitda_margin"] == 0
+        assert load_metric_series(session, analysis.id, "ebitda_margin") == []
