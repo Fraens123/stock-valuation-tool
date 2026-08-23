@@ -22,7 +22,7 @@ from stock_valuation.valuation_assumptions.discount_rate import discount_rate_re
 from stock_valuation.valuation_assumptions.evidence import collect_forward_evidence
 from stock_valuation.valuation_assumptions.growth import growth_recommendation
 from stock_valuation.valuation_assumptions.models import LOOKAHEAD_BLOCKED, REVIEW_REQUIRED
-from stock_valuation.valuation_assumptions.service import build_assumption_set, build_assumption_set_for_analysis, preview_scenarios
+from stock_valuation.valuation_assumptions.service import build_assumption_set, build_assumption_set_for_analysis, build_effective_recommendations, build_effective_scenarios, preview_scenarios
 from stock_valuation.valuation_assumptions.terminal_growth import terminal_growth_recommendation
 
 
@@ -226,6 +226,20 @@ def test_missing_growth_history_requires_review():
     assert assumption_set.requires_review is True
 
 
+def test_missing_effective_growth_does_not_create_zero_growth_scenario():
+    assumption_set = build_assumption_set(
+        ticker="TEST",
+        analysis_as_of_date="2026-08-23",
+        normalized_fcf=normalized_fcf(),
+        historical_context=historical_context(revenue_growth=[], earnings_growth=[], fcf_growth=[], cagr={}),
+        quality_context=quality_context(),
+    )
+    effective = build_effective_recommendations(assumption_set, {})
+
+    assert effective["growth_rate"].recommended_value is None
+    assert build_effective_scenarios(effective, assumption_set.evidence) == ()
+
+
 def test_forward_evidence_point_in_time_blocks_late_guidance_and_estimates():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -342,7 +356,7 @@ def test_forward_evidence_is_used_in_productive_service_and_conflict_is_reviewed
     assert "FORWARD_HISTORICAL_CONFLICT_REVIEW" in assumption_set.growth_recommendation.warnings
 
 
-def test_manual_approved_discount_terminal_and_growth_flow_through_normal_service():
+def test_legacy_valuation_assumptions_are_not_productive_approval_source():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as session:
@@ -366,16 +380,11 @@ def test_manual_approved_discount_terminal_and_growth_flow_through_normal_servic
             latest_actuals={},
         )
 
-    scenarios = {item.scenario: item for item in assumption_set.scenarios}
-    assert assumption_set.discount_rate_recommendation.approved_value == Decimal("0.11000000")
-    assert assumption_set.terminal_growth_recommendation.approved_value == Decimal("0.02500000")
-    assert assumption_set.growth_recommendation.approved_value == Decimal("0.04000000")
-    assert "DISCOUNT_RATE_NOT_COMPANY_SPECIFIC" not in assumption_set.warnings
-    assert "TERMINAL_GROWTH_GENERIC" not in assumption_set.warnings
-    assert scenarios["bear"].discount_rate == Decimal("0.12000000")
-    assert scenarios["base"].discount_rate == Decimal("0.11000000")
-    assert scenarios["bull"].discount_rate == Decimal("0.10000000")
-    assert scenarios["base"].sources["growth_source"] == "MANUAL_APPROVED"
+    assert assumption_set.discount_rate_recommendation.approved_value is None
+    assert assumption_set.terminal_growth_recommendation.approved_value is None
+    assert assumption_set.growth_recommendation.approved_value is None
+    assert "DISCOUNT_RATE_NOT_COMPANY_SPECIFIC" in assumption_set.warnings
+    assert "TERMINAL_GROWTH_GENERIC" in assumption_set.warnings
 
 
 def test_approval_is_bound_to_recommendation_hash_and_stale_when_inputs_change():

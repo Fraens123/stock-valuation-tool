@@ -59,12 +59,16 @@ from stock_valuation.valuation.snapshot import create_valuation_snapshot
 from stock_valuation.valuation.summary import dcf_summary
 from stock_valuation.valuation_assumptions.approvals import (
     APPROVAL_STALE,
-    apply_approval,
     load_current_approvals,
     validate_approvals,
 )
 from stock_valuation.valuation_assumptions.models import APPROVED, ASSUMPTION_ENGINE_VERSION
-from stock_valuation.valuation_assumptions.service import build_assumption_set_for_analysis, preview_scenarios
+from stock_valuation.valuation_assumptions.service import (
+    build_assumption_set_for_analysis,
+    build_effective_recommendations,
+    build_effective_scenarios,
+    effective_value,
+)
 from stock_valuation.workflow.models import (
     BLOCKED,
     NOT_RUN,
@@ -126,7 +130,7 @@ def build_analysis_state(session: Session, analysis: Analysis) -> AnalysisState:
         for stage in STAGES
     }
     final = _latest_valuation_record(session, analysis)
-    if final is not None:
+    if final is not None and rows["VALUATION"].status == NOT_RUN:
         rows["VALUATION"] = _stage_from_valuation_record(final)
     market = _select_market_record(session, analysis)
     if market is not None and rows["MARKET_DATA"].status == NOT_RUN:
@@ -381,8 +385,8 @@ def _refresh_assumption_stage(
         approvals,
         recommendation_inputs_hash=assumption_set.inputs_hash,
     )
-    recommendations = {
-        item.assumption_key: apply_approval(item, valid_approvals.get(("base", item.assumption_key)))
+    raw_recommendations = {
+        item.assumption_key: item
         for item in (
             assumption_set.fcf_base_assessment,
             assumption_set.growth_recommendation,
@@ -391,12 +395,22 @@ def _refresh_assumption_stage(
             assumption_set.projection_years_recommendation,
         )
     }
+    recommendations = build_effective_recommendations(assumption_set, valid_approvals)
+    effective_scenarios = build_effective_scenarios(recommendations, assumption_set.evidence)
     approved = all(recommendations[key].status == APPROVED for key in ASSUMPTION_KEYS)
+    stale_refs = tuple(f"assumption_approval:{row.id}:{row.scenario}:{row.key}" for row in approvals.values() if row not in valid_approvals.values())
+    valid_refs = tuple(f"assumption_approval:{row.id}:{row.scenario}:{row.key}" for row in valid_approvals.values())
     payload = {
         "production_input_path": "Current Analysis snapshots + EstimateSnapshot + GuidanceSnapshot + AssumptionApprovalRecord",
         "diagnostics_csv_used": False,
         "assumption_set": asdict(assumption_set),
+        "raw_recommendations": {key: asdict(value) for key, value in raw_recommendations.items()},
+        "effective_recommendations": {key: asdict(value) for key, value in recommendations.items()},
         "recommendations": {key: asdict(value) for key, value in recommendations.items()},
+        "effective_scenarios": [asdict(item) for item in effective_scenarios],
+        "valid_approval_refs": valid_refs,
+        "stale_approval_refs": stale_refs,
+        "recommendation_inputs_hash": assumption_set.inputs_hash,
         "approval_warnings": approval_warnings,
         "approved": approved,
         "normalized_fcf": normalized,
@@ -428,23 +442,52 @@ def _refresh_valuation_stage(
     market: StageState,
 ) -> StageState:
     market_input = _market_input_from_stage(analysis, market)
-    normalized = assumptions.payload["normalized_fcf"]
-    assumption_set = assumptions.payload["assumption_set"]
-    preview = preview_scenarios(_assumption_set_from_payload(assumption_set), market_input, normalized)
+    normalized = _effective_normalized_fcf(assumptions.payload["normalized_fcf"], assumptions.payload["effective_recommendations"]["base_fcf"])
+    effective_scenarios = _dcf_scenarios_from_payload(assumptions.payload.get("effective_scenarios", ()))
+    if not effective_scenarios:
+        row = persist_stage_snapshot(
+            session,
+            analysis,
+            stage="VALUATION",
+            engine_version="valuation-v1.0",
+            inputs_hash=canonical_hash([market.inputs_hash, assumptions.inputs_hash, calculation.inputs_hash]),
+            status=UNAVAILABLE,
+            payload={
+                "mode": "UNAVAILABLE",
+                "blockers": ("VALUATION_NOT_READY: missing effective assumption value",),
+                "effective_base_fcf": normalized.value,
+                "effective_scenarios": assumptions.payload.get("effective_scenarios", ()),
+                "assumption_stage_snapshot_id": assumptions.snapshot_id,
+                "market_snapshot_id": market.snapshot_id,
+            },
+        )
+        return _stage_state_from_row("VALUATION", row)
+    summaries = tuple(dcf_summary(equity_dcf(analysis.company.ticker, normalized, scenario), market_input) for scenario in effective_scenarios)
     multiples = current_market_multiples(_latest_financial_points(calculation.payload), market_input)
     payload = {
         "production_input_path": "MarketDataSnapshotRecord + approved/preview Assumptions + Frozen Valuation Engine V1",
         "diagnostics_csv_used": False,
         "mode": "FINAL" if assumptions.payload.get("approved") else "PREVIEW",
-        "preview": preview,
+        "effective_base_fcf": asdict(normalized),
+        "effective_scenarios": assumptions.payload.get("effective_scenarios", ()),
+        "valuation_results": [asdict(item) for item in summaries],
+        "preview": {
+            item.scenario: {
+                "status": "ASSUMPTION_PREVIEW" if item.status == AVAILABLE and not assumptions.payload.get("approved") else item.status,
+                "fair_value_per_unit": item.fair_value_per_unit,
+                "market_price": item.market_price,
+                "upside_downside": item.upside_downside,
+                "margin_of_safety": item.margin_of_safety,
+                "warnings": item.issues,
+                "inputs_hash": item.inputs_hash,
+            }
+            for item in summaries
+        },
         "multiples": [asdict(item) for item in multiples],
+        "assumption_stage_snapshot_id": assumptions.snapshot_id,
+        "market_snapshot_id": market.snapshot_id,
     }
     if assumptions.payload.get("approved"):
-        scenario_rows = _approved_scenarios(assumptions.payload["recommendations"])
-        normalized_value = _normalized_value_from_payload(normalized)
-        summaries: list[ValuationSummary] = []
-        for scenario in scenario_rows:
-            summaries.append(dcf_summary(equity_dcf(analysis.company.ticker, normalized_value, scenario), market_input))
         snapshot = create_valuation_snapshot(
             analysis_id=str(analysis.id),
             market=market_input,
@@ -452,9 +495,18 @@ def _refresh_valuation_stage(
             calculation_version=calculation.version or "",
             historical_analysis_version=historical.version or "",
             quality_version=quality.version or "",
-            assumptions=assumptions.payload["recommendations"],
-            normalized_inputs=(normalized_value,),
-            valuation_results=tuple(summaries) + multiples,
+            assumptions={
+                "raw_recommendations": assumptions.payload["raw_recommendations"],
+                "effective_recommendations": assumptions.payload["effective_recommendations"],
+                "effective_scenarios": assumptions.payload["effective_scenarios"],
+                "valid_approval_refs": assumptions.payload["valid_approval_refs"],
+                "stale_approval_refs": assumptions.payload["stale_approval_refs"],
+                "recommendation_inputs_hash": assumptions.payload["recommendation_inputs_hash"],
+                "assumption_engine_version": ASSUMPTION_ENGINE_VERSION,
+                "policy_version": assumptions.payload["assumption_set"]["policy_version"],
+            },
+            normalized_inputs=(normalized,),
+            valuation_results=summaries + multiples,
             quality_context=assumptions.payload["quality_context"],
             historical_context=assumptions.payload["historical_context"],
         )
@@ -825,17 +877,60 @@ def _latest_financial_points(calculation: dict[str, Any]) -> dict[str, Financial
     return points
 
 
-def _approved_scenarios(recommendations: dict[str, dict[str, Any]]) -> tuple[DCFScenario, ...]:
-    fcf = _decimal_or_none(recommendations["base_fcf"].get("approved_value"))
-    _ = fcf
-    growth = _decimal_or_none(recommendations["growth_rate"].get("approved_value"))
-    discount = _decimal_or_none(recommendations["discount_rate"].get("approved_value"))
-    terminal = _decimal_or_none(recommendations["terminal_growth_rate"].get("approved_value"))
-    years = int(_decimal_or_none(recommendations["projection_years"].get("approved_value")) or Decimal("5"))
-    return (
-        DCFScenario("bear", years, growth or Decimal("0"), discount or Decimal("0"), terminal or Decimal("0"), "APPROVED"),
-        DCFScenario("base", years, growth or Decimal("0"), discount or Decimal("0"), terminal or Decimal("0"), "APPROVED"),
-        DCFScenario("bull", years, growth or Decimal("0"), discount or Decimal("0"), terminal or Decimal("0"), "APPROVED"),
+def _effective_normalized_fcf(normalized: dict[str, Any], base_fcf: dict[str, Any]) -> NormalizedValue:
+    effective = effective_value(_recommendation_from_payload(base_fcf))
+    original = _normalized_value_from_payload(normalized)
+    refs = tuple(original.input_refs) + tuple(base_fcf.get("evidence_refs", ())) + (
+        f"original_normalized_fcf:{original.inputs_hash}",
+        f"recommended_base_fcf:{base_fcf.get('recommended_value')}",
+        f"approved_base_fcf:{base_fcf.get('approved_value')}",
+    )
+    return NormalizedValue(
+        metric_id=original.metric_id,
+        method="effective_base_fcf",
+        value=effective,
+        currency=original.currency,
+        status=original.status if effective is not None else UNAVAILABLE,
+        issues=tuple(original.issues) if effective is not None else ("VALUATION_NOT_READY",),
+        input_refs=refs,
+        inputs_hash=canonical_hash([original.inputs_hash, base_fcf]),
+        used_fiscal_years=original.used_fiscal_years,
+        input_values=original.input_values,
+    )
+
+
+def _dcf_scenarios_from_payload(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> tuple[DCFScenario, ...]:
+    scenarios: list[DCFScenario] = []
+    for row in rows:
+        growth = _decimal_or_none(row.get("annual_growth_rate"))
+        discount = _decimal_or_none(row.get("discount_rate"))
+        terminal = _decimal_or_none(row.get("terminal_growth_rate"))
+        if growth is None or discount is None or terminal is None:
+            return ()
+        scenarios.append(
+            DCFScenario(
+                row["scenario"],
+                int(row["projection_years"]),
+                growth,
+                discount,
+                terminal,
+                "EFFECTIVE_ASSUMPTIONS",
+            )
+        )
+    return tuple(scenarios)
+
+
+def _recommendation_from_payload(payload: dict[str, Any]) -> Any:
+    from stock_valuation.valuation_assumptions.models import AssumptionRecommendation
+
+    return AssumptionRecommendation(
+        **{
+            **payload,
+            "recommended_value": _decimal_or_none(payload.get("recommended_value")),
+            "approved_value": _decimal_or_none(payload.get("approved_value")),
+            "warnings": tuple(payload.get("warnings", ())),
+            "evidence_refs": tuple(payload.get("evidence_refs", ())),
+        }
     )
 
 

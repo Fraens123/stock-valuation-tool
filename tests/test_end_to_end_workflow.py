@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -17,13 +18,19 @@ from stock_valuation.market.models import (
     NormalizedShareData,
 )
 from stock_valuation.market.snapshot_service import persist_market_snapshot
-from stock_valuation.valuation_assumptions.approvals import approve_recommended_value
+from stock_valuation.valuation_assumptions.approvals import approve_recommended_value, override_assumption
 from stock_valuation.valuation_assumptions.models import AssumptionRecommendation
 from stock_valuation.workflow.service import refresh_local_analysis_stages
 
 
 def _session():
     engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return Session(engine, expire_on_commit=False)
+
+
+def _file_session(path):
+    engine = create_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
     return Session(engine, expire_on_commit=False)
 
@@ -163,6 +170,27 @@ def _setup_analysis(session):
     return analysis
 
 
+def _force_normalized_fcf_to_100(session, analysis):
+    for year in (2023, 2024, 2025):
+        ocf = session.scalar(
+            select(FinancialFactSnapshot).where(
+                FinancialFactSnapshot.analysis_id == analysis.id,
+                FinancialFactSnapshot.metric == "operating_cash_flow",
+                FinancialFactSnapshot.period_end == date(year, 12, 31),
+            )
+        )
+        capex = session.scalar(
+            select(FinancialFactSnapshot).where(
+                FinancialFactSnapshot.analysis_id == analysis.id,
+                FinancialFactSnapshot.metric == "capital_expenditures",
+                FinancialFactSnapshot.period_end == date(year, 12, 31),
+            )
+        )
+        ocf.value = Decimal("200")
+        capex.value = Decimal("100")
+    session.commit()
+
+
 def _recommendation(payload: dict, key: str) -> AssumptionRecommendation:
     row = payload["recommendations"][key]
     return AssumptionRecommendation(
@@ -193,8 +221,9 @@ def test_review_required_workflow_keeps_preview_available_without_diagnostics_cs
         assert state.history_years == (2023, 2024, 2025)
 
 
-def test_approved_assumptions_create_persistent_final_valuation_after_reopen():
-    with _session() as session:
+def test_approved_assumptions_create_persistent_final_valuation_after_reopen(tmp_path):
+    db_path = tmp_path / "workflow.sqlite"
+    with _file_session(db_path) as session:
         analysis = _setup_analysis(session)
         state = refresh_local_analysis_stages(session, analysis)
         assumptions = state.stages["ASSUMPTIONS"].payload
@@ -210,13 +239,15 @@ def test_approved_assumptions_create_persistent_final_valuation_after_reopen():
 
         assert state.stages["ASSUMPTIONS"].status == "READY"
         assert state.stages["VALUATION"].status == "READY"
-        assert session.scalar(select(ValuationSnapshotRecord).where(ValuationSnapshotRecord.analysis_id == analysis.id)) is not None
+        snapshot = session.scalar(select(ValuationSnapshotRecord).where(ValuationSnapshotRecord.analysis_id == analysis.id))
+        assert snapshot is not None
+        snapshot_id = snapshot.snapshot_id
+        analysis_id = analysis.id
 
-    with _session() as other_session:
-        # Separate in-memory sessions intentionally do not share state; persistence across a real
-        # DB connection is covered by SQLAlchemy create_all in the app. The workflow record itself
-        # is immutable once written and loaded by id in the same database.
-        assert other_session.scalar(select(ValuationSnapshotRecord)) is None
+    with _file_session(db_path) as other_session:
+        reopened = other_session.scalar(select(ValuationSnapshotRecord).where(ValuationSnapshotRecord.analysis_id == analysis_id))
+        assert reopened is not None
+        assert reopened.snapshot_id == snapshot_id
 
 
 def test_changed_inputs_make_approval_stale_and_do_not_overwrite_old_final_snapshot():
@@ -251,3 +282,92 @@ def test_changed_inputs_make_approval_stale_and_do_not_overwrite_old_final_snaps
         assert new_state.stages["ASSUMPTIONS"].status == "REVIEW_REQUIRED"
         assert any("APPROVAL_STALE" in warning for warning in new_state.stages["ASSUMPTIONS"].warnings)
         assert session.scalar(select(AnalysisStageSnapshot).where(AnalysisStageSnapshot.stage == "VALUATION").order_by(AnalysisStageSnapshot.id.desc())).status == "READY_FOR_PREVIEW"
+
+
+def test_overrides_are_effective_in_preview_final_scenarios_and_persisted_snapshot(tmp_path):
+    db_path = tmp_path / "override-workflow.sqlite"
+    with _file_session(db_path) as session:
+        analysis = _setup_analysis(session)
+        _force_normalized_fcf_to_100(session, analysis)
+        base_state = refresh_local_analysis_stages(session, analysis)
+        base_preview = Decimal(str(base_state.stages["VALUATION"].payload["preview"]["base"]["fair_value_per_unit"]))
+        assumptions = base_state.stages["ASSUMPTIONS"].payload
+
+        overrides = {
+            "base_fcf": Decimal("150"),
+            "growth_rate": Decimal("0.02"),
+            "discount_rate": Decimal("0.11"),
+            "terminal_growth_rate": Decimal("0.025"),
+            "projection_years": Decimal("7"),
+        }
+        for key, value in overrides.items():
+            override_assumption(
+                session,
+                analysis,
+                _recommendation(assumptions, key),
+                approved_value=value,
+                recommendation_inputs_hash=assumptions["recommendation_inputs_hash"],
+                note=f"test override {key}",
+            )
+
+        final_state = refresh_local_analysis_stages(session, analysis)
+        valuation = final_state.stages["VALUATION"].payload
+        scenarios = {row["scenario"]: row for row in valuation["effective_scenarios"]}
+        final_preview = valuation["preview"]
+
+        assert final_state.stages["ASSUMPTIONS"].status == "READY"
+        assert final_state.stages["VALUATION"].status == "READY"
+        assert Decimal(str(assumptions["normalized_fcf"]["value"])) == Decimal("100")
+        assert Decimal(str(valuation["effective_base_fcf"]["value"])) == Decimal("150")
+        assert Decimal(str(scenarios["base"]["annual_growth_rate"])) == Decimal("0.02")
+        assert Decimal(str(scenarios["base"]["discount_rate"])) == Decimal("0.11")
+        assert Decimal(str(scenarios["bear"]["discount_rate"])) > Decimal("0.11")
+        assert Decimal(str(scenarios["bull"]["discount_rate"])) < Decimal("0.11")
+        assert Decimal(str(scenarios["base"]["terminal_growth_rate"])) == Decimal("0.025")
+        assert Decimal(str(scenarios["bear"]["terminal_growth_rate"])) < Decimal("0.025")
+        assert Decimal(str(scenarios["bull"]["terminal_growth_rate"])) > Decimal("0.025")
+        assert {row["projection_years"] for row in scenarios.values()} == {7}
+        assert scenarios["bear"] != scenarios["base"] != scenarios["bull"]
+        assert Decimal(str(final_preview["bear"]["fair_value_per_unit"])) <= Decimal(str(final_preview["base"]["fair_value_per_unit"])) <= Decimal(str(final_preview["bull"]["fair_value_per_unit"]))
+        assert Decimal(str(final_preview["base"]["fair_value_per_unit"])) != base_preview
+        assert all("assumption_approval:" in ref for ref in valuation["effective_base_fcf"]["input_refs"] if "assumption_approval:" in ref)
+
+        record = session.scalar(select(ValuationSnapshotRecord).where(ValuationSnapshotRecord.analysis_id == analysis.id))
+        assert record is not None
+        record_id = record.snapshot_id
+        payload = json.loads(record.payload_json)
+        effective = payload["assumptions"]["effective_recommendations"]
+        assert effective["base_fcf"]["approved_value"] == "150.00000000"
+        assert effective["growth_rate"]["approved_value"] == "0.02000000"
+        assert effective["discount_rate"]["approved_value"] == "0.11000000"
+        assert effective["terminal_growth_rate"]["approved_value"] == "0.02500000"
+        assert effective["projection_years"]["approved_value"] == "7.00000000"
+
+    with _file_session(db_path) as reopened:
+        persisted = reopened.scalar(select(ValuationSnapshotRecord).where(ValuationSnapshotRecord.snapshot_id == record_id))
+        assert persisted is not None
+        payload = json.loads(persisted.payload_json)
+        assert payload["normalized_inputs"]["free_cash_flow"]["value"] == "150.00000000"
+
+
+def test_partial_approval_preview_uses_approved_discount_and_recommendations_for_rest():
+    with _session() as session:
+        analysis = _setup_analysis(session)
+        state = refresh_local_analysis_stages(session, analysis)
+        assumptions = state.stages["ASSUMPTIONS"].payload
+        override_assumption(
+            session,
+            analysis,
+            _recommendation(assumptions, "discount_rate"),
+            approved_value=Decimal("0.11"),
+            recommendation_inputs_hash=assumptions["recommendation_inputs_hash"],
+            note="discount review",
+        )
+
+        state = refresh_local_analysis_stages(session, analysis)
+        scenarios = {row["scenario"]: row for row in state.stages["VALUATION"].payload["effective_scenarios"]}
+
+        assert state.stages["ASSUMPTIONS"].status == "REVIEW_REQUIRED"
+        assert state.stages["VALUATION"].status == "READY_FOR_PREVIEW"
+        assert Decimal(str(scenarios["base"]["discount_rate"])) == Decimal("0.11")
+        assert Decimal(str(scenarios["base"]["annual_growth_rate"])) == Decimal(str(state.stages["ASSUMPTIONS"].payload["raw_recommendations"]["growth_rate"]["recommended_value"]))

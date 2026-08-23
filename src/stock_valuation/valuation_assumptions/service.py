@@ -27,6 +27,7 @@ from stock_valuation.valuation_assumptions.models import (
     AssumptionSetRecommendation,
     ScenarioAssumptionRecommendation,
 )
+from stock_valuation.valuation_assumptions.approvals import apply_approval
 from stock_valuation.valuation_assumptions.policy import (
     DEFAULT_BEAR_TERMINAL_GROWTH,
     DEFAULT_BULL_TERMINAL_GROWTH,
@@ -125,7 +126,6 @@ def build_assumption_set_for_analysis(
     quality_context: dict,
     latest_actuals: dict[str, dict],
 ) -> AssumptionSetRecommendation:
-    approvals = _manual_approvals(session, analysis)
     forward_evidence = collect_forward_evidence(session, analysis, latest_actuals=latest_actuals)
     return build_assumption_set(
         ticker=ticker,
@@ -134,8 +134,104 @@ def build_assumption_set_for_analysis(
         historical_context=historical_context,
         quality_context=quality_context,
         additional_evidence=forward_evidence,
-        approved_assumptions=approvals,
     )
+
+
+def effective_value(recommendation: AssumptionRecommendation) -> Decimal | None:
+    return recommendation.approved_value if recommendation.approved_value is not None else recommendation.recommended_value
+
+
+def build_effective_recommendations(
+    assumption_set: AssumptionSetRecommendation,
+    valid_approvals: dict[tuple[str, str], object],
+    *,
+    scenario: str = "base",
+) -> dict[str, AssumptionRecommendation]:
+    raw = {
+        "base_fcf": assumption_set.fcf_base_assessment,
+        "growth_rate": assumption_set.growth_recommendation,
+        "discount_rate": assumption_set.discount_rate_recommendation,
+        "terminal_growth_rate": assumption_set.terminal_growth_recommendation,
+        "projection_years": assumption_set.projection_years_recommendation,
+    }
+    return {
+        key: apply_approval(recommendation, valid_approvals.get((scenario, key)))
+        for key, recommendation in raw.items()
+    }
+
+
+def build_effective_scenarios(
+    effective_recommendations: dict[str, AssumptionRecommendation],
+    evidence,
+) -> tuple[ScenarioAssumptionRecommendation, ...]:
+    base_fcf = effective_value(effective_recommendations["base_fcf"])
+    base_growth = effective_value(effective_recommendations["growth_rate"])
+    base_discount = effective_value(effective_recommendations["discount_rate"])
+    base_terminal = effective_value(effective_recommendations["terminal_growth_rate"])
+    projection_years_value = effective_value(effective_recommendations["projection_years"])
+    if (
+        base_fcf is None
+        or base_growth is None
+        or base_discount is None
+        or base_terminal is None
+        or projection_years_value is None
+    ):
+        return ()
+    projection_years = int(projection_years_value)
+    growths = scenario_growths(base_growth, evidence)
+    discounts = (
+        base_discount + DISCOUNT_RATE_SCENARIO_SPREAD,
+        base_discount,
+        max(Decimal("0"), base_discount - DISCOUNT_RATE_SCENARIO_SPREAD),
+    )
+    terminals = (
+        max(Decimal("0"), base_terminal - TERMINAL_GROWTH_SCENARIO_SPREAD),
+        base_terminal,
+        base_terminal + TERMINAL_GROWTH_SCENARIO_SPREAD,
+    )
+    source_map = {
+        key: recommendation.source_type
+        for key, recommendation in effective_recommendations.items()
+    }
+    refs = tuple(
+        ref
+        for recommendation in effective_recommendations.values()
+        for ref in recommendation.evidence_refs
+    )
+    warnings = tuple(
+        dict.fromkeys(
+            warning
+            for recommendation in effective_recommendations.values()
+            for warning in recommendation.warnings
+        )
+    )
+    scenarios = []
+    for name, growth, discount, terminal in zip(("bear", "base", "bull"), growths, discounts, terminals):
+        scenario_warnings = warnings
+        status = RECOMMENDED
+        if terminal >= discount:
+            scenario_warnings = scenario_warnings + ("TERMINAL_GROWTH_NOT_BELOW_DISCOUNT_RATE",)
+            status = "INVALID_ASSUMPTION"
+        scenarios.append(
+            ScenarioAssumptionRecommendation(
+                scenario=name,
+                projection_years=projection_years,
+                base_fcf=base_fcf,
+                annual_growth_rate=growth,
+                discount_rate=discount,
+                terminal_growth_rate=terminal,
+                status=status,
+                confidence=effective_recommendations["growth_rate"].confidence,
+                warnings=scenario_warnings,
+                evidence_refs=refs,
+                sources={
+                    **source_map,
+                    "base_source": "effective_base_assumptions",
+                    "scenario_derivation_source": "PROJECT_POLICY_V1_SCENARIO_SPREAD",
+                },
+            )
+        )
+    return tuple(scenarios)
 
 
 def preview_scenarios(
