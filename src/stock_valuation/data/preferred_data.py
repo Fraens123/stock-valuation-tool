@@ -18,6 +18,7 @@ PRIMARY_SOURCE_PROVIDERS = {
     "esef_ixbrl",
     "sec_companyfacts",
     "sec_filing_xbrl",
+    "sec_filing_extension",
 }
 
 # A primary source proves provenance, but not automatically that one XBRL concept has exactly the
@@ -27,9 +28,10 @@ PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
     ("sec_companyfacts", "short_term_debt"),
     ("sec_filing_xbrl", "short_term_debt"),
 }
+PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED = {"sec_filing_extension"}
 
-# These definitions describe what the internal raw-data keys mean. They are intentionally
-# narrower than arbitrary provider labels so that provider fields can be rejected when their
+# These definitions describe what the internal raw-data keys mean. They are intentionally narrower
+# than arbitrary provider labels so unusual provider/extension concepts can be rejected when their
 # economic meaning is broader or different.
 FIELD_DEFINITIONS: dict[str, str] = {
     "ppe_net": (
@@ -44,6 +46,14 @@ FIELD_DEFINITIONS: dict[str, str] = {
     "depreciation_amortization": (
         "Abschreibungen auf Sachanlagen plus Amortisation immaterieller Vermögenswerte. "
         "Unspezifische zusätzliche Non-Cash-Positionen wie 'and other' gehören nicht automatisch dazu."
+    ),
+    "operating_cash_flow": (
+        "Netto-Cashflow aus der laufenden Geschäftstätigkeit des konsolidierten Geschäftsjahres. "
+        "Investitions- und Finanzierungscashflows gehören nicht dazu."
+    ),
+    "dividends_paid": (
+        "Im Geschäftsjahr tatsächlich zahlungswirksam an Anteilseigner ausgeschüttete Dividenden. "
+        "Nur angekündigte, vorgeschlagene oder noch zahlbare Dividenden gehören nicht dazu."
     ),
     "ebitda": (
         "EBITDA ist eine abgeleitete Kennzahl. Provider-EBITDA dient nur als Cross-Check; für "
@@ -121,6 +131,7 @@ def _semantic_primary_state(
     finding: AIReviewFinding | None,
 ) -> PreferredDataState:
     """Require a semantic review for a known ambiguous primary-source mapping."""
+    is_extension = fact.provider == "sec_filing_extension"
     if finding is not None and _finding_matches_fact(finding, fact):
         verdict = finding.verdict.upper()
         if verdict == "PASS":
@@ -155,14 +166,22 @@ def _semantic_primary_state(
             review_verdict=finding.verdict,
             review_decision=finding.decision,
         )
+    if is_extension:
+        reason = (
+            "Offizielle SEC-Zahl aus einem firmeneigenen XBRL-Extension-Tag. Der Importer hat nur "
+            "einen Mapping-Kandidaten erkannt; vor Berechnungen muss die wirtschaftliche Bedeutung "
+            "gegen das interne Feld semantisch bestätigt werden."
+        )
+    else:
+        reason = (
+            "Offizielle Primärquelle, aber dieses Feld kann aus mehreren XBRL-Schuldenkonzepten "
+            "bestehen. Vor Berechnungen ist eine semantische Prüfung erforderlich."
+        )
     return PreferredDataState(
         fact=fact,
         quality_status="primary_semantic_review_required",
         calculation_ready=False,
-        reason=(
-            "Offizielle Primärquelle, aber dieses Feld kann aus mehreren XBRL-Schuldenkonzepten bestehen. "
-            "Vor Berechnungen ist eine semantische Prüfung erforderlich."
-        ),
+        reason=reason,
     )
 
 
@@ -180,7 +199,10 @@ def _state_for_fact(
             reason="Vom Nutzer bestätigter Override mit erhaltener Provider-Provenienz.",
         )
 
-    if ((fact.provider or ""), fact.metric) in PRIMARY_SEMANTIC_REVIEW_REQUIRED:
+    if (
+        ((fact.provider or ""), fact.metric) in PRIMARY_SEMANTIC_REVIEW_REQUIRED
+        or (fact.provider or "") in PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED
+    ):
         return _semantic_primary_state(fact, finding)
 
     if _is_primary_source(fact):
