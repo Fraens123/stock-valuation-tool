@@ -11,10 +11,11 @@ DEFAULT_PROVIDER_CACHE_DIR = Path("data/cache/providers")
 
 
 class ProviderResponseCache:
-    """Small file-backed JSON cache for quota-limited provider responses.
+    """Small file-backed cache for provider responses.
 
-    Cache files live below ``data/cache`` which is ignored by git. The API key is never part of
-    the cache key or persisted metadata.
+    JSON payloads and text documents live below ``data/cache`` which is ignored by git. API keys
+    are never part of cache keys or persisted metadata. Text caching is used for original filing
+    documents so repeated local audits do not redownload the same SEC/ESEF source files.
     """
 
     def __init__(self, provider: str, root: Path = DEFAULT_PROVIDER_CACHE_DIR) -> None:
@@ -35,6 +36,9 @@ class ProviderResponseCache:
 
     def path_for(self, function: str, params: dict[str, Any]) -> Path:
         return self.root / f"{self.cache_key(function, params)}.json"
+
+    def text_path_for(self, function: str, params: dict[str, Any]) -> Path:
+        return self.root / f"{self.cache_key(function, params)}.txt"
 
     def get(self, function: str, params: dict[str, Any]) -> dict[str, Any] | None:
         path = self.path_for(function, params)
@@ -63,5 +67,23 @@ class ProviderResponseCache:
         )
         return path
 
+    def get_text(self, function: str, params: dict[str, Any]) -> str | None:
+        path = self.text_path_for(function, params)
+        if not path.exists():
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    def put_text(self, function: str, params: dict[str, Any], payload: str) -> Path:
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.text_path_for(function, params)
+        path.write_text(payload, encoding="utf-8")
+        return path
+
     def has(self, function: str, params: dict[str, Any]) -> bool:
         return self.path_for(function, params).exists()
+
+    def has_text(self, function: str, params: dict[str, Any]) -> bool:
+        return self.text_path_for(function, params).exists()
