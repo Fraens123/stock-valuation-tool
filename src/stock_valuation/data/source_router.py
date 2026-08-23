@@ -14,6 +14,10 @@ from stock_valuation.data.providers.base import ProviderError
 from stock_valuation.data.providers.esef_registry import ESEFRegistryError, ESEFRegistryProvider
 from stock_valuation.data.providers.gleif import GLEIFProvider, GLEIFProviderError
 from stock_valuation.data.providers.sec import SECCompanyFactsProvider, SECProviderError
+from stock_valuation.data.providers.sec_extension import (
+    SECCompanyExtensionProvider,
+    SECCompanyExtensionResult,
+)
 from stock_valuation.data.providers.sec_filing import (
     SECFilingFallbackError,
     SECFilingFallbackProvider,
@@ -61,6 +65,15 @@ class SECFilingProviderLike(Protocol):
         *,
         years: int = 10,
     ) -> SECFilingFallbackResult: ...
+
+
+class SECExtensionProviderLike(Protocol):
+    def candidate_facts(
+        self,
+        cik: str,
+        gaps,
+        base_facts,
+    ) -> SECCompanyExtensionResult: ...
 
 
 class GLEIFProviderLike(Protocol):
@@ -120,48 +133,97 @@ def _supplement_sec_filing_gaps(
     cik: str,
     base_facts: list[NormalizedFinancialFact],
     provider: SECFilingProviderLike,
+    extension_provider: SECExtensionProviderLike | None,
     attempts: list[SourceAttempt],
 ) -> int:
-    """Fill only Company-Facts gaps from the original SEC XBRL filing.
+    """Fill SEC Company-Facts gaps without silently guessing company-extension semantics.
 
-    This stays inside the SEC accounting source. Standard taxonomy facts can be persisted as
-    primary-source supplements. Missing fields that require a company extension remain unresolved
-    and are surfaced in the router message instead of being guessed.
+    Stage 1 imports only supported standard XBRL concepts from the original 10-K/20-F/40-F.
+    Stage 2 may store a best company-extension candidate, but that candidate is blocked by the
+    Preferred-Data layer until the existing ChatGPT semantic review returns PASS (or a reviewed
+    correction is explicitly accepted as an override).
     """
     result = provider.gap_facts(cik, base_facts, years=10)
-    supplemented = list(result.facts)
-    count = replace_financial_facts(
+    standard_rows = list(result.facts)
+    standard_count = replace_financial_facts(
         session,
         analysis,
-        supplemented,
+        standard_rows,
         provider="sec_filing_xbrl",
         source_url="https://www.sec.gov/Archives/edgar/data/",
         source_type="primary_source",
     )
-    unresolved_count = len(result.unresolved)
-    if count:
-        status = "supplemented"
-        message = (
-            f"{count} fehlende Standard-XBRL-Fakten aus {result.filings_checked} Originalfiling(s) ergänzt."
+
+    if standard_count:
+        standard_status = "supplemented"
+        standard_message = (
+            f"{standard_count} fehlende Standard-XBRL-Fakten aus "
+            f"{result.filings_checked} Originalfiling(s) ergänzt."
         )
     else:
-        status = "checked_no_standard_fill"
-        message = "Originalfilings geprüft; keine zusätzliche sichere Standard-XBRL-Zuordnung gefunden."
-    if unresolved_count:
-        message += (
-            f" {unresolved_count} Feld/Jahr-Kombination(en) bleiben offen und benötigen "
-            "Extension-/Textprüfung."
+        standard_status = "checked_no_standard_fill"
+        standard_message = (
+            "Originalfilings geprüft; keine zusätzliche sichere Standard-XBRL-Zuordnung gefunden."
+        )
+    if result.unresolved:
+        standard_message += (
+            f" {len(result.unresolved)} Feld/Jahr-Kombination(en) benötigen noch eine "
+            "Company-Extension-/Textprüfung."
         )
     attempts.append(
         SourceAttempt(
             "SEC Original-Filing",
-            status,
-            count,
+            standard_status,
+            standard_count,
             str(cik),
-            message,
+            standard_message,
         )
     )
-    return count
+
+    candidate_rows: list[NormalizedFinancialFact] = []
+    remaining_unresolved = tuple(result.unresolved)
+    checked = 0
+    if result.unresolved and extension_provider is not None:
+        extension_result = extension_provider.candidate_facts(cik, result.unresolved, base_facts)
+        candidate_rows = list(extension_result.facts)
+        remaining_unresolved = tuple(extension_result.unresolved)
+        checked = extension_result.filings_checked
+
+    candidate_count = replace_financial_facts(
+        session,
+        analysis,
+        candidate_rows,
+        provider="sec_filing_extension",
+        source_url="https://www.sec.gov/Archives/edgar/data/",
+        source_type="primary_source",
+    )
+
+    if candidate_count:
+        extension_status = "candidates_found"
+        extension_message = (
+            f"{candidate_count} firmeneigene XBRL-Kandidat(en) aus {checked} Filing-Prüfung(en) "
+            "gefunden. Sie bleiben bis zum semantischen PASS blockiert."
+        )
+    elif result.unresolved:
+        extension_status = "checked_no_candidate"
+        extension_message = "Keine ausreichend plausiblen firmeneigenen XBRL-Kandidaten gefunden."
+    else:
+        extension_status = "not_needed"
+        extension_message = "Keine offenen Standard-XBRL-Lücken für eine Extension-Prüfung."
+    if remaining_unresolved:
+        extension_message += (
+            f" {len(remaining_unresolved)} Feld/Jahr-Kombination(en) bleiben weiterhin offen."
+        )
+    attempts.append(
+        SourceAttempt(
+            "SEC Extension-Mapping",
+            extension_status,
+            candidate_count,
+            str(cik),
+            extension_message,
+        )
+    )
+    return standard_count + candidate_count
 
 
 def sync_best_available_financials(
@@ -170,6 +232,7 @@ def sync_best_available_financials(
     *,
     sec_provider: SECProviderLike | None = None,
     sec_filing_provider: SECFilingProviderLike | None = None,
+    sec_extension_provider: SECExtensionProviderLike | None = None,
     gleif_provider: GLEIFProviderLike | None = None,
     esef_provider: ESEFProviderLike | None = None,
     alpha_provider: AlphaVantageProvider | None = None,
@@ -180,13 +243,14 @@ def sync_best_available_financials(
 
     Routing order is source-level to avoid silently mixing accounting bases:
 
-    1. SEC Company Facts for SEC-reporting issuers, with a targeted original-filing XBRL fallback
-       for missing standard concepts inside the same SEC reporting basis.
+    1. SEC Company Facts for SEC-reporting issuers, with targeted original-filing fallbacks inside
+       the same SEC reporting basis. Standard tags can fill gaps automatically; company-extension
+       candidates remain blocked until semantic review.
     2. ESEF via GLEIF LEI for issuers not sufficiently covered by SEC.
     3. Alpha Vantage only as a fallback when no official structured source is usable.
 
-    Lower-level provider errors are recorded as attempts. One unavailable source does not abort the
-    remaining routes. Analyst estimates are deliberately outside this function.
+    Lower-level provider errors are recorded as attempts. Analyst estimates remain outside this
+    function.
     """
     ensure_editable(analysis)
     attempts: list[SourceAttempt] = []
@@ -218,14 +282,20 @@ def sync_best_available_financials(
                         provider="sec",
                         purpose="cik",
                         symbol=cik,
-                        note=f"Automatisch über SEC-Ticker/CIK-Verzeichnis aufgelöst ({sec_match_name or analysis.company.name}).",
+                        note=(
+                            "Automatisch über SEC-Ticker/CIK-Verzeichnis aufgelöst "
+                            f"({sec_match_name or analysis.company.name})."
+                        ),
                     )
                     count = _store_primary(
                         session,
                         analysis,
                         facts,
                         provider="sec_companyfacts",
-                        source_url=f"https://data.sec.gov/api/xbrl/companyfacts/CIK{str(cik).zfill(10)}.json",
+                        source_url=(
+                            "https://data.sec.gov/api/xbrl/companyfacts/"
+                            f"CIK{str(cik).zfill(10)}.json"
+                        ),
                     )
                     currency = _report_currency(facts)
                     attempts.append(
@@ -250,6 +320,11 @@ def sync_best_available_financials(
                             attempts.append(
                                 SourceAttempt("SEC Original-Filing", "unavailable", message=str(exc))
                             )
+
+                    extension = sec_extension_provider
+                    if extension is None and isinstance(filing, SECFilingFallbackProvider):
+                        extension = SECCompanyExtensionProvider(filing)
+
                     filing_count = 0
                     if filing is not None:
                         try:
@@ -259,6 +334,7 @@ def sync_best_available_financials(
                                 cik=str(cik),
                                 base_facts=facts,
                                 provider=filing,
+                                extension_provider=extension,
                                 attempts=attempts,
                             )
                         except (SECFilingFallbackError, ProviderError, ValueError) as exc:
@@ -282,7 +358,10 @@ def sync_best_available_financials(
                         "insufficient",
                         len(facts),
                         str(cik),
-                        "SEC-Daten vorhanden, aber für einen kohärenten Standardimport zu wenig unterstützte Fakten.",
+                        (
+                            "SEC-Daten vorhanden, aber für einen kohärenten Standardimport zu wenig "
+                            "unterstützte Fakten."
+                        ),
                     )
                 )
             else:
@@ -290,7 +369,7 @@ def sync_best_available_financials(
         except (SECProviderError, ProviderError, ValueError) as exc:
             attempts.append(SourceAttempt("SEC", "error", message=str(exc)))
 
-    # --- ESEF ---------------------------------------------------------------
+    # --- ESEF ----------------------------------------------------------------
     gleif = gleif_provider or GLEIFProvider()
     esef = esef_provider or ESEFRegistryProvider()
     try:
@@ -337,7 +416,10 @@ def sync_best_available_financials(
                     "insufficient",
                     len(facts),
                     lei,
-                    "ESEF-Filings gefunden, aber zu wenig standardisierte IFRS-Fakten für den automatischen Import.",
+                    (
+                        "ESEF-Filings gefunden, aber zu wenig standardisierte IFRS-Fakten für den "
+                        "automatischen Import."
+                    ),
                 )
             )
         else:
@@ -345,7 +427,7 @@ def sync_best_available_financials(
     except (GLEIFProviderError, ESEFRegistryError, ProviderError, ValueError) as exc:
         attempts.append(SourceAttempt("ESEF", "error", message=str(exc)))
 
-    # --- Alpha Vantage fallback --------------------------------------------
+    # --- Alpha Vantage fallback ---------------------------------------------
     if allow_alpha_fallback:
         alpha = alpha_provider
         if alpha is None and os.getenv("ALPHA_VANTAGE_API_KEY"):
