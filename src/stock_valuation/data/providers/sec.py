@@ -147,6 +147,11 @@ CONCEPT_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("ifrs-full", "DepreciationExpense"),
         ("ifrs-full", "AmortisationExpense"),
     ),
+    "interest_expense": (
+        ("us-gaap", "InterestExpenseNonOperating"),
+        ("us-gaap", "InterestExpense"),
+        ("ifrs-full", "FinanceCosts"),
+    ),
     "dividends_paid": (
         ("us-gaap", "PaymentsOfDividends"),
         ("us-gaap", "PaymentsOfDividendsCommonStock"),

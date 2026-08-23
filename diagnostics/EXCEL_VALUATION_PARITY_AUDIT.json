@@ -1,0 +1,92 @@
+{
+  "audit": "EXCEL_VALUATION_PARITY_AUDIT",
+  "date": "2026-08-23",
+  "verdict": "GO - EXAKTE EXCEL-/BUCH-BEWERTUNGSSTRUKTUR V1",
+  "method_version": "excel-book-valuation-v1.0",
+  "frozen_engines_changed": false,
+  "new_layer": "src/stock_valuation/book_valuation/",
+  "market_data": {
+    "root_cause_missing_market_cap": "Normal app workflow required a persisted MarketDataSnapshotRecord, but the analysis page had no productive user action to create one.",
+    "user_action_added": "Marktdaten aktualisieren",
+    "automatic_provider_request_on_rerun": false,
+    "snapshot_persisted_after_click": true,
+    "market_cap_independent_from_ev": true
+  },
+  "multiples": {
+    "equity_multiples_available_without_ev": [
+      "latest_fy_pe",
+      "latest_fy_pb",
+      "latest_fy_p_ocf",
+      "latest_fy_p_fcf"
+    ],
+    "ev_multiples_require_ev": [
+      "latest_fy_ev_ebit",
+      "latest_fy_ev_ebitda",
+      "latest_fy_ev_sales",
+      "latest_fy_ev_fcf"
+    ],
+    "ev_fcf_uses_equity_fcf": false,
+    "ev_fcf_method": "EXCEL_BOOK_ENTITY_FCF_V1",
+    "ev_fcf_formula": "operating_cash_flow + interest_expense - capital_expenditures",
+    "missing_interest_expense_policy": "UNAVAILABLE, never impute zero"
+  },
+  "owner_earnings": {
+    "implemented": true,
+    "formula": "net_income + depreciation_amortization - owner_earnings_capex - change_in_operating_working_capital",
+    "operating_working_capital_formula": "inventory + accounts_receivable - accounts_payable",
+    "owner_earnings_capex_formula": "capital_expenditures + intangible_purchases",
+    "no_zero_imputing": true
+  },
+  "dcf": {
+    "visible_excel_steps": [
+      "1. Bestimmung Owner Earnings",
+      "2. Bestimmung des Diskontierungsfaktors",
+      "3. Bestimmung der Ewigen Rente",
+      "4. Fairen Aktienkurs bestimmen"
+    ],
+    "discount_method": "EXCEL_BOOK_DISCOUNT_RATE_V1",
+    "risk_premium_formula": "1 / fair_pe",
+    "cost_of_equity_formula": "risk_free_rate + risk_premium + minimum_return_addon",
+    "minimum_return": "0.07",
+    "terminal_value_formula": "last_owner_earnings * (1 + g) / (r - g)",
+    "terminal_gate": "g < r"
+  },
+  "multiplicator_method": {
+    "implemented": true,
+    "replaces_business_quality_substitute": true,
+    "blocks": [
+      "Sockel-KGV",
+      "Finanzielle Stabilität",
+      "Marktposition",
+      "Rentabilität",
+      "Wachstum",
+      "Individualität",
+      "Bewertung"
+    ],
+    "fair_pe_formula": "base_pe + financial_stability_addon + market_position_addon * profitability_multiplier + growth_addon + individuality_addon",
+    "fair_price_formula": "fair_pe * (forecast_net_income / shares_outstanding)",
+    "manual_inputs_persisted": true
+  },
+  "review_required": [
+    {
+      "code": "SIMULATION_METHOD_REVIEW_REQUIRED",
+      "reason": "VBA/scenario generation is not sufficiently reconstructable from visible workbook cells; no invented Monte Carlo simulation was added."
+    },
+    {
+      "code": "EXCEL_FORMULA_REVIEW_REQUIRED",
+      "cell": "B700",
+      "reason": "Intermediate formula appears scale-ambiguous as Unternehmenswert, but final B701 is algebraically represented as fair_pe * forecast_eps."
+    }
+  ],
+  "artifacts": [
+    "docs/EXCEL_VALUATION_FORMULA_MAP.md",
+    "diagnostics/EXCEL_VALUATION_PARITY_AUDIT.md",
+    "diagnostics/EXCEL_VALUATION_PARITY_AUDIT.json",
+    "tests/fixtures/book_valuation_excel_fixture.json"
+  ],
+  "verification": {
+    "pytest": "229 passed in 2.56s",
+    "py_compile_pages": "PASS",
+    "streamlit_http": "200 on localhost:8512"
+  }
+}

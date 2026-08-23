@@ -76,7 +76,7 @@ def test_main_analysis_order_matches_excel_book_flow() -> None:
         "Cashflow-Qualität / Kapitalallokation",
         "Bewertungskennzahlen",
         "DCF-Bewertung",
-        "Multiplikatoren-/Qualitätsbetrachtung",
+        "Multiplikatorenmethode",
         "Zusammenfassung",
     )
     section_titles = " ".join(section.title for section in ANALYSIS_SECTIONS)

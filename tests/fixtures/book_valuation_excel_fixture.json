@@ -1,0 +1,27 @@
+{
+  "source": "derived from provided Excel workbook for regression",
+  "workbook": "Bewertung Kone Aufzüge.xlsm",
+  "sheet": "Krones",
+  "cells": {
+    "B405": "KGV = I398 / E403",
+    "B532": "Risikoaufschlag = 1 / B531",
+    "B535": "Eigenkapitalkosten = B533 + B532 + B534",
+    "B553": "Terminal Value = P520 * (1 + B552) / (B535 - B552)",
+    "B554": "Barwert Terminal Value = B553 / (1 + B535)^10",
+    "B562": "Fairer Aktienkurs = B560 / B559",
+    "B685": "Faires KGV = SUM(B680:B684)",
+    "B698": "Progn. Gewinn je Aktie = B695 / B696",
+    "B701": "Fairer Preis je Aktie = B700 / B696"
+  },
+  "numeric_fixture": {
+    "fair_pe": "16",
+    "risk_free_rate": "0.032",
+    "risk_premium": "0.0625",
+    "minimum_return_addon": "0",
+    "cost_of_equity": "0.0945",
+    "terminal_last_owner_earnings": "110",
+    "terminal_growth_rate": "0.02",
+    "projection_years": 2,
+    "terminal_value": "1402.5"
+  }
+}

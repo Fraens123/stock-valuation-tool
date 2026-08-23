@@ -30,8 +30,12 @@ def current_market_multiples(
 ) -> tuple[ValuationMetricResult, ...]:
     specs = (
         ("latest_fy_pe", "market_cap", "net_income"),
+        ("latest_fy_pb", "market_cap", "shareholders_equity"),
+        ("latest_fy_p_ocf", "market_cap", "operating_cash_flow"),
         ("latest_fy_ev_ebit", "enterprise_value", "operating_income"),
         ("latest_fy_ev_ebitda", "enterprise_value", "ebitda"),
+        ("latest_fy_ev_sales", "enterprise_value", "revenue"),
+        ("latest_fy_ev_fcf", "enterprise_value", "entity_free_cash_flow_excel_book"),
         ("latest_fy_p_fcf", "market_cap", "free_cash_flow"),
     )
     results = [

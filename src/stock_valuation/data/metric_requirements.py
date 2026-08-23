@@ -70,6 +70,12 @@ METRIC_POLICIES: dict[str, MetricPolicy] = {
         "Depreciation of tangible assets plus amortization of intangible assets; excludes broad non-cash catch-all rows.",
         needs_semantic_gate=True,
     ),
+    "interest_expense": MetricPolicy(
+        MetricRequirement.OPTIONAL,
+        "income_statement",
+        "Interest expense used only for the versioned Excel/book entity-FCF multiple; absence never implies zero.",
+        needs_semantic_gate=True,
+    ),
     "dividends_paid": MetricPolicy(MetricRequirement.OPTIONAL, "cash_flow", "Cash dividends paid to shareholders."),
     "ebitda": MetricPolicy(
         MetricRequirement.DERIVED,

@@ -103,6 +103,7 @@ BASE_FINANCIAL_METRICS = (
     "operating_cash_flow",
     "capital_expenditures",
     "depreciation_amortization",
+    "interest_expense",
 )
 DISPLAY_FINANCIAL_METRICS = (
     "revenue",
@@ -893,9 +894,22 @@ def _latest_financial_points(calculation: dict[str, Any]) -> dict[str, Financial
                 f"calculation:{item['metric_id']}:{year}",
                 item.get("inputs_hash") or "",
             )
+    entity_fcf_by_year = _entity_fcf_excel_book_points(calculation)
+    for year, value, currency, refs, inputs_hash, status, issues in entity_fcf_by_year:
+        current = points.get("entity_free_cash_flow_excel_book")
+        if status == AVAILABLE and (current is None or year > current.fiscal_year):
+            points["entity_free_cash_flow_excel_book"] = FinancialPoint(
+                "entity_free_cash_flow_excel_book",
+                year,
+                value,
+                currency,
+                status,
+                "book_valuation:entity_free_cash_flow_excel_book",
+                inputs_hash,
+            )
     for year, facts in calculation.get("base_facts", {}).items():
         for fact in facts:
-            if fact["metric"] in {"revenue", "operating_income", "net_income"} and fact.get("value") is not None:
+            if fact["metric"] in {"revenue", "operating_income", "net_income", "shareholders_equity", "operating_cash_flow"} and fact.get("value") is not None:
                 current = points.get(fact["metric"])
                 if current is None or int(year) > current.fiscal_year:
                     points[fact["metric"]] = FinancialPoint(
@@ -908,6 +922,33 @@ def _latest_financial_points(calculation: dict[str, Any]) -> dict[str, Financial
                         canonical_hash(fact),
                     )
     return points
+
+
+def _entity_fcf_excel_book_points(calculation: dict[str, Any]) -> list[tuple[int, Decimal | None, str, tuple[str, ...], str, str, tuple[str, ...]]]:
+    output = []
+    for year, facts in calculation.get("base_facts", {}).items():
+        by_metric = {fact["metric"]: fact for fact in facts}
+        ocf = by_metric.get("operating_cash_flow")
+        capex = by_metric.get("capital_expenditures")
+        interest = by_metric.get("interest_expense")
+        currency = (ocf or {}).get("currency") or (capex or {}).get("currency") or ""
+        refs = tuple(
+            f"financial_fact:{metric}:{year}"
+            for metric in ("operating_cash_flow", "capital_expenditures", "interest_expense")
+        )
+        issues = []
+        if ocf is None or ocf.get("value") is None:
+            issues.append("MISSING_OPERATING_CASH_FLOW")
+        if capex is None or capex.get("value") is None:
+            issues.append("MISSING_CAPITAL_EXPENDITURES")
+        if interest is None or interest.get("value") is None:
+            issues.append("MISSING_INTEREST_EXPENSE_FOR_ENTITY_FCF")
+        if issues:
+            output.append((int(year), None, currency, refs, canonical_hash([year, issues]), UNAVAILABLE, tuple(issues)))
+            continue
+        value = _decimal_or_none(ocf.get("value")) + _decimal_or_none(interest.get("value")) - _decimal_or_none(capex.get("value"))
+        output.append((int(year), value, currency, refs, canonical_hash([year, value, refs]), AVAILABLE, ()))
+    return output
 
 
 def _effective_normalized_fcf(normalized: dict[str, Any], base_fcf: dict[str, Any]) -> NormalizedValue:

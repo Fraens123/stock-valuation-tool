@@ -176,6 +176,8 @@ def _render_point(
         values, technical = _valuation_value(valuation, point.backend_key or "", point.unit_hint)
     elif point.source == "quality":
         values, technical = _quality_value(calc, point.backend_key or "")
+    elif point.source == "book":
+        values, technical = ({}, "REVIEW_REQUIRED")
     else:
         values, technical = ({}, None)
     latest = _latest(values)
@@ -274,7 +276,7 @@ def _point_status_label(status: str | None, values: dict[int, str]) -> str:
 
 def _point_reason(status: str | None) -> str | None:
     if status == "EV_REVIEW_REQUIRED":
-        return "Für die Berechnung fehlt eine calculation-ready Nettoverschuldung."
+        return "Für die Berechnung fehlt noch eine fachlich freigegebene Nettoverschuldung."
     if status in {"UNAVAILABLE", "NOT_MEANINGFUL"}:
         return issue_label(status)
     return None
