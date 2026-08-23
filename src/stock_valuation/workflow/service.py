@@ -55,7 +55,12 @@ from stock_valuation.valuation.models import (
 )
 from stock_valuation.valuation.multiples import current_market_multiples
 from stock_valuation.valuation.normalization import normalize_three_year_metric
-from stock_valuation.valuation.persistence import list_valuation_snapshots_for_analysis, persist_valuation_snapshot
+from stock_valuation.valuation.persistence import (
+    SNAPSHOT_ID_COLLISION,
+    load_valuation_snapshot,
+    list_valuation_snapshots_for_analysis,
+    persist_valuation_snapshot,
+)
 from stock_valuation.valuation.snapshot import create_valuation_snapshot
 from stock_valuation.valuation.summary import dcf_summary
 from stock_valuation.valuation_assumptions.approvals import (
@@ -532,9 +537,19 @@ def _refresh_valuation_stage(
             quality_context=assumptions.payload["quality_context"],
             historical_context=assumptions.payload["historical_context"],
         )
-        record = persist_valuation_snapshot(session, analysis, snapshot)
-        payload["final_snapshot_id"] = record.snapshot_id
-        status = READY
+        try:
+            record = persist_valuation_snapshot(session, analysis, snapshot)
+        except ValueError as exc:
+            if str(exc) != SNAPSHOT_ID_COLLISION:
+                raise
+            record = load_valuation_snapshot(session, snapshot.snapshot_id)
+            if record is None or record.analysis_id != analysis.id:
+                raise
+            payload["final_snapshot_id"] = record.snapshot_id
+            status = READY
+        else:
+            payload["final_snapshot_id"] = record.snapshot_id
+            status = READY
     else:
         status = READY_FOR_PREVIEW
     row = persist_stage_snapshot(

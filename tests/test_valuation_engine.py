@@ -469,9 +469,15 @@ def test_persist_valuation_snapshot_linkage_idempotency_and_immutability():
 
         first = persist_valuation_snapshot(session, analysis, snapshot)
         second = persist_valuation_snapshot(session, analysis, snapshot)
+        third = persist_valuation_snapshot(
+            session,
+            analysis,
+            replace(snapshot, created_at="2026-08-23T00:01:00+00:00"),
+        )
         rows = list_valuation_snapshots_for_analysis(session, analysis)
 
         assert first.id == second.id
+        assert first.id == third.id
         assert len(rows) == 1
         assert payload_from_record(first)["snapshot_id"] == snapshot.snapshot_id
 

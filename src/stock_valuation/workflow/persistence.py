@@ -71,6 +71,20 @@ def persist_stage_snapshot(
     ):
         return existing
     snapshot_id = stable_hash((str(analysis.id), stage, engine_version, inputs_hash, payload_json))
+    existing_by_id = session.scalar(
+        select(AnalysisStageSnapshot).where(AnalysisStageSnapshot.snapshot_id == snapshot_id)
+    )
+    if existing_by_id is not None:
+        if (
+            existing_by_id.analysis_id == analysis.id
+            and existing_by_id.stage == stage
+            and existing_by_id.engine_version == engine_version
+            and existing_by_id.inputs_hash == inputs_hash
+            and existing_by_id.status == status
+            and existing_by_id.payload_json == payload_json
+        ):
+            return existing_by_id
+        raise ValueError("STAGE_SNAPSHOT_ID_COLLISION")
     row = AnalysisStageSnapshot(
         analysis_id=analysis.id,
         stage=stage,

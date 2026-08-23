@@ -57,7 +57,7 @@ class AnalysisViewModel:
     technical_payload: dict[str, Any]
 
 
-def build_analysis_view_model(state) -> AnalysisViewModel:
+def build_analysis_view_model(state, *, book_valuation_result: Any | None = None) -> AnalysisViewModel:
     calc = state.stages["CALCULATION"].payload
     market = state.stages["MARKET_DATA"].payload
     assumptions = state.stages["ASSUMPTIONS"].payload
@@ -66,7 +66,7 @@ def build_analysis_view_model(state) -> AnalysisViewModel:
     trading_currency = market.get("trading_currency") or financial_currency
     history_years = sorted({int(year) for year in calc.get("base_facts", {}) if str(year).isdigit()})
     sections = tuple(
-        _render_section(section, calc, market, valuation, financial_currency, trading_currency)
+        _render_section(section, calc, market, valuation, financial_currency, trading_currency, book_valuation_result)
         for section in ANALYSIS_SECTIONS
     )
     status_line = {
@@ -136,12 +136,13 @@ def _render_section(
     valuation: dict[str, Any],
     financial_currency: str,
     trading_currency: str,
+    book_valuation_result: Any | None,
 ) -> RenderedSection:
     return RenderedSection(
         section.key,
         section.title,
         section.intro,
-        tuple(_render_point(point, calc, market, valuation, financial_currency, trading_currency) for point in section.points),
+        tuple(_render_point(point, calc, market, valuation, financial_currency, trading_currency, book_valuation_result) for point in section.points),
     )
 
 
@@ -152,6 +153,7 @@ def _render_point(
     valuation: dict[str, Any],
     financial_currency: str,
     trading_currency: str,
+    book_valuation_result: Any | None,
 ) -> RenderedPoint:
     if point.status == NOT_CURRENTLY_IMPLEMENTED:
         return RenderedPoint(
@@ -177,7 +179,7 @@ def _render_point(
     elif point.source == "quality":
         values, technical = _quality_value(calc, point.backend_key or "")
     elif point.source == "book":
-        values, technical = ({}, "REVIEW_REQUIRED")
+        values, technical = _book_value(book_valuation_result, point.backend_key or point.key, point.unit_hint, financial_currency)
     else:
         values, technical = ({}, None)
     latest = _latest(values)
@@ -242,6 +244,24 @@ def _valuation_value(valuation: dict[str, Any], metric: str, unit_hint: str) -> 
 
 def _quality_value(calc: dict[str, Any], metric: str) -> tuple[dict[int, str], str | None]:
     return {}, "AVAILABLE" if metric else "UNAVAILABLE"
+
+
+def _book_value(result: Any | None, key: str, unit_hint: str, currency: str) -> tuple[dict[int, str], str | None]:
+    if result is None:
+        return {}, "UNAVAILABLE"
+    values = getattr(result, "values", None)
+    if values is None and isinstance(result, dict):
+        values = result.get("values")
+    item = values.get(key) if isinstance(values, dict) else None
+    if item is None:
+        return {}, "UNAVAILABLE"
+    value = getattr(item, "value", None) if not isinstance(item, dict) else item.get("value")
+    status = getattr(item, "status", None) if not isinstance(item, dict) else item.get("status")
+    unit = getattr(item, "unit", None) if not isinstance(item, dict) else item.get("unit")
+    if value is None:
+        return {}, status or "UNAVAILABLE"
+    hint = "percent" if unit == "decimal_ratio" else "multiple" if unit == "multiple" else unit_hint
+    return {0: _format_value(value, hint, currency)}, status or "AVAILABLE"
 
 
 def _format_value(value: Any, unit_hint: str, currency: str | None) -> str:

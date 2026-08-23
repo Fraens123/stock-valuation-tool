@@ -7,13 +7,14 @@ import streamlit as st
 
 from stock_valuation.analyses.service import get_analysis
 from stock_valuation.book_valuation.persistence import load_book_assumptions, upsert_book_assumption
+from stock_valuation.book_valuation.service import build_book_valuation_for_analysis
 from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
 from stock_valuation.market.refresh_service import market_refresh_missing_reason, refresh_market_snapshot_for_analysis
 from stock_valuation.ui.analysis_layout import ANALYSIS_SECTIONS
 from stock_valuation.ui.analysis_view_model import available_years, build_analysis_view_model, table_rows
 from stock_valuation.ui.info_catalog import INFO_CATALOG, InfoEntry
-from stock_valuation.ui.labels_de import format_currency_compact_de, format_date_de, issue_label
+from stock_valuation.ui.labels_de import format_currency_compact_de, format_date_de, issue_label, status_label
 from stock_valuation.ui.navigation import STATUS_LABELS, current_analysis_id, render_analysis_selector, render_navigation
 from stock_valuation.valuation_assumptions.approvals import approve_recommended_value, override_assumption
 from stock_valuation.valuation_assumptions.models import AssumptionRecommendation
@@ -171,7 +172,40 @@ def _render_dcf() -> None:
     st.subheader("1. Bestimmung Owner Earnings")
     for key in ("owner_earnings", "owner_earnings_capex", "operating_working_capital", "change_in_operating_working_capital"):
         _info_button(key)
-    st.caption("Historische und prognostizierte Owner Earnings werden nach Excel-/Buchmethode getrennt von Free Cash Flow geführt.")
+    owner_rows = []
+    for row in book_valuation.owner_earnings_history[-(len(years) or 5):]:
+        owner_rows.append(
+            {
+                "Jahr": row.fiscal_year,
+                "Jahresüberschuss": _book_text(row.net_income),
+                "Umsatz": _book_text(row.revenue),
+                "Owner-Earnings-CAPEX": _book_text(row.owner_earnings_capex),
+                "Abschreibungen": _book_text(row.depreciation_amortization),
+                "Operating Working Capital": _book_text(row.operating_working_capital),
+                "Δ Operating Working Capital": _book_text(row.change_in_operating_working_capital),
+                "Owner Earnings": _book_text(row.owner_earnings),
+                "Status": _book_status(row.owner_earnings),
+            }
+        )
+    if owner_rows:
+        st.dataframe(pd.DataFrame(owner_rows), width="stretch", hide_index=True)
+    else:
+        st.info("Für Owner Earnings fehlen noch ausreichend historische Eingabewerte.")
+    with st.expander("Fehlende immaterielle Investitionen bestätigen"):
+        st.caption("Nur hier darf ein fehlender Wert ausdrücklich als 0 oder als eigener Wert bestätigt werden. Ohne Bestätigung wird nichts als 0 behandelt.")
+        for row in book_valuation.owner_earnings_history[-5:]:
+            key = f"intangible_purchases_{row.fiscal_year}"
+            saved = book_valuation.manual_inputs.get(key, {})
+            cols = st.columns([0.25, 0.25, 0.35, 0.15])
+            cols[0].write(str(row.fiscal_year))
+            value = cols[1].text_input("Wert", value=saved.get("value") or "", key=f"book-{key}")
+            note = cols[2].text_input("Begründung", value=saved.get("note") or "", key=f"book-note-{key}")
+            if cols[3].button("Speichern", key=f"book-save-{key}", disabled=not value.strip()):
+                with get_session() as session:
+                    fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                    if fresh is not None:
+                        upsert_book_assumption(session, fresh, key=key, value=Decimal(value.replace(",", ".")), note=note or "Manuell bestätigt.", unit="currency")
+                st.rerun()
     st.subheader("2. Bestimmung des Diskontierungsfaktors")
     for key in ("fair_pe", "cost_of_equity"):
         _info_button(key)
@@ -179,15 +213,41 @@ def _render_dcf() -> None:
     if row:
         st.write(f"Diskontierungszins nach aktueller Annahme: **{row['Empfehlung']}** · Status: **{row['Status']}**")
         st.caption("Die Excel-/Buchmethode nutzt zusätzlich: Risikoaufschlag = 1 / faires KGV plus risikofreier Zins und Mindestverzinsung.")
+    discount_rows = [
+        ("Faires KGV", book_valuation.discount_rate_result.fair_pe, "fair_pe"),
+        ("Risikoaufschlag", book_valuation.discount_rate_result.risk_premium, "cost_of_equity"),
+        ("Risikofreier Zins", book_valuation.discount_rate_result.risk_free_rate, "cost_of_equity"),
+        ("Mindestaufschlag", book_valuation.discount_rate_result.minimum_return_addon, "cost_of_equity"),
+        ("Eigenkapitalkosten", book_valuation.discount_rate_result.cost_of_equity, "cost_of_equity"),
+    ]
+    st.dataframe(pd.DataFrame({"Kennzahl": label, "Wert": _book_text(value), "Status": _book_status(value)} for label, value, _ in discount_rows), width="stretch", hide_index=True)
     st.subheader("3. Bestimmung der Ewigen Rente")
     _info_button("terminal_value")
     row = next((item for item in vm.assumption_rows if item["key"] == "terminal_growth_rate"), None)
     if row:
         st.write(f"Ewige Wachstumsrate: **{row['Empfehlung']}**")
     st.caption("Orientierung aus Excel-/Buchvorlage: konservativ wählen; Erfahrungsbereich ungefähr 0 bis 4 Prozent; Wachstum muss unter Diskontierungszins liegen.")
+    terminal_rows = [
+        {"Kennzahl": "Ewige Wachstumsrate", "Wert": _book_text(book_valuation.terminal_value_result.terminal_growth_rate), "Status": _book_status(book_valuation.terminal_value_result.terminal_growth_rate)},
+        {"Kennzahl": "Terminal Value", "Wert": _book_text(book_valuation.terminal_value_result.terminal_value), "Status": _book_status(book_valuation.terminal_value_result.terminal_value)},
+        {"Kennzahl": "Barwert Terminal Value", "Wert": _book_text(book_valuation.terminal_value_result.present_value_terminal_value), "Status": _book_status(book_valuation.terminal_value_result.present_value_terminal_value)},
+    ]
+    st.dataframe(pd.DataFrame(terminal_rows), width="stretch", hide_index=True)
     st.subheader("4. Fairen Aktienkurs bestimmen")
     for key in ("fair_value", "margin_of_safety"):
         _info_button(key)
+    fair_rows = [
+        ("Summe Barwerte Owner Earnings", book_valuation.fair_value_result.present_value_owner_earnings_sum),
+        ("Barwert Ewige Rente", book_valuation.fair_value_result.present_value_terminal_value),
+        ("Wert des Eigenkapitals", book_valuation.fair_value_result.equity_value),
+        ("Anzahl Aktien", book_valuation.fair_value_result.shares_outstanding),
+        ("Fairer Aktienkurs", book_valuation.fair_value_result.fair_value_per_share),
+        ("Sicherheitsmarge", book_valuation.fair_value_result.margin_of_safety),
+        ("Fairer Aktienkurs nach Sicherheitsmarge", book_valuation.fair_value_result.fair_value_after_safety_margin),
+        ("Aktueller Kurs", book_valuation.fair_value_result.market_price),
+        ("Abweichung", book_valuation.fair_value_result.valuation_gap),
+    ]
+    st.dataframe(pd.DataFrame({"Kennzahl": label, "Wert": _book_text(value), "Status": _book_status(value)} for label, value in fair_rows), width="stretch", hide_index=True)
     st.subheader("Szenarien")
     if vm.scenario_rows:
         st.dataframe(pd.DataFrame(vm.scenario_rows), width="stretch", hide_index=True)
@@ -247,6 +307,23 @@ def _render_assumption_actions() -> None:
                             st.error(str(exc))
 
 
+def _book_text(item) -> str:
+    value = item.value
+    if value is None:
+        return "Nicht verfügbar"
+    if item.unit == "decimal_ratio":
+        return f"{Decimal(str(value)) * Decimal('100'):.1f} %"
+    if item.unit in {"multiple", "factor"}:
+        return f"{Decimal(str(value)):.2f}x"
+    return format_currency_compact_de(value, vm.financial_currency)
+
+
+def _book_status(item) -> str:
+    if item.issues:
+        return issue_label(item.issues[0])
+    return status_label(item.status)
+
+
 def _render_quality() -> None:
     section = next(item for item in vm.sections if item.key == "quality")
     st.header(section.title)
@@ -261,6 +338,32 @@ def _render_quality() -> None:
         for point in section.points
     ]
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    with st.expander("KGV-Aufschläge und Bewertungsannahmen prüfen"):
+        assumption_rows = [
+            ("Sockel-KGV", "base_pe", "multiple", "base_pe"),
+            ("Finanzielle Stabilität", "financial_stability_addon", "multiple_points", "financial_stability_addon"),
+            ("Marktpositions-Aufschlag", "market_position_addon", "multiple_points", "market_position"),
+            ("Rentabilitätsmultiplikator", "profitability_multiplier", "factor", "profitability_addon"),
+            ("Wachstum", "growth_addon", "multiple_points", "growth_addon"),
+            ("Individualität", "individuality_addon", "multiple_points", "individuality_addon"),
+            ("Faires KGV für DCF", "fair_pe", "multiple", "fair_pe"),
+            ("Risikofreier Zinssatz", "risk_free_rate", "decimal_ratio", "cost_of_equity"),
+            ("Sicherheitsmarge", "margin_of_safety", "decimal_ratio", "margin_of_safety"),
+            ("Prognose-Jahresüberschuss", "forecast_net_income", "currency", "multiplicator_fair_price_per_share"),
+        ]
+        for label, key, unit, info_key in assumption_rows:
+            saved = book_valuation.manual_inputs.get(key, {})
+            cols = st.columns([0.30, 0.22, 0.35, 0.13])
+            with cols[0]:
+                _point_label(label, info_key)
+            value = cols[1].text_input("Wert", value=saved.get("value") or "", key=f"book-input-{key}")
+            note = cols[2].text_input("Begründung", value=saved.get("note") or "", key=f"book-input-note-{key}")
+            if cols[3].button("Speichern", key=f"book-input-save-{key}", disabled=not value.strip()):
+                with get_session() as session:
+                    fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                    if fresh is not None:
+                        upsert_book_assumption(session, fresh, key=key, value=Decimal(value.replace(",", ".")), note=note or "Manuell geprüft.", unit=unit)
+                st.rerun()
     with st.expander("Multiplikatorenmethode erklären"):
         for point in section.points:
             _point_label(point.label, point.info_key)
@@ -323,8 +426,9 @@ with get_session() as session:
         st.info("Zuerst unter Unternehmen eine Analyse anlegen.")
         st.stop()
     state = refresh_local_analysis_stages(session, analysis)
+    book_valuation = build_book_valuation_for_analysis(session, analysis, state)
 
-vm = build_analysis_view_model(state)
+vm = build_analysis_view_model(state, book_valuation_result=book_valuation)
 
 st.title("Analyse")
 st.caption("Die Analyse folgt der Excel-/Buchlogik von oben nach unten. Die Berechnungen stammen ausschließlich aus den freigegebenen Frozen Engines.")

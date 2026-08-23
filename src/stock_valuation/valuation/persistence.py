@@ -38,7 +38,7 @@ def persist_valuation_snapshot(
         )
     )
     if existing is not None:
-        if existing.inputs_hash == snapshot.inputs_hash and existing.payload_json == payload_json:
+        if existing.inputs_hash == snapshot.inputs_hash and _idempotent_payload(existing.payload_json, payload):
             return existing
         raise ValueError(SNAPSHOT_ID_COLLISION)
 
@@ -136,3 +136,11 @@ def _base_trading_currency(payload: dict) -> str | None:
 
 def payload_from_record(record: ValuationSnapshotRecord) -> dict:
     return json.loads(record.payload_json)
+
+
+def _idempotent_payload(existing_payload_json: str, new_payload: dict) -> bool:
+    existing_payload = json.loads(existing_payload_json)
+    existing_payload.pop("created_at", None)
+    current_payload = dict(new_payload)
+    current_payload.pop("created_at", None)
+    return canonical_json(existing_payload) == canonical_json(current_payload)

@@ -97,6 +97,24 @@ class MultiplicatorMethodResult:
     fair_price_per_share: BookValue
 
 
+@dataclass(frozen=True)
+class BookValuationAnalysisResult:
+    method_version: str
+    owner_earnings_history: tuple[OwnerEarningsYear, ...]
+    owner_earnings_forecast: tuple[PresentValueRow, ...]
+    discount_rate_result: DiscountRateResult
+    terminal_value_result: TerminalValueResult
+    fair_value_result: FairValueResult
+    multiplicator_method_result: MultiplicatorMethodResult
+    market_inputs: dict[str, Any]
+    manual_inputs: dict[str, Any]
+    values: dict[str, BookValue]
+    warnings: tuple[str, ...]
+    review_required: bool
+    input_refs: tuple[str, ...]
+    inputs_hash: str
+
+
 def stable_hash(payload: Any) -> str:
     return hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()
 

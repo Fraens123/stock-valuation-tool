@@ -1,0 +1,105 @@
+{
+  "phase": "PHASE 9B.1",
+  "title": "BOOK VALUATION PRODUCTION INTEGRATION AUDIT",
+  "date": "2026-08-23",
+  "decision": "GO - BOOK VALUATION PRODUCTION INTEGRATION READY",
+  "method_version": "excel-book-valuation-v1.0",
+  "production_integration": {
+    "status": "PASS",
+    "service": "src/stock_valuation/book_valuation/service.py",
+    "entrypoint": "build_book_valuation_for_analysis(session, analysis, workflow_state)",
+    "streamlit_path": "pages/3_Analyse.py",
+    "view_model_path": "src/stock_valuation/ui/analysis_view_model.py",
+    "book_source_hardcoded_empty": false
+  },
+  "productive_function_calls": {
+    "owner_earnings_history_from_calculation_ready_data": true,
+    "excel_book_discount_rate": true,
+    "terminal_value": true,
+    "fair_value": true,
+    "fair_pe_from_components": true
+  },
+  "owner_earnings_policy": {
+    "formula": {
+      "operating_working_capital": "inventory + accounts_receivable - accounts_payable",
+      "change_in_operating_working_capital": "current_owc - previous_owc",
+      "owner_earnings_capex": "capital_expenditures + intangible_purchases",
+      "owner_earnings": "net_income + depreciation_amortization - owner_earnings_capex - change_in_operating_working_capital"
+    },
+    "missing_intangible_purchases_auto_zero": false,
+    "manual_zero_confirmation_required": true
+  },
+  "market_refresh": {
+    "status": "PASS",
+    "shares_priority": [
+      "manual",
+      "existing_share_snapshot",
+      "sec_share_provider",
+      "review_required"
+    ],
+    "net_debt_from_calculation_stage_when_available": true
+  },
+  "real_asml_observation": {
+    "status": "PASS_WITH_REVIEW_GAPS",
+    "market_status": "REVIEW_REQUIRED",
+    "valuation_status": "READY_FOR_PREVIEW",
+    "market_cap": "334050000000",
+    "market_cap_currency": "EUR",
+    "enterprise_value": null,
+    "enterprise_value_reason": [
+      "MISSING_NET_DEBT"
+    ],
+    "visible_values": {
+      "market_cap": "334,0 Mrd. EUR",
+      "latest_fy_pe": "34,76x",
+      "latest_fy_pb": "17,03x",
+      "latest_fy_p_ocf": "26,39x",
+      "latest_fy_p_fcf": "30,14x",
+      "fair_pe": "7,50x",
+      "multiplicator_fair_price_per_share": "183,4 EUR"
+    },
+    "review_or_unavailable_values": {
+      "owner_earnings": [
+        "MISSING_OWNER_EARNINGS_CAPEX"
+      ],
+      "cost_of_equity": [
+        "MISSING_DISCOUNT_INPUT"
+      ],
+      "terminal_value": [
+        "MISSING_LAST_OWNER_EARNINGS"
+      ],
+      "fair_value": [
+        "MISSING_EQUITY_VALUE_OR_SHARES"
+      ],
+      "enterprise_value": [
+        "MISSING_NET_DEBT"
+      ]
+    }
+  },
+  "snapshot_persistence": {
+    "status": "PASS",
+    "book_stage_snapshot_persisted": true,
+    "immutable_snapshots_not_overwritten": true,
+    "valuation_created_at_only_idempotency": true,
+    "stage_snapshot_idempotency": true
+  },
+  "tests": {
+    "status": "PASS",
+    "command": "pytest -q",
+    "result": "232 passed in 2.57s"
+  },
+  "app_smoke": {
+    "status": "PASS",
+    "streamlit_command": "streamlit run app.py --server.headless true --server.port 8514 --browser.gatherUsageStats false",
+    "http_status": 200,
+    "imports": {
+      "app.py": "PASS",
+      "pages/0_Unternehmen.py": "PASS",
+      "pages/1_Datenimport.py": "PASS",
+      "pages/2_Manuelle_Daten.py": "PASS",
+      "pages/3_Analyse.py": "PASS",
+      "pages/4_Kennzahlen.py": "PASS"
+    }
+  },
+  "next_step": "Manual app test of productive valuation UI. No new engine phase."
+}
