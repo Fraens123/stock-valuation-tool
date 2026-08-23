@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -68,6 +69,40 @@ def _taxonomy(fact: FinancialFactSnapshot) -> str:
     return _clean(fact.provider).lower()
 
 
+def _provider_family(provider: str | None) -> str:
+    normalized = _clean(provider).lower()
+    if normalized in {"sec_companyfacts", "sec_filing_xbrl"}:
+        return "sec"
+    return normalized
+
+
+def _normal_fiscal_year_end(facts: list[FinancialFactSnapshot]) -> tuple[int, int] | None:
+    if not facts:
+        return None
+    counts = Counter((fact.period_end.month, fact.period_end.day) for fact in facts)
+    return counts.most_common(1)[0][0]
+
+
+def _effective_year_facts(
+    year_facts: list[FinancialFactSnapshot],
+    fiscal_year_end: tuple[int, int] | None,
+) -> list[FinancialFactSnapshot]:
+    """Prefer the company's normal fiscal-year end over opening/restatement instants.
+
+    Annual XBRL can contain an opening balance (for example 1 January) and the actual fiscal-year
+    end in the same calendar year. When the normal fiscal-year-end date is present, the opening
+    instant is not a second fiscal year and must not create a false duplicate warning.
+    """
+    if fiscal_year_end is None:
+        return year_facts
+    matching = [
+        fact
+        for fact in year_facts
+        if (fact.period_end.month, fact.period_end.day) == fiscal_year_end
+    ]
+    return matching or year_facts
+
+
 def _compress_sequence(year_to_field: dict[int, str]) -> str:
     if not year_to_field:
         return "—"
@@ -132,11 +167,11 @@ def audit_history_mapping(
 ) -> HistoryMappingAudit:
     """Audit longitudinal mapping consistency without network access or semantic guessing.
 
-    PASS means the requested history is complete and uses one provider, currency, taxonomy and
-    original provider/XBRL field. REVIEW means the series is complete but one of those mapping
-    properties changes (or two fiscal period ends fall in the same year). GAP means at least one
-    requested fiscal year has no value. A REVIEW/GAP is a prompt for inspection, not proof that the
-    reported number is wrong.
+    PASS means the requested history is complete and uses one accounting-source family, currency,
+    taxonomy and original provider/XBRL field. SEC Company Facts and an original SEC filing are one
+    source family; the latter is merely a fallback extraction path. REVIEW means the series is
+    complete but a mapping property changes. GAP means at least one requested fiscal year has no
+    value. REVIEW/GAP is a prompt for inspection, not proof that a reported number is wrong.
     """
     requested_years = max(1, int(years))
     facts = [
@@ -156,6 +191,7 @@ def audit_history_mapping(
             rows=(),
         )
 
+    fiscal_year_end = _normal_fiscal_year_end(facts)
     last_year = max(fact.period_end.year for fact in facts)
     first_year = last_year - requested_years + 1
     target_years = tuple(range(first_year, last_year + 1))
@@ -171,18 +207,26 @@ def audit_history_mapping(
         for fact in metric_facts:
             by_year.setdefault(fact.period_end.year, []).append(fact)
 
-        present_years = set(by_year)
-        missing_years = tuple(year for year in target_years if year not in present_years)
-        duplicate_years = tuple(
-            year for year, year_facts in sorted(by_year.items()) if len(year_facts) > 1
-        )
-
-        # For display continuity use the latest fiscal period end within a calendar year. Any
-        # duplicate-year situation is separately surfaced as REVIEW and is never silently ignored.
-        representative_by_year = {
-            year: sorted(year_facts, key=lambda fact: (fact.period_end, fact.id))[-1]
+        effective_by_year = {
+            year: _effective_year_facts(year_facts, fiscal_year_end)
             for year, year_facts in by_year.items()
         }
+        present_years = {year for year, year_facts in effective_by_year.items() if year_facts}
+        missing_years = tuple(year for year in target_years if year not in present_years)
+        duplicate_years = tuple(
+            year
+            for year, year_facts in sorted(effective_by_year.items())
+            if len({fact.period_end for fact in year_facts}) > 1
+        )
+
+        representative_by_year = {
+            year: sorted(year_facts, key=lambda fact: (fact.period_end, fact.id))[-1]
+            for year, year_facts in effective_by_year.items()
+            if year_facts
+        }
+        effective_metric_facts = [
+            fact for year_facts in effective_by_year.values() for fact in year_facts
+        ]
         year_to_field = {
             year: _clean(fact.provider_field, _clean(fact.provider))
             for year, fact in representative_by_year.items()
@@ -192,13 +236,14 @@ def audit_history_mapping(
             sorted(
                 {
                     _clean(fact.provider_field, _clean(fact.provider))
-                    for fact in metric_facts
+                    for fact in effective_metric_facts
                 }
             )
         )
-        providers = tuple(sorted({_clean(fact.provider) for fact in metric_facts}))
-        currencies = tuple(sorted({_clean(fact.currency) for fact in metric_facts}))
-        taxonomies = tuple(sorted({_taxonomy(fact) for fact in metric_facts}))
+        providers = tuple(sorted({_clean(fact.provider) for fact in effective_metric_facts}))
+        provider_families = {_provider_family(fact.provider) for fact in effective_metric_facts}
+        currencies = tuple(sorted({_clean(fact.currency) for fact in effective_metric_facts}))
+        taxonomies = tuple(sorted({_taxonomy(fact) for fact in effective_metric_facts}))
         change_years = _change_years(year_to_field)
 
         reasons: list[str] = []
@@ -206,13 +251,13 @@ def audit_history_mapping(
             reasons.append("fehlende Jahre: " + ", ".join(str(year) for year in missing_years))
         if duplicate_years:
             reasons.append(
-                "mehrere Geschäftsjahres-Enden im selben Jahr: "
+                "mehrere echte Geschäftsjahres-Enden im selben Jahr: "
                 + ", ".join(str(year) for year in duplicate_years)
             )
         if len(provider_fields) > 1:
             reasons.append(f"Originalfeld wechselte ({len(provider_fields)} Varianten)")
-        if len(providers) > 1:
-            reasons.append("Quelle wechselte: " + ", ".join(providers))
+        if len(provider_families) > 1:
+            reasons.append("Quellenfamilie wechselte: " + ", ".join(sorted(provider_families)))
         if len(currencies) > 1:
             reasons.append("Währung wechselte: " + ", ".join(currencies))
         if len(taxonomies) > 1:
@@ -223,7 +268,7 @@ def audit_history_mapping(
         elif (
             duplicate_years
             or len(provider_fields) > 1
-            or len(providers) > 1
+            or len(provider_families) > 1
             or len(currencies) > 1
             or len(taxonomies) > 1
         ):
