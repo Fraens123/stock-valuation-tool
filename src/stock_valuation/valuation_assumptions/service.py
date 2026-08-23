@@ -3,12 +3,16 @@ from __future__ import annotations
 from dataclasses import asdict
 from decimal import Decimal
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from stock_valuation.database.models import Analysis, ValuationAssumption
 from stock_valuation.valuation.dcf import equity_dcf
 from stock_valuation.valuation.models import DCFScenario, MarketSnapshotInput, NormalizedValue, stable_hash
 from stock_valuation.valuation.summary import dcf_summary
 from stock_valuation.valuation_assumptions.cashflow import assess_fcf_base
 from stock_valuation.valuation_assumptions.discount_rate import discount_rate_recommendation
-from stock_valuation.valuation_assumptions.evidence import evidence_from_historical_context
+from stock_valuation.valuation_assumptions.evidence import collect_forward_evidence, evidence_from_historical_context
 from stock_valuation.valuation_assumptions.growth import growth_recommendation, scenario_growths
 from stock_valuation.valuation_assumptions.models import (
     ASSUMPTION_ENGINE_VERSION,
@@ -18,16 +22,17 @@ from stock_valuation.valuation_assumptions.models import (
     PROJECT_POLICY_ID,
     RECOMMENDED,
     REVIEW_REQUIRED,
+    APPROVED,
     AssumptionRecommendation,
     AssumptionSetRecommendation,
     ScenarioAssumptionRecommendation,
 )
 from stock_valuation.valuation_assumptions.policy import (
-    DEFAULT_BEAR_DISCOUNT_RATE,
     DEFAULT_BEAR_TERMINAL_GROWTH,
-    DEFAULT_BULL_DISCOUNT_RATE,
     DEFAULT_BULL_TERMINAL_GROWTH,
+    DISCOUNT_RATE_SCENARIO_SPREAD,
     DEFAULT_PROJECTION_YEARS,
+    TERMINAL_GROWTH_SCENARIO_SPREAD,
 )
 from stock_valuation.valuation_assumptions.terminal_growth import terminal_growth_recommendation
 
@@ -39,12 +44,16 @@ def build_assumption_set(
     normalized_fcf: dict,
     historical_context: dict,
     quality_context: dict,
+    additional_evidence=(),
+    approved_assumptions: dict[str, ValuationAssumption] | None = None,
 ) -> AssumptionSetRecommendation:
-    evidence = evidence_from_historical_context(ticker, historical_context)
-    fcf_base = assess_fcf_base(normalized_fcf)
+    approved_assumptions = approved_assumptions or {}
+    evidence = evidence_from_historical_context(ticker, historical_context) + tuple(additional_evidence)
+    fcf_base = _apply_manual_approval(assess_fcf_base(normalized_fcf), approved_assumptions.get("base_fcf"))
     growth = growth_recommendation(evidence)
-    discount = discount_rate_recommendation()
-    terminal = terminal_growth_recommendation(discount.recommended_value or Decimal("0"))
+    growth = _apply_manual_approval(growth, approved_assumptions.get("growth_rate"))
+    discount = discount_rate_recommendation(approved_assumptions.get("discount_rate"))
+    terminal = terminal_growth_recommendation(discount.approved_value or discount.recommended_value or Decimal("0"), approved_assumptions.get("terminal_growth_rate"))
     projection_years = AssumptionRecommendation(
         "projection_years",
         Decimal(DEFAULT_PROJECTION_YEARS),
@@ -106,6 +115,29 @@ def build_assumption_set(
     )
 
 
+def build_assumption_set_for_analysis(
+    session: Session,
+    analysis: Analysis,
+    *,
+    ticker: str,
+    normalized_fcf: dict,
+    historical_context: dict,
+    quality_context: dict,
+    latest_actuals: dict[str, dict],
+) -> AssumptionSetRecommendation:
+    approvals = _manual_approvals(session, analysis)
+    forward_evidence = collect_forward_evidence(session, analysis, latest_actuals=latest_actuals)
+    return build_assumption_set(
+        ticker=ticker,
+        analysis_as_of_date=analysis.as_of_date.isoformat(),
+        normalized_fcf=normalized_fcf,
+        historical_context=historical_context,
+        quality_context=quality_context,
+        additional_evidence=forward_evidence,
+        approved_assumptions=approvals,
+    )
+
+
 def preview_scenarios(
     assumption_set: AssumptionSetRecommendation,
     market: MarketSnapshotInput,
@@ -162,16 +194,24 @@ def _scenarios(
         growths = (None, None, None)
     else:
         growths = scenario_growths(base_growth, evidence)
-    discounts = (
-        DEFAULT_BEAR_DISCOUNT_RATE,
-        discount.recommended_value,
-        DEFAULT_BULL_DISCOUNT_RATE,
-    )
-    terminal_growths = (
-        DEFAULT_BEAR_TERMINAL_GROWTH,
-        terminal.recommended_value,
-        DEFAULT_BULL_TERMINAL_GROWTH,
-    )
+    base_discount = discount.approved_value or discount.recommended_value
+    if base_discount is None:
+        discounts = (None, None, None)
+    else:
+        discounts = (
+            base_discount + DISCOUNT_RATE_SCENARIO_SPREAD,
+            base_discount,
+            max(Decimal("0"), base_discount - DISCOUNT_RATE_SCENARIO_SPREAD),
+        )
+    base_terminal = terminal.approved_value or terminal.recommended_value
+    if base_terminal is None:
+        terminal_growths = (None, None, None)
+    else:
+        terminal_growths = (
+            max(Decimal("0"), base_terminal - TERMINAL_GROWTH_SCENARIO_SPREAD),
+            base_terminal,
+            base_terminal + TERMINAL_GROWTH_SCENARIO_SPREAD,
+        )
     scenarios = []
     for name, growth_value, discount_value, terminal_value in zip(
         ("bear", "base", "bull"), growths, discounts, terminal_growths
@@ -216,3 +256,47 @@ def _overall_confidence(values: tuple[str, ...]) -> str:
     priority = {"VERY_LOW": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
     inverse = {value: key for key, value in priority.items()}
     return inverse[min(priority.get(value, 0) for value in values)]
+
+
+def _manual_approvals(session: Session, analysis: Analysis) -> dict[str, ValuationAssumption]:
+    rows = session.scalars(
+        select(ValuationAssumption).where(
+            ValuationAssumption.analysis_id == analysis.id,
+            ValuationAssumption.method == "equity_dcf",
+            ValuationAssumption.scenario == "base",
+            ValuationAssumption.source_type.in_(("MANUAL_APPROVED", "MANUAL_APPROVED_OVERRIDE")),
+        )
+    ).all()
+    return {row.key: row for row in rows}
+
+
+def _apply_manual_approval(
+    recommendation: AssumptionRecommendation,
+    manual: ValuationAssumption | None,
+) -> AssumptionRecommendation:
+    if manual is None or manual.value is None:
+        return recommendation
+    if manual.source_type == "MANUAL_APPROVED_OVERRIDE" and not manual.note:
+        return AssumptionRecommendation(
+            **{
+                **recommendation.__dict__,
+                "warnings": recommendation.warnings + ("MANUAL_OVERRIDE_NOTE_REQUIRED",),
+                "requires_review": True,
+            }
+        )
+    return AssumptionRecommendation(
+        assumption_key=recommendation.assumption_key,
+        recommended_value=recommendation.recommended_value,
+        unit=recommendation.unit,
+        status=APPROVED,
+        policy_id=recommendation.policy_id,
+        policy_version=recommendation.policy_version,
+        evidence_refs=recommendation.evidence_refs + (f"valuation_assumption:{manual.id}",),
+        reasoning_summary=recommendation.reasoning_summary,
+        confidence=recommendation.confidence,
+        warnings=(),
+        requires_review=False,
+        source_type=manual.source_type or "MANUAL_APPROVED",
+        approved_value=Decimal(manual.value),
+        primary_anchor=recommendation.primary_anchor,
+    )

@@ -106,6 +106,7 @@ def build_audit() -> dict:
     companies: dict[str, dict] = {}
     review_required: list[str] = []
     blockers: list[str] = []
+    analysis_approval_status: dict[str, str] = {}
 
     for ticker in TICKERS:
         company_payload = valuation_audit["companies"][ticker]
@@ -214,6 +215,9 @@ def build_audit() -> dict:
         )
         if assumption_set.requires_review:
             review_required.append(f"{ticker}: {','.join(assumption_set.warnings)}")
+            analysis_approval_status[ticker] = "REVIEW_REQUIRED"
+        else:
+            analysis_approval_status[ticker] = "APPROVED_READY"
         companies[ticker] = {
             "company": markets[ticker].company,
             "assumption_set": asdict(assumption_set),
@@ -232,13 +236,15 @@ def build_audit() -> dict:
         "bank/insurance valuation",
         "cycle timing",
     ]
-    decision = (
-        "NO-GO – ASSUMPTION APPROVAL REQUIRED"
-        if review_required or blockers
-        else "GO – VALUATION ASSUMPTION ENGINE V1 FROZEN"
+    engine_decision = (
+        "NO-GO – VALUATION ASSUMPTION ENGINE V1"
+        if blockers
+        else "GO – VALUATION ASSUMPTION ENGINE V1 PRODUCTION READY / FROZEN"
     )
     return {
-        "decision": decision,
+        "decision": engine_decision,
+        "engine_decision": engine_decision,
+        "analysis_approval_status": analysis_approval_status,
         "assumption_engine_version": ASSUMPTION_ENGINE_VERSION,
         "policy_version": ASSUMPTION_POLICY_VERSION,
         "companies": companies,
@@ -277,7 +283,7 @@ def _markdown(payload: dict) -> str:
     lines = [
         "# VALUATION ASSUMPTION ENGINE AUDIT",
         "",
-        f"Decision: **{payload['decision']}**",
+        f"ENGINE_DECISION: **{payload['engine_decision']}**",
         "",
         "## 1. Executive Summary",
         "",
@@ -316,7 +322,9 @@ def _markdown(payload: dict) -> str:
         "",
         "## 8. Forward Estimates / Guidance",
         "",
-        "- Supported as point-in-time evidence when persisted; diagnostics found no approved forward evidence in current CSV artifacts.",
+        "- Supported as point-in-time evidence when persisted.",
+        "- Productive service path integrates EstimateSnapshot and GuidanceSnapshot through build_assumption_set_for_analysis.",
+        "- Current CSV diagnostics found no approved forward evidence in the frozen artifacts.",
         "",
         "## 9. Margin Context",
         "",
@@ -369,6 +377,7 @@ def _markdown(payload: dict) -> str:
                 f"- projection years: {assumption_set['projection_years_recommendation']['recommended_value']}",
                 f"- confidence: {assumption_set['confidence']}",
                 f"- review required: {assumption_set['requires_review']}",
+                f"- analysis approval status: {payload['analysis_approval_status'][ticker]}",
                 f"- warnings: {', '.join(assumption_set['warnings']) or 'None'}",
                 f"- preview fair value bear/base/bull: {preview['bear'].get('fair_value_per_unit')} / {preview['base'].get('fair_value_per_unit')} / {preview['bull'].get('fair_value_per_unit')}",
                 f"- generic base fair value: {company['generic'].get('base')}",
@@ -396,7 +405,8 @@ def _markdown(payload: dict) -> str:
             "",
             "## 24. GO / NO-GO",
             "",
-            f"- {payload['decision']}",
+            f"- ENGINE_DECISION: {payload['engine_decision']}",
+            "- Individual company analyses may remain REVIEW_REQUIRED until user approval/override.",
             "",
             "## Deferred",
             "",

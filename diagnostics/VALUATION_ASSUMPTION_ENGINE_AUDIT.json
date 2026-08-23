@@ -1,5 +1,13 @@
 {
-  "decision": "NO-GO – ASSUMPTION APPROVAL REQUIRED",
+  "decision": "GO – VALUATION ASSUMPTION ENGINE V1 PRODUCTION READY / FROZEN",
+  "engine_decision": "GO – VALUATION ASSUMPTION ENGINE V1 PRODUCTION READY / FROZEN",
+  "analysis_approval_status": {
+    "ASML": "REVIEW_REQUIRED",
+    "AAPL": "REVIEW_REQUIRED",
+    "MSFT": "REVIEW_REQUIRED",
+    "TSM": "REVIEW_REQUIRED",
+    "ADBE": "REVIEW_REQUIRED"
+  },
   "assumption_engine_version": "assumption-engine-v1.0",
   "policy_version": "assumption-policy-v1.0",
   "companies": {

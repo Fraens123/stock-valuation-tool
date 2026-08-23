@@ -1,0 +1,13 @@
+{
+  "blockers": [],
+  "checks": {
+    "approval_and_recommendation_separate": true,
+    "approve_recommended_value_records_hash": true,
+    "manual_approvals_used_in_service_path": true,
+    "override_preserves_recommendation": true,
+    "override_requires_note": true,
+    "scenario_spreads_derived_from_approved_base": true,
+    "stale_approval_blocked": true
+  },
+  "decision": "GO – ASSUMPTION APPROVAL WORKFLOW READY"
+}

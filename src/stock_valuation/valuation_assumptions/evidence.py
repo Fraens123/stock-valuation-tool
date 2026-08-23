@@ -6,6 +6,10 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from stock_valuation.analyses.estimate_service import (
+    estimate_period_type,
+    infer_fiscal_year_end_month_day,
+)
 from stock_valuation.database.models import Analysis, EstimateSnapshot, GuidanceSnapshot
 from stock_valuation.valuation_assumptions.models import (
     AVAILABLE,
@@ -101,49 +105,63 @@ def evidence_from_historical_context(ticker: str, context: dict) -> tuple[Assump
     return tuple(output)
 
 
-def collect_forward_evidence(session: Session, analysis: Analysis) -> tuple[AssumptionEvidence, ...]:
+def collect_forward_evidence(
+    session: Session,
+    analysis: Analysis,
+    *,
+    latest_actuals: dict[str, dict] | None = None,
+) -> tuple[AssumptionEvidence, ...]:
     output: list[AssumptionEvidence] = []
+    latest_actuals = latest_actuals or {}
+    fiscal_year_end = infer_fiscal_year_end_month_day([])
     estimates = session.scalars(select(EstimateSnapshot).where(EstimateSnapshot.analysis_id == analysis.id)).all()
     for row in estimates:
         source_date = row.retrieved_at.date() if row.retrieved_at else analysis.as_of_date
-        status = AVAILABLE if source_date <= analysis.as_of_date else LOOKAHEAD_BLOCKED
+        period_type = _period_type(row.period, fiscal_year_end=fiscal_year_end)
+        status = _forward_status(source_date, analysis.as_of_date, period_type)
         for field, value in (("low", row.low), ("average", row.average), ("high", row.high)):
             evidence_id = f"estimate:{row.id}:{row.metric}:{row.period}:{field}"
+            growth_value, growth_note = _derive_forward_growth(row.metric, value, row.unit, row.currency, latest_actuals)
+            metric = f"forward_{row.metric}_growth_{field}" if growth_value is not None else row.metric
             output.append(
                 AssumptionEvidence(
                     evidence_id,
-                    row.metric,
-                    decimal_or_none(value),
-                    row.unit or "",
+                    metric,
+                    growth_value if growth_value is not None else decimal_or_none(value),
+                    "decimal_ratio" if growth_value is not None else row.unit or "",
                     row.period,
-                    field,
+                    f"{field}:{period_type}",
                     "ANALYST_ESTIMATE",
                     evidence_id,
                     source_date.isoformat(),
                     status,
                     MEDIUM if row.analyst_count and row.analyst_count >= 5 else LOW,
-                    f"provider={row.provider or ''};analyst_count={row.analyst_count or ''}",
+                    f"provider={row.provider or ''};analyst_count={row.analyst_count or ''};{growth_note}",
                 )
             )
     guidance = session.scalars(select(GuidanceSnapshot).where(GuidanceSnapshot.analysis_id == analysis.id)).all()
     for row in guidance:
         source_date = row.publication_date or analysis.as_of_date
-        status = AVAILABLE if source_date <= analysis.as_of_date else LOOKAHEAD_BLOCKED
+        period_type = _period_type(row.period, fiscal_year_end=fiscal_year_end)
+        status = _forward_status(source_date, analysis.as_of_date, period_type)
         for field, value in (("low", row.low), ("point_estimate", row.point_estimate), ("high", row.high)):
             evidence_id = f"guidance:{row.id}:{row.metric}:{row.period}:{field}"
+            growth_value, growth_note = _derive_forward_growth(row.metric, value, row.unit, row.currency, latest_actuals)
+            metric = f"forward_{row.metric}_growth_{field}" if growth_value is not None else row.metric
             output.append(
                 AssumptionEvidence(
                     evidence_id,
-                    row.metric,
-                    decimal_or_none(value),
-                    row.unit or "",
+                    metric,
+                    growth_value if growth_value is not None else decimal_or_none(value),
+                    "decimal_ratio" if growth_value is not None else row.unit or "",
                     row.period,
-                    field,
+                    f"{field}:{period_type}",
                     "MANAGEMENT_GUIDANCE",
                     evidence_id,
                     source_date.isoformat(),
                     status,
                     MEDIUM,
+                    growth_note,
                 )
             )
     return tuple(output)
@@ -151,3 +169,48 @@ def collect_forward_evidence(session: Session, analysis: Analysis) -> tuple[Assu
 
 def date_from_iso(value: str) -> date:
     return datetime.fromisoformat(value).date()
+
+
+def _period_type(period: str, *, fiscal_year_end: tuple[int, int] | None) -> str:
+    normalized = (period or "").upper()
+    if normalized.startswith("FY") or "FULL" in normalized or "YEAR" in normalized:
+        return "annual"
+    classified = estimate_period_type(period, fiscal_year_end=fiscal_year_end)
+    if classified == "Jahr":
+        return "annual"
+    if classified == "Quartal":
+        return "quarterly"
+    return "unknown"
+
+
+def _forward_status(source_date: date, as_of_date: date, period_type: str) -> str:
+    if source_date > as_of_date:
+        return LOOKAHEAD_BLOCKED
+    if period_type == "annual":
+        return AVAILABLE
+    if period_type == "quarterly":
+        return "NOT_USED_FOR_ANNUAL_DCF_GROWTH"
+    return "FORWARD_PERIOD_TYPE_UNCERTAIN"
+
+
+def _derive_forward_growth(
+    metric: str,
+    estimate_value,
+    unit: str | None,
+    currency: str | None,
+    latest_actuals: dict[str, dict],
+) -> tuple[Decimal | None, str]:
+    estimate = decimal_or_none(estimate_value)
+    actual = latest_actuals.get(metric)
+    if estimate is None or actual is None:
+        return None, "forward_growth_unavailable"
+    actual_value = decimal_or_none(actual.get("value"))
+    if actual_value is None or actual_value == 0:
+        return None, "reference_level_unavailable"
+    actual_unit = actual.get("unit")
+    actual_currency = actual.get("currency")
+    if actual_unit and unit and actual_unit != unit:
+        return None, "unit_mismatch"
+    if actual_currency and currency and actual_currency != currency:
+        return None, "currency_mismatch"
+    return estimate / actual_value - Decimal("1"), "derived_forward_growth=estimate/reference_level-1"

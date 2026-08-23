@@ -303,6 +303,25 @@ class ValuationAssumption(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class AssumptionApprovalRecord(Base):
+    __tablename__ = "assumption_approvals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id"), index=True)
+    method: Mapped[str] = mapped_column(String(80), index=True)
+    scenario: Mapped[str] = mapped_column(String(40), default="base", index=True)
+    key: Mapped[str] = mapped_column(String(160), index=True)
+    recommended_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    approved_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 8), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(80), index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommendation_inputs_hash: Mapped[str] = mapped_column(String(128), index=True)
+    policy_version: Mapped[str] = mapped_column(String(80), index=True)
+    engine_version: Mapped[str] = mapped_column(String(80), index=True)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ValuationResult(Base):
     __tablename__ = "valuation_results"
 

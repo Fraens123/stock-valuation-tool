@@ -29,7 +29,17 @@ def growth_recommendation(evidence: tuple[AssumptionEvidence, ...]) -> Assumptio
     primary_anchor = ""
     selected: Decimal | None = None
     evidence_refs: list[str] = []
-    if anchors.get("free_cash_flow", {}).get("cagr"):
+    forward_revenue = _forward_values(evidence, "forward_revenue_growth_average")
+    if forward_revenue:
+        selected, ref = forward_revenue[-1]
+        primary_anchor = "forward analyst revenue growth average"
+        evidence_refs.append(ref)
+        historical = _historical_central_growth(anchors)
+        if historical is not None and abs(historical - selected) >= Decimal("0.08"):
+            warnings.append("FORWARD_HISTORICAL_CONFLICT_REVIEW")
+        if not _fcf_margin_stable(evidence):
+            warnings.append("FORWARD_REVENUE_PROXY_MARGIN_REVIEW")
+    elif anchors.get("free_cash_flow", {}).get("cagr"):
         selected, ref = _latest_window(anchors["free_cash_flow"]["cagr"])
         primary_anchor = "historical FCF CAGR"
         evidence_refs.append(ref)
@@ -68,6 +78,7 @@ def growth_recommendation(evidence: tuple[AssumptionEvidence, ...]) -> Assumptio
     if negative_fcf and negative_fcf > 0:
         warnings.append("NEGATIVE_FCF_YEARS_REVIEW")
     history_years = len({item.period for item in evidence if item.metric in {"revenue", "free_cash_flow"} and item.value is not None})
+    history_years = _history_year_count(evidence)
     confidence = confidence_from_history(history_years, tuple(warnings))
     status = REVIEW_REQUIRED if warnings or confidence == LOW else RECOMMENDED
     return AssumptionRecommendation(
@@ -130,3 +141,30 @@ def _negative_years(evidence: tuple[AssumptionEvidence, ...], metric: str) -> De
 def _fcf_margin_stable(evidence: tuple[AssumptionEvidence, ...]) -> bool:
     vol = _volatility(evidence, "free_cash_flow_margin")
     return vol is not None and vol <= STABLE_MARGIN_VOLATILITY_THRESHOLD
+
+
+def _forward_values(evidence: tuple[AssumptionEvidence, ...], metric: str) -> list[tuple[Decimal, str]]:
+    return [
+        (item.value, item.evidence_id)
+        for item in evidence
+        if item.metric == metric and item.status == "AVAILABLE" and item.value is not None
+    ]
+
+
+def _historical_central_growth(anchors) -> Decimal | None:
+    if anchors.get("free_cash_flow", {}).get("cagr"):
+        value, _ref = _latest_window(anchors["free_cash_flow"]["cagr"])
+        return value
+    if anchors.get("revenue", {}).get("cagr"):
+        value, _ref = _latest_window(anchors["revenue"]["cagr"])
+        return value
+    return None
+
+
+def _history_year_count(evidence: tuple[AssumptionEvidence, ...]) -> int:
+    years = {
+        item.period
+        for item in evidence
+        if item.source_type == "HISTORICAL_ANALYSIS" and item.window == "YoY" and item.period.isdigit()
+    }
+    return len(years) + 1 if years else 0
