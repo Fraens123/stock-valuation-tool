@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, list_analyses
-from stock_valuation.data.history_mapping_audit import audit_history_mapping
 from stock_valuation.data.preferred_data import load_preferred_data_states
 from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
@@ -35,24 +34,6 @@ METHOD_STATUS = {
     "implemented": "✅ AKTIV",
     "methodology_blocked": "🟡 METHODIK OFFEN",
     "data_blocked": "❌ DATEN BLOCKIERT",
-}
-DATA_STATUS_LABELS = {
-    "confirmed_override": "✅ Bestätigte Korrektur",
-    "primary_source": "✅ Primärquelle",
-    "primary_reviewed_pass": "✅ Primärquelle + Semantik geprüft",
-    "primary_semantic_review_required": "⚠️ Primärquelle – Semantik prüfen",
-    "reviewed_pass": "✅ ChatGPT PASS",
-    "legacy_primary_validated": "✅ Primärquellen-validiert",
-    "provider_unverified": "🟡 Ungeprüfter Providerwert",
-    "review_stale": "🟡 Prüfung veraltet",
-    "unclear": "⚠️ UNKLAR",
-    "review_conflict": "❌ Abweichung offen",
-    "derive_required": "🔵 selbst ableiten",
-}
-MAPPING_STATUS_LABELS = {
-    "PASS": "✅ stabil",
-    "REVIEW": "⚠️ prüfen",
-    "GAP": "🟡 Lücke",
 }
 
 
@@ -107,7 +88,9 @@ def _render_percentage_series(
         visible.sort_values("Jahr", ascending=False),
         width="stretch",
         hide_index=True,
-        column_config={value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")},
+        column_config={
+            value_label: st.column_config.NumberColumn(value_label, format="%.2f %%")
+        },
     )
 
     calculation_versions = sorted({row.calculation_version for row in series})
@@ -120,8 +103,9 @@ def _render_percentage_series(
 
 st.title("Kennzahlenanalyse")
 st.caption(
-    "Kennzahlen werden automatisch aus dem gespeicherten Analyse-Snapshot und der verifizierten "
-    "Preferred-Data-Schicht abgeleitet. Diese Seite verursacht keine externen API-Requests."
+    "Hier stehen nur die **Ergebnisse der Analyse**. Import, Quellenprüfung, 10-Jahres-Mapping, "
+    "Preferred-Data-Status und Korrekturen werden vollständig unter **Finanzdaten** erledigt. "
+    "Diese Seite verursacht keine externen API-Requests."
 )
 
 with get_session() as session:
@@ -142,7 +126,6 @@ with get_session() as session:
         st.stop()
     editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
     preferred_states = load_preferred_data_states(session, analysis_id)
-    history_audit = audit_history_mapping(session, analysis, years=10)
     header = st.columns(4)
     header[0].metric("Unternehmen", analysis.company.name)
     header[1].metric("Stichtag", str(analysis.as_of_date))
@@ -163,126 +146,6 @@ if editable and preferred_states:
         auto_calculation_error = str(exc)
 
 st.divider()
-st.subheader("Historische Datenbasis – 10-Jahres-Mapping")
-if not history_audit.rows:
-    st.warning("Für die historische Mappingprüfung sind noch keine Jahresdaten vorhanden.")
-else:
-    mapping_cols = st.columns(3)
-    mapping_cols[0].metric("Stabile Felder", history_audit.stable_count)
-    mapping_cols[1].metric("Mapping prüfen", history_audit.review_count)
-    mapping_cols[2].metric("Felder mit Lücken", history_audit.gap_count)
-    st.caption(
-        f"Prüffenster: {history_audit.first_year}–{history_audit.last_year}. "
-        "Automatisch geprüft werden Abdeckung, Originalfeld/XBRL-Tag, Quelle, Währung und Taxonomie. "
-        "Ein Tagwechsel ist ein Prüfhinweis und nicht automatisch ein Datenfehler."
-    )
-
-    mapping_has_issues = bool(history_audit.review_count or history_audit.gap_count)
-    if mapping_has_issues:
-        st.warning(
-            "Mindestens eine historische Serie hat einen Tag-/Quellenwechsel oder eine Lücke. "
-            "Die Einzeljahreswerte bleiben sichtbar, aber die langfristige Vergleichbarkeit sollte vor "
-            "einer finalen Analyse geprüft werden."
-        )
-    else:
-        st.success("Alle importierten historischen Felder sind im 10-Jahres-Fenster technisch konsistent gemappt.")
-
-    with st.expander(
-        "10-Jahres-Mapping im Detail",
-        expanded=mapping_has_issues,
-    ):
-        show_stable_mapping = st.checkbox(
-            "Auch stabile Felder anzeigen",
-            value=not mapping_has_issues,
-            key=f"show-stable-history-mapping-{analysis_id}",
-        )
-        mapping_rows = list(history_audit.rows)
-        if not show_stable_mapping:
-            mapping_rows = [row for row in mapping_rows if row.status != "PASS"]
-
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Status": MAPPING_STATUS_LABELS.get(row.status, row.status),
-                        "Interner Schlüssel": row.metric,
-                        "Abdeckung": row.coverage_label,
-                        "Fehlende Jahre": ", ".join(str(year) for year in row.missing_years) or "—",
-                        "Wechsel ab": ", ".join(str(year) for year in row.change_years) or "—",
-                        "Quelle": ", ".join(row.providers),
-                        "Währung": ", ".join(row.currencies),
-                        "Taxonomie": ", ".join(row.taxonomies),
-                        "Mapping-Verlauf": row.mapping_sequence,
-                        "Hinweis": row.reason,
-                    }
-                    for row in mapping_rows
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-
-st.divider()
-st.subheader("Berechnungsbasis – Preferred Data")
-if not preferred_states:
-    st.warning("Noch keine bevorzugten Finanzdaten vorhanden.")
-else:
-    ready_count = sum(state.calculation_ready for state in preferred_states)
-    unresolved_count = sum(
-        state.quality_status
-        in {
-            "unclear",
-            "review_conflict",
-            "review_stale",
-            "derive_required",
-            "primary_semantic_review_required",
-        }
-        for state in preferred_states
-    )
-    unverified_count = sum(state.quality_status == "provider_unverified" for state in preferred_states)
-    source_count = sum(
-        state.quality_status in {"primary_source", "primary_reviewed_pass", "confirmed_override"}
-        for state in preferred_states
-    )
-
-    cols = st.columns(4)
-    cols[0].metric("Berechnungsbereit", ready_count)
-    cols[1].metric("Ungeprüfte Providerwerte", unverified_count)
-    cols[2].metric("Unklar / blockiert", unresolved_count)
-    cols[3].metric("Primärquelle / Override", source_count)
-
-    st.caption(
-        "Priorität: bestätigter Override → Primärquelle → geprüfter Providerwert. "
-        "Berechnete Kennzahlen werden automatisch aktualisiert, wenn sich freigegebene Inputs ändern."
-    )
-
-    with st.expander("Preferred-Data-Status im Detail", expanded=False):
-        recent_states = sorted(
-            preferred_states,
-            key=lambda state: (state.fact.period_end, state.fact.metric),
-            reverse=True,
-        )
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Jahr": state.fact.period_end.year,
-                        "Metrik": state.fact.metric,
-                        "Verwendete Quelle": state.fact.provider,
-                        "Status": DATA_STATUS_LABELS.get(state.quality_status, state.quality_status),
-                        "Berechnungsbereit": "Ja" if state.calculation_ready else "Nein",
-                        "Review": state.review_verdict,
-                        "Entscheidung": state.review_decision,
-                        "Begründung": state.reason,
-                    }
-                    for state in recent_states
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-
-st.divider()
 st.subheader("Kapitel 2 – Ertrag und Rentabilität")
 st.caption(
     "Methodisch freigegebene Kennzahlen werden automatisch aus Preferred Data berechnet. "
@@ -290,7 +153,10 @@ st.caption(
 )
 
 if auto_calculation_error:
-    st.warning(auto_calculation_error)
+    st.warning(
+        auto_calculation_error
+        + " Prüfe den Importstatus unter **Finanzdaten**; dort stehen alle offenen Daten-/Mappingfälle."
+    )
 elif not editable:
     st.caption(
         "Die Analyse ist eingefroren. Angezeigt werden die mit dieser Revision gespeicherten "
