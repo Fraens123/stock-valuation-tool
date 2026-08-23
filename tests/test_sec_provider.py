@@ -70,3 +70,56 @@ def test_sec_normalizer_uses_latest_filed_value_for_same_period() -> None:
     net_income = next(fact for fact in facts if fact.metric == "net_income")
     assert net_income.value == Decimal("110")
     assert str(net_income.filing_date) == "2026-03-01"
+
+
+def test_sec_normalizer_uses_lower_priority_standard_tag_for_uncovered_years() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "PaymentsOfDividends": {
+                    "units": {
+                        "EUR": [
+                            _entry(-100, "2017-12-31", "2018-02-01", form="20-F"),
+                            _entry(-110, "2018-12-31", "2019-02-01", form="20-F"),
+                        ]
+                    }
+                },
+                "PaymentsOfDividendsCommonStock": {
+                    "units": {
+                        "EUR": [
+                            _entry(-120, "2019-12-31", "2020-02-01", form="20-F"),
+                            _entry(-130, "2020-12-31", "2021-02-01", form="20-F"),
+                        ]
+                    }
+                },
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "dividends_paid"]
+    by_year = {fact.period_end.year: fact for fact in facts}
+
+    assert set(by_year) == {2017, 2018, 2019, 2020}
+    assert by_year[2018].provider_field == "us-gaap:PaymentsOfDividends"
+    assert by_year[2019].provider_field == "us-gaap:PaymentsOfDividendsCommonStock"
+    assert by_year[2020].value == Decimal("130")
+
+
+def test_sec_normalizer_keeps_higher_priority_tag_when_same_period_has_multiple_candidates() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {
+                    "units": {"USD": [_entry(1000, "2025-12-31", "2026-02-01")]}
+                },
+                "SalesRevenueNet": {
+                    "units": {"USD": [_entry(999, "2025-12-31", "2026-02-02")]}
+                },
+            }
+        }
+    }
+
+    facts = [fact for fact in normalize_sec_companyfacts(payload) if fact.metric == "revenue"]
+    assert len(facts) == 1
+    assert facts[0].value == Decimal("1000")
+    assert facts[0].provider_field == "us-gaap:Revenues"
