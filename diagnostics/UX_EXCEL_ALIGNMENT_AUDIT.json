@@ -1,0 +1,83 @@
+{
+  "audit": "UX_EXCEL_ALIGNMENT_AUDIT",
+  "date": "2026-08-23",
+  "verdict": "GO - EXCEL-/BUCHGEFUEHRTE DEUTSCHE ANALYSE-UX V1",
+  "scope": {
+    "changed_frozen_engines": false,
+    "changed_methodology": false,
+    "excel_used_for": [
+      "analysis_order",
+      "german_labels",
+      "didactic_explanations",
+      "mapping_documentation"
+    ],
+    "excel_not_used_for": [
+      "formula_copying",
+      "new_engine_logic",
+      "new_valuation_methodology"
+    ]
+  },
+  "artifacts": {
+    "excel_mapping": "docs/EXCEL_TO_APP_ANALYSIS_MAPPING.md",
+    "labels": "src/stock_valuation/ui/labels_de.py",
+    "info_catalog": "src/stock_valuation/ui/info_catalog.py",
+    "layout": "src/stock_valuation/ui/analysis_layout.py",
+    "view_model": "src/stock_valuation/ui/analysis_view_model.py",
+    "analysis_page": "pages/3_Analyse.py",
+    "tests": "tests/test_analysis_ux.py"
+  },
+  "gates": [
+    {
+      "name": "linear_excel_book_order",
+      "status": "PASS",
+      "evidence": "PRIMARY_ANALYSIS_ORDER has 13 ordered sections"
+    },
+    {
+      "name": "german_primary_labels",
+      "status": "PASS",
+      "evidence": "READY/REVIEW_REQUIRED/READY_FOR_PREVIEW/EV_REVIEW_REQUIRED/MISSING_NET_DEBT are translated in primary UI"
+    },
+    {
+      "name": "info_entry_coverage",
+      "status": "PASS",
+      "evidence": "tests/test_analysis_ux.py validates title and meaning for every layout point"
+    },
+    {
+      "name": "no_missing_value_zero_imputation",
+      "status": "PASS",
+      "evidence": "missing values render as Nicht verfügbar"
+    },
+    {
+      "name": "page_compile",
+      "status": "PASS",
+      "evidence": "app.py and pages 0-4 compile"
+    },
+    {
+      "name": "page_import",
+      "status": "PASS",
+      "evidence": "app.py and pages 0-4 import without exception"
+    },
+    {
+      "name": "streamlit_startup",
+      "status": "PASS",
+      "evidence": "streamlit run app.py returned HTTP 200 on localhost:8510"
+    },
+    {
+      "name": "full_testsuite",
+      "status": "PASS",
+      "evidence": "221 passed in 2.48s"
+    }
+  ],
+  "not_currently_implemented_excel_metrics": [
+    "anlage_deckung",
+    "long_term_debt_to_equity",
+    "short_term_debt_to_equity",
+    "interest_coverage",
+    "debt_per_share",
+    "net_cash_per_share",
+    "price_to_book",
+    "price_to_cash_flow",
+    "ev_to_sales",
+    "ev_to_fcf"
+  ]
+}

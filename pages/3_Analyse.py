@@ -5,66 +5,59 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 import streamlit as st
 
+from stock_valuation.analyses.service import get_analysis
 from stock_valuation.database.models import AnalysisStatus
 from stock_valuation.database.session import get_session, init_database
-from stock_valuation.analyses.service import get_analysis
+from stock_valuation.ui.analysis_layout import ANALYSIS_SECTIONS
+from stock_valuation.ui.analysis_view_model import available_years, build_analysis_view_model, table_rows
+from stock_valuation.ui.info_catalog import INFO_CATALOG, InfoEntry
+from stock_valuation.ui.labels_de import format_currency_compact_de, format_date_de, issue_label
 from stock_valuation.ui.navigation import STATUS_LABELS, current_analysis_id, render_analysis_selector, render_navigation
 from stock_valuation.valuation_assumptions.approvals import approve_recommended_value, override_assumption
 from stock_valuation.valuation_assumptions.models import AssumptionRecommendation
-from stock_valuation.workflow.service import complete_analysis_if_ready, refresh_local_analysis_stages
+from stock_valuation.workflow.service import complete_analysis_if_ready, finalization_blockers, refresh_local_analysis_stages
 
 
-STATUS_TEXT = {
-    "READY": "Bereit",
-    "READY_FOR_PREVIEW": "Preview",
-    "REVIEW_REQUIRED": "Pruefung noetig",
-    "BLOCKED": "Blockiert",
-    "NOT_RUN": "Nicht ausgefuehrt",
-    "STALE": "Veraltet",
-    "UNAVAILABLE": "Nicht verfuegbar",
-}
+st.set_page_config(page_title="Analyse", layout="wide")
+init_database()
+render_navigation()
 
 
-def _fmt(value, suffix: str = "") -> str:
-    if value in (None, ""):
-        return "-"
-    try:
-        number = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return str(value)
-    return f"{number:,.2f}{suffix}"
+def _info_button(info_key: str) -> None:
+    entry = INFO_CATALOG.get(info_key)
+    if entry is None:
+        return
+    with st.popover("ⓘ", use_container_width=False):
+        _render_info(entry)
 
 
-def _pct(value) -> str:
-    if value in (None, ""):
-        return "-"
-    return f"{Decimal(str(value)) * Decimal('100'):.1f} %"
+def _render_info(entry: InfoEntry) -> None:
+    st.markdown(f"**{entry.title}**")
+    parts = (
+        ("Was sagt die Kennzahl aus?", entry.meaning),
+        ("Wie wird sie berechnet?", entry.formula),
+        ("Warum ist sie wichtig?", entry.importance),
+        ("Wie kann man sie einordnen?", entry.interpretation),
+        ("Worauf muss man achten?", entry.watch_out),
+        ("Wie sollte die Entwicklung betrachtet werden?", entry.history),
+        ("Welche Daten verwendet die App?", entry.data_basis),
+        ("Einschränkungen / Methodik", entry.methodology_note),
+    )
+    for heading, text in parts:
+        if text:
+            st.markdown(f"**{heading}**")
+            st.write(text)
 
 
-def _recommendations(payload: dict) -> list[dict]:
-    rows = []
-    for key, label in {
-        "base_fcf": "Base FCF",
-        "growth_rate": "Growth Rate",
-        "discount_rate": "Required Return",
-        "terminal_growth_rate": "Terminal Growth",
-        "projection_years": "Projection Years",
-    }.items():
-        item = payload.get("recommendations", {}).get(key, {})
-        rows.append(
-            {
-                "key": key,
-                "Annahme": label,
-                "Empfehlung": _pct(item.get("recommended_value")) if item.get("unit") == "decimal_ratio" else _fmt(item.get("recommended_value")),
-                "Freigegeben": _pct(item.get("approved_value")) if item.get("unit") == "decimal_ratio" else _fmt(item.get("approved_value")),
-                "Confidence": item.get("confidence"),
-                "Quelle": item.get("source_type"),
-                "Status": item.get("status"),
-                "Warnings": ", ".join(item.get("warnings", ())),
-                "raw": item,
-            }
-        )
-    return rows
+def _point_label(label: str, info_key: str) -> None:
+    left, right = st.columns([0.92, 0.08])
+    left.markdown(f"**{label}**")
+    with right:
+        _info_button(info_key)
+
+
+def _section_by_key(key: str):
+    return next(section for section in ANALYSIS_SECTIONS if section.key == key)
 
 
 def _recommendation_from_payload(payload: dict) -> AssumptionRecommendation:
@@ -79,11 +72,183 @@ def _recommendation_from_payload(payload: dict) -> AssumptionRecommendation:
     )
 
 
-init_database()
-st.set_page_config(page_title="Analyse", layout="wide")
-render_navigation()
+def _parse_decimal(raw: str) -> Decimal:
+    try:
+        return Decimal(raw.strip().replace(",", "."))
+    except (InvalidOperation, AttributeError) as exc:
+        raise ValueError("Bitte einen gültigen Zahlenwert eingeben.") from exc
 
-st.title("Analyse")
+
+def _render_metric_table(section_key: str, years: list[int]) -> None:
+    section = next(item for item in vm.sections if item.key == section_key)
+    st.header(section.title)
+    st.caption(section.intro)
+    if not years:
+        st.info("Für diese Analyse sind noch keine historischen Werte verfügbar.")
+        return
+    rows = table_rows(section, years)
+    df = pd.DataFrame(rows)
+    st.dataframe(df, width="stretch", hide_index=True)
+    with st.expander("Kennzahlen erklären"):
+        for point in section.points:
+            _point_label(point.label, point.info_key)
+            if point.reason:
+                st.caption(point.reason)
+
+
+def _render_market_and_multiples(years: list[int]) -> None:
+    section = next(item for item in vm.sections if item.key == "valuation_multiples")
+    st.header(section.title)
+    st.caption(section.intro)
+    market_keys = {"market_cap", "enterprise_value"}
+    market_points = [point for point in section.points if point.key in market_keys]
+    cols = st.columns(2)
+    for idx, point in enumerate(market_points):
+        with cols[idx % 2]:
+            _point_label(point.label, point.info_key)
+            st.metric(point.label, point.latest_value)
+            if point.reason:
+                st.warning(point.reason)
+    for note in vm.market_notes:
+        st.caption(note)
+    multiple_points = [point for point in section.points if point.key not in market_keys]
+    rows = []
+    for point in multiple_points:
+        rows.append(
+            {
+                "Kennzahl": point.label,
+                "Aktueller Wert": point.latest_value,
+                "Status": point.status_label,
+                "Hinweis": point.reason or "",
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    with st.expander("Bewertungskennzahlen erklären"):
+        for point in multiple_points:
+            _point_label(point.label, point.info_key)
+            if point.reason:
+                st.caption(point.reason)
+
+
+def _render_dcf() -> None:
+    section = next(item for item in vm.sections if item.key == "dcf")
+    st.header(section.title)
+    st.caption("Equity-Methode")
+    st.write(section.intro)
+    if state.stages["ASSUMPTIONS"].status == "REVIEW_REQUIRED":
+        st.warning("Diese Bewertung verwendet noch nicht vollständig freigegebene Annahmen.")
+    for point in section.points[:5]:
+        _point_label(point.label, point.info_key)
+        row = next((item for item in vm.assumption_rows if item["key"] == point.backend_key), None)
+        if row:
+            st.write(f"Empfehlung: **{row['Empfehlung']}** · Status: **{row['Status']}**")
+            st.caption(f"Hauptanker: {row['Hauptanker']}")
+            st.caption(row["Begründung"])
+    st.subheader("Szenarien")
+    if vm.scenario_rows:
+        st.dataframe(pd.DataFrame(vm.scenario_rows), width="stretch", hide_index=True)
+    else:
+        st.info("Noch keine Bewertungsvorschau verfügbar.")
+    st.subheader("Annahmen prüfen")
+    _render_assumption_actions()
+
+
+def _render_assumption_actions() -> None:
+    editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
+    if not vm.assumption_rows:
+        st.info("Bewertungsannahmen sind noch nicht berechenbar.")
+        return
+    for row in vm.assumption_rows:
+        with st.expander(row["Annahme"]):
+            _info_button(row["key"])
+            st.write(f"Empfehlung: **{row['Empfehlung']}**")
+            st.write(f"Freigegeben: **{row['Freigegeben']}**")
+            st.write(f"Status: **{row['Status']}**")
+            st.caption(row["Begründung"])
+            actions = st.columns(2)
+            if actions[0].button("Empfehlung übernehmen", key=f"approve-{row['key']}", disabled=not editable or row["raw"].get("recommended_value") is None):
+                with get_session() as session:
+                    fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                    if fresh is not None:
+                        approve_recommended_value(
+                            session,
+                            fresh,
+                            _recommendation_from_payload(row["raw"]),
+                            recommendation_inputs_hash=state.stages["ASSUMPTIONS"].payload["assumption_set"]["inputs_hash"],
+                        )
+                        st.rerun()
+            with actions[1].form(f"override-{row['key']}"):
+                value = st.text_input("Eigener Wert")
+                note = st.text_input("Begründung")
+                submitted = st.form_submit_button("Speichern", disabled=not editable)
+                if submitted:
+                    if not note.strip():
+                        st.error("Begründung ist Pflicht.")
+                    else:
+                        try:
+                            parsed = _parse_decimal(value)
+                            with get_session() as session:
+                                fresh = get_analysis(session, current_analysis_id() or analysis.id)
+                                if fresh is not None:
+                                    override_assumption(
+                                        session,
+                                        fresh,
+                                        _recommendation_from_payload(row["raw"]),
+                                        approved_value=parsed,
+                                        note=note,
+                                        recommendation_inputs_hash=state.stages["ASSUMPTIONS"].payload["assumption_set"]["inputs_hash"],
+                                    )
+                                    st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+
+
+def _render_quality() -> None:
+    section = next(item for item in vm.sections if item.key == "quality")
+    st.header(section.title)
+    st.caption(section.intro)
+    quality = state.stages["BUSINESS_QUALITY"].payload.get("result", {})
+    cols = st.columns(2)
+    with cols[0]:
+        _point_label("Unternehmensqualität", "quality_summary")
+        st.metric("Gesamtqualität", quality.get("overall_score") if quality.get("overall_score") is not None else "Nicht verfügbar")
+        st.caption(quality.get("assessment") or "")
+    with cols[1]:
+        _point_label("Datenvertrauen", "data_confidence")
+        st.write("Datenlage wird separat von der Unternehmensqualität betrachtet.")
+    components = quality.get("component_scores", [])
+    if components:
+        rows = [
+            {
+                "Bereich": item.get("component_id", "").replace("_", " ").title(),
+                "Score": item.get("score"),
+                "Status": item.get("status"),
+                "Einflussgrößen": ", ".join(item.get("contributing_metrics", ())),
+            }
+            for item in components
+        ]
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
+def _render_summary() -> None:
+    st.header("13. Zusammenfassung")
+    _info_button("summary")
+    checks = []
+    if state.stages["FINANCIAL_DATA"].status == "REVIEW_REQUIRED":
+        checks.append("Einzelne Finanzdaten benötigen noch eine semantische Prüfung.")
+    if vm.market_notes:
+        checks.extend(vm.market_notes)
+    if state.stages["ASSUMPTIONS"].status == "REVIEW_REQUIRED":
+        checks.append("Bewertungsannahmen müssen noch geprüft oder freigegeben werden.")
+    if checks:
+        st.subheader("Was sollte geprüft werden?")
+        for item in checks:
+            st.write(f"- {item}")
+    if vm.scenario_rows:
+        st.subheader("Bewertungsbandbreite")
+        st.dataframe(pd.DataFrame(vm.scenario_rows), width="stretch", hide_index=True)
+    st.write("Keine Kauf-, Halte- oder Verkaufsempfehlung.")
+
 
 with get_session() as session:
     analysis = render_analysis_selector(session, key="analysis-main-selector")
@@ -92,189 +257,68 @@ with get_session() as session:
         st.stop()
     state = refresh_local_analysis_stages(session, analysis)
 
-header = st.columns(7)
-header[0].metric("Unternehmen", state.company_name)
-header[1].metric("Ticker", state.ticker)
-header[2].metric("Stichtag", state.as_of_date)
-header[3].metric("Revision", f"R{state.revision_number}")
-header[4].metric("Status", STATUS_LABELS.get(analysis.status, analysis.status.value))
-market = state.stages["MARKET_DATA"].payload
-header[5].metric("Market Price", _fmt(market.get("price"), f" {market.get('trading_currency') or ''}"))
-header[6].metric("Price Date", market.get("price_date") or "-")
+vm = build_analysis_view_model(state)
 
-status_cols = st.columns(7)
-for col, stage in zip(status_cols, ("FINANCIAL_DATA", "CALCULATION", "HISTORICAL_ANALYSIS", "BUSINESS_QUALITY", "MARKET_DATA", "ASSUMPTIONS", "VALUATION")):
-    row = state.stages[stage]
-    col.metric(stage.replace("_", " ").title(), STATUS_TEXT.get(row.status, row.status))
+st.title("Analyse")
+st.caption("Die Analyse folgt der Excel-/Buchlogik von oben nach unten. Die Berechnungen stammen ausschließlich aus den freigegebenen Frozen Engines.")
 
-tabs = st.tabs(["Status", "Fundamentaldaten", "Entwicklung", "Qualität", "Markt", "Annahmen", "Bewertung", "Abschluss"])
+header = st.columns(6)
+header[0].metric("Unternehmen", vm.company_name)
+header[1].metric("Ticker", vm.ticker)
+header[2].metric("Stichtag", vm.as_of_date)
+header[3].metric("Aktueller Kurs", vm.market_price)
+header[4].metric("Währung", f"{vm.financial_currency} / {vm.trading_currency}")
+header[5].metric("Historie", vm.history_label)
 
-with tabs[0]:
-    rows = []
-    for stage, item in state.stages.items():
-        rows.append(
-            {
-                "Stage": stage,
-                "Status": STATUS_TEXT.get(item.status, item.status),
-                "Version": item.version,
-                "Snapshot ID": item.snapshot_id,
-                "Updated": item.created_at,
-                "Warnings": ", ".join(item.warnings),
-                "Blocker": ", ".join(item.blockers),
-            }
-        )
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+st.subheader("Status")
+status_cols = st.columns(len(vm.status_line))
+for col, (label, value) in zip(status_cols, vm.status_line.items()):
+    with col:
+        _point_label(label, vm.status_info_keys[label])
+        st.write(value)
 
-with tabs[1]:
-    calc = state.stages["CALCULATION"].payload
-    facts = []
-    for year, items in calc.get("base_facts", {}).items():
-        for item in items:
-            if item["metric"] in {"revenue", "operating_income", "net_income", "operating_cash_flow", "cash_and_equivalents", "shareholders_equity"}:
-                facts.append({"Jahr": int(year), "Metrik": item["metric"], "Wert": float(item["value"]) if item.get("value") is not None else None, "Einheit": item.get("currency") or item.get("unit")})
-    for item in calc.get("results", []):
-        if item["metric_id"] in {"ebitda", "free_cash_flow", "net_debt"}:
-            facts.append({"Jahr": item["fiscal_year"], "Metrik": item["metric_id"], "Wert": float(item["value"]) if item.get("value") is not None else None, "Einheit": item.get("unit")})
-    data = pd.DataFrame(facts)
-    if data.empty:
-        st.warning("Keine calculation-ready Fundamentaldaten vorhanden. Unter Finanzdaten pruefen.")
-    else:
-        st.caption(f"Historie: {len(sorted(data['Jahr'].unique()))} Jahre")
-        st.dataframe(data.sort_values(["Jahr", "Metrik"], ascending=[False, True]), width="stretch", hide_index=True)
+st.subheader("Inhaltsverzeichnis")
+st.write(" · ".join(section.title for section in ANALYSIS_SECTIONS))
 
-with tabs[2]:
-    hist = state.stages["HISTORICAL_ANALYSIS"].payload
-    years = hist.get("history_years", [])
-    st.write(f"Historie: {len(years)} Jahre" if years else "Historie nicht verfuegbar.")
-    series = hist.get("series", {})
-    for metric in ("revenue", "net_income", "free_cash_flow", "operating_margin", "net_margin", "free_cash_flow_margin"):
-        points = series.get(metric, [])
-        chart_rows = [{"Jahr": item["fiscal_year"], metric: float(item["value"])} for item in points if item.get("status") == "AVAILABLE" and item.get("value") is not None]
-        if chart_rows:
-            st.markdown(f"#### {metric}")
-            st.line_chart(pd.DataFrame(chart_rows).set_index("Jahr"))
+years = available_years(vm, default=5)
+history_options = {"5 Jahre": 5, "10 Jahre": 10, "Alle": 1000}
+selected_window = st.segmented_control("Historienanzeige", options=list(history_options), default="5 Jahre")
+years = available_years(vm, default=history_options[selected_window])
 
-with tabs[3]:
-    quality = state.stages["BUSINESS_QUALITY"].payload.get("result", {})
-    cols = st.columns(3)
-    cols[0].metric("Overall Quality Score", _fmt(quality.get("overall_score")))
-    cols[1].metric("Assessment", quality.get("assessment") or "-")
-    cols[2].metric("Data Confidence", "separat")
-    comps = quality.get("component_scores", [])
-    if comps:
-        st.dataframe(
-            pd.DataFrame(
-                {
-                    "Komponente": item["component_id"],
-                    "Score": item["score"],
-                    "Status": item["status"],
-                    "Metriken": ", ".join(item["contributing_metrics"]),
-                }
-                for item in comps
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-    if state.stages["BUSINESS_QUALITY"].payload.get("data_confidence"):
-        with st.expander("Data Confidence"):
-            st.json(state.stages["BUSINESS_QUALITY"].payload["data_confidence"])
+for key in (
+    "income_statement",
+    "balance_sheet",
+    "cash_flow",
+    "profitability",
+    "financial_stability",
+    "debt",
+    "working_capital",
+    "cashflow_quality_allocation",
+):
+    _render_metric_table(key, years)
 
-with tabs[4]:
-    if not market:
-        st.warning("Kein Market Snapshot vorhanden. Marktdaten explizit unter der Marktdaten-Funktion aktualisieren.")
-    else:
-        cols = st.columns(4)
-        cols[0].metric("Price", _fmt(market.get("price"), f" {market.get('trading_currency') or ''}"))
-        cols[1].metric("Shares", _fmt(market.get("shares_outstanding")))
-        cols[2].metric("Market Cap", _fmt(market.get("market_cap"), f" {market.get('trading_currency') or ''}"))
-        cols[3].metric("Enterprise Value", _fmt(market.get("enterprise_value"), f" {market.get('trading_currency') or ''}"))
-        st.write(f"Security Type: **{market.get('security_type') or '-'}** · Snapshot ID: `{market.get('snapshot_id')}`")
-        with st.expander("Technische Market-Provenienz"):
-            st.json(market)
+_render_market_and_multiples(years)
+_render_dcf()
+_render_quality()
+_render_summary()
 
-with tabs[5]:
-    assumptions = state.stages["ASSUMPTIONS"].payload
-    if not assumptions:
-        st.warning("Annahmen sind noch nicht berechenbar.")
-    else:
-        if any("APPROVAL_STALE" in warning for warning in assumptions.get("approval_warnings", ())):
-            st.warning("Fruehere Freigabe ist wegen geaenderter Daten oder Methodik nicht mehr gueltig.")
-        rows = _recommendations(assumptions)
-        st.dataframe(pd.DataFrame([{k: v for k, v in row.items() if k not in {"raw", "key"}} for row in rows]), width="stretch", hide_index=True)
-        editable = analysis.status in {AnalysisStatus.DRAFT, AnalysisStatus.IN_PROGRESS}
-        for row in rows:
-            with st.expander(f"{row['Annahme']} - warum diese Empfehlung?"):
-                st.write(row["raw"].get("reasoning_summary") or "-")
-                st.write(f"Primary Anchor: {row['raw'].get('primary_anchor') or '-'}")
-                st.write(f"Policy: {row['raw'].get('policy_version') or '-'}")
-                st.write(f"Warnings: {', '.join(row['raw'].get('warnings', ())) or '-'}")
-                left, right = st.columns(2)
-                if left.button("Empfehlung freigeben", key=f"approve-{row['key']}", disabled=not editable or row["raw"].get("recommended_value") is None):
-                    with get_session() as session:
-                        fresh = get_analysis(session, current_analysis_id() or analysis.id)
-                        if fresh is not None:
-                            recommendation = _recommendation_from_payload(row["raw"])
-                            approve_recommended_value(session, fresh, recommendation, recommendation_inputs_hash=assumptions["assumption_set"]["inputs_hash"])
-                            st.rerun()
-                with right.form(f"override-{row['key']}"):
-                    value = st.text_input("Override Value", key=f"override-value-{row['key']}")
-                    note = st.text_input("Begruendung", key=f"override-note-{row['key']}")
-                    submitted = st.form_submit_button("Override speichern", disabled=not editable)
-                    if submitted:
-                        if not note.strip():
-                            st.error("Begruendung ist Pflicht.")
-                        else:
-                            with get_session() as session:
-                                fresh = get_analysis(session, current_analysis_id() or analysis.id)
-                                if fresh is not None:
-                                    recommendation = _recommendation_from_payload(row["raw"])
-                                    override_assumption(session, fresh, recommendation, approved_value=Decimal(value.replace(",", ".")), note=note, recommendation_inputs_hash=assumptions["assumption_set"]["inputs_hash"])
-                                    st.rerun()
+st.header("Abschluss")
+blockers = list(finalization_blockers(state))
+if blockers:
+    st.warning("Analyse kann noch nicht final eingefroren werden.")
+    for blocker in blockers:
+        st.write(f"- {issue_label(blocker)}")
+else:
+    st.success("Alle Pflichtstufen sind bereit.")
+if st.button("Analyse abschließen und einfrieren", type="primary", disabled=bool(blockers) or analysis.status == AnalysisStatus.COMPLETED):
+    with get_session() as session:
+        fresh = get_analysis(session, current_analysis_id() or analysis.id)
+        if fresh is not None:
+            try:
+                complete_analysis_if_ready(session, fresh)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
-with tabs[6]:
-    valuation = state.stages["VALUATION"].payload
-    mode = valuation.get("mode") or ("FINAL" if state.final_valuation_snapshot_id else "PREVIEW")
-    st.subheader("Freigegebene Bewertung" if mode == "FINAL" else "Bewertungs-Preview")
-    if valuation.get("preview"):
-        rows = []
-        for scenario, item in valuation["preview"].items():
-            rows.append(
-                {
-                    "Szenario": scenario,
-                    "Fair Value": item.get("fair_value_per_unit"),
-                    "Market Price": item.get("market_price"),
-                    "Upside/Downside": item.get("upside_downside"),
-                    "Margin of Safety": item.get("margin_of_safety"),
-                    "Status": item.get("status"),
-                    "Warnings": ", ".join(item.get("warnings", ())),
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-    if valuation.get("multiples"):
-        st.markdown("#### Current Multiples")
-        st.dataframe(pd.DataFrame(valuation["multiples"]), width="stretch", hide_index=True)
-    if state.final_valuation_snapshot_id:
-        st.success(f"Final Valuation Snapshot: {state.final_valuation_snapshot_id}")
-    elif state.stages["VALUATION"].status == "READY_FOR_PREVIEW":
-        st.warning("Noch nicht final freigegeben.")
-
-with tabs[7]:
-    blockers = []
-    from stock_valuation.workflow.service import finalization_blockers
-
-    blockers = list(finalization_blockers(state))
-    if blockers:
-        st.warning("Analyse kann noch nicht final eingefroren werden.")
-        for blocker in blockers:
-            st.write(f"- {blocker}")
-    else:
-        st.success("Alle Pflichtstufen sind bereit.")
-    if st.button("Analyse abschliessen und einfrieren", type="primary", disabled=bool(blockers) or analysis.status == AnalysisStatus.COMPLETED):
-        with get_session() as session:
-            fresh = get_analysis(session, current_analysis_id() or analysis.id)
-            if fresh is not None:
-                try:
-                    complete_analysis_if_ready(session, fresh)
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
+with st.expander("Technische Details anzeigen"):
+    st.json(vm.technical_payload)
