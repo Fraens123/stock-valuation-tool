@@ -28,6 +28,10 @@ PRIMARY_SOURCE_PROVIDERS = {
 PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
     ("sec_companyfacts", "short_term_debt"),
     ("sec_filing_xbrl", "short_term_debt"),
+    ("sec_companyfacts", "depreciation_amortization"),
+    ("sec_filing_xbrl", "depreciation_amortization"),
+    ("esef_xbrl_json", "depreciation_amortization"),
+    ("esef_ixbrl", "depreciation_amortization"),
 }
 PRIMARY_SEMANTIC_PROVIDER_REVIEW_REQUIRED = {
     "sec_filing_extension",
@@ -130,6 +134,29 @@ def _finding_matches_fact(finding: AIReviewFinding, fact: FinancialFactSnapshot)
     return True
 
 
+def _unreviewed_primary_reason(fact: FinancialFactSnapshot, *, is_review_candidate: bool) -> str:
+    if is_review_candidate:
+        return (
+            "Offizieller SEC-Filing-Kandidat. Der Importer hat nur einen möglichen Mapping-/Tabellenwert "
+            "erkannt; vor Berechnungen müssen wirtschaftliche Bedeutung, Periode und Einheit gegen das "
+            "interne Feld semantisch bestätigt werden."
+        )
+    if fact.metric == "short_term_debt":
+        return (
+            "Offizielle Primärquelle, aber dieses Feld kann aus mehreren kurzfristigen "
+            "Finanzierungskomponenten bestehen. Vor Berechnungen ist eine semantische Prüfung erforderlich."
+        )
+    if fact.metric == "depreciation_amortization":
+        return (
+            "Offizielle Primärquelle, aber eine berichtete Sammelzeile für Depreciation/Amortization "
+            "kann zusätzliche Amortisations- oder andere Non-Cash-Komponenten enthalten. Vor der "
+            "Verwendung für EBITDA muss die Zeile exakt zur internen D&A-Definition passen."
+        )
+    return (
+        "Offizielle Primärquelle, aber die Feldsemantik muss vor Berechnungen zusätzlich bestätigt werden."
+    )
+
+
 def _semantic_primary_state(
     fact: FinancialFactSnapshot,
     finding: AIReviewFinding | None,
@@ -173,22 +200,11 @@ def _semantic_primary_state(
             review_verdict=finding.verdict,
             review_decision=finding.decision,
         )
-    if is_review_candidate:
-        reason = (
-            "Offizieller SEC-Filing-Kandidat. Der Importer hat nur einen möglichen Mapping-/Tabellenwert "
-            "erkannt; vor Berechnungen müssen wirtschaftliche Bedeutung, Periode und Einheit gegen das "
-            "interne Feld semantisch bestätigt werden."
-        )
-    else:
-        reason = (
-            "Offizielle Primärquelle, aber dieses Feld kann aus mehreren XBRL-Schuldenkonzepten "
-            "bestehen. Vor Berechnungen ist eine semantische Prüfung erforderlich."
-        )
     return PreferredDataState(
         fact=fact,
         quality_status="primary_semantic_review_required",
         calculation_ready=False,
-        reason=reason,
+        reason=_unreviewed_primary_reason(fact, is_review_candidate=is_review_candidate),
     )
 
 
