@@ -19,6 +19,13 @@ PRIMARY_SOURCE_PROVIDERS = {
     "sec_companyfacts",
 }
 
+# A primary source proves provenance, but not automatically that one XBRL concept has exactly the
+# same economic scope as our internal field. These provider/metric combinations therefore require
+# an explicit semantic PASS (or a confirmed manual override) before downstream calculations.
+PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
+    ("sec_companyfacts", "short_term_debt"),
+}
+
 # These definitions describe what the internal raw-data keys mean. They are intentionally
 # narrower than arbitrary provider labels so that provider fields can be rejected when their
 # economic meaning is broader or different.
@@ -79,12 +86,7 @@ def _latest_review_index(
 
 
 def _legacy_approved_metrics(session: Session, analysis_id: int) -> set[str]:
-    """Bridge the original ASML field gate into the generic preferred-data layer.
-
-    The ASML reference workflow predates ChatGPT file reviews and already performs a deterministic
-    primary-source comparison. Keeping that evidence prevents the new generic layer from making the
-    validated ASML reference case appear unverified.
-    """
+    """Bridge the original ASML field gate into the generic preferred-data layer."""
     analysis = session.get(Analysis, analysis_id)
     if analysis is None or analysis.company.ticker.upper() != "ASML":
         return set()
@@ -112,6 +114,56 @@ def _finding_matches_fact(finding: AIReviewFinding, fact: FinancialFactSnapshot)
     return True
 
 
+def _semantic_primary_state(
+    fact: FinancialFactSnapshot,
+    finding: AIReviewFinding | None,
+) -> PreferredDataState:
+    """Require a semantic review for a known ambiguous primary-source mapping."""
+    if finding is not None and _finding_matches_fact(finding, fact):
+        verdict = finding.verdict.upper()
+        if verdict == "PASS":
+            return PreferredDataState(
+                fact=fact,
+                quality_status="primary_reviewed_pass",
+                calculation_ready=True,
+                reason=(
+                    "Offizielle Primärquelle; die Zuordnung zum internen Feld wurde zusätzlich "
+                    "semantisch bestätigt."
+                ),
+                review_verdict=verdict,
+                review_decision=finding.decision,
+            )
+        return PreferredDataState(
+            fact=fact,
+            quality_status="primary_semantic_review_required",
+            calculation_ready=False,
+            reason=(
+                finding.reason
+                or "Offizielle Zahl vorhanden, aber die XBRL-Feldsemantik ist für unser internes Feld noch nicht freigegeben."
+            ),
+            review_verdict=verdict,
+            review_decision=finding.decision,
+        )
+    if finding is not None:
+        return PreferredDataState(
+            fact=fact,
+            quality_status="review_stale",
+            calculation_ready=False,
+            reason="Der letzte semantische Prüffund gehört nicht mehr exakt zum aktuellen Primärquellenwert.",
+            review_verdict=finding.verdict,
+            review_decision=finding.decision,
+        )
+    return PreferredDataState(
+        fact=fact,
+        quality_status="primary_semantic_review_required",
+        calculation_ready=False,
+        reason=(
+            "Offizielle Primärquelle, aber dieses Feld kann aus mehreren XBRL-Schuldenkonzepten bestehen. "
+            "Vor Berechnungen ist eine semantische Prüfung erforderlich."
+        ),
+    )
+
+
 def _state_for_fact(
     fact: FinancialFactSnapshot,
     finding: AIReviewFinding | None,
@@ -125,6 +177,9 @@ def _state_for_fact(
             calculation_ready=True,
             reason="Vom Nutzer bestätigter Override mit erhaltener Provider-Provenienz.",
         )
+
+    if ((fact.provider or ""), fact.metric) in PRIMARY_SEMANTIC_REVIEW_REQUIRED:
+        return _semantic_primary_state(fact, finding)
 
     if _is_primary_source(fact):
         return PreferredDataState(
@@ -233,11 +288,7 @@ def load_preferred_data_states(
     metrics: Iterable[str] | None = None,
     period_type: str = "FY",
 ) -> list[PreferredDataState]:
-    """Return the preferred stored fact plus its calculation-readiness state.
-
-    Source resolution and calculation approval are deliberately separate: Alpha Vantage may be
-    the preferred fallback source while still being blocked for calculations until verified.
-    """
+    """Return the preferred stored fact plus its calculation-readiness state."""
     facts = load_preferred_financial_facts(
         session,
         analysis_id,
