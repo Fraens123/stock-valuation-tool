@@ -17,6 +17,7 @@ PRIMARY_SOURCE_PROVIDERS = {
     "esef_xbrl_json",
     "esef_ixbrl",
     "sec_companyfacts",
+    "sec_filing_xbrl",
 }
 
 # A primary source proves provenance, but not automatically that one XBRL concept has exactly the
@@ -24,6 +25,7 @@ PRIMARY_SOURCE_PROVIDERS = {
 # an explicit semantic PASS (or a confirmed manual override) before downstream calculations.
 PRIMARY_SEMANTIC_REVIEW_REQUIRED = {
     ("sec_companyfacts", "short_term_debt"),
+    ("sec_filing_xbrl", "short_term_debt"),
 }
 
 # These definitions describe what the internal raw-data keys mean. They are intentionally
@@ -194,23 +196,15 @@ def _state_for_fact(
             fact=fact,
             quality_status="derive_required",
             calculation_ready=False,
-            reason=(
-                "Provider-EBITDA wird nicht als Berechnungsinput freigegeben. EBITDA wird später "
-                "aus verifiziertem EBIT und verifiziertem D&A selbst abgeleitet."
-            ),
-            review_verdict=finding.verdict if finding else None,
-            review_decision=finding.decision if finding else None,
+            reason="EBITDA wird für Berechnungen selbst aus EBIT + D&A abgeleitet.",
         )
 
-    if fact.provider == "alphavantage" and fact.metric in legacy_approved_metrics:
+    if fact.metric in legacy_approved_metrics:
         return PreferredDataState(
             fact=fact,
             quality_status="legacy_primary_validated",
             calculation_ready=True,
-            reason=(
-                "Alpha-Vantage-Feld wurde im bestehenden ASML-Referenzgate feldweise gegen "
-                "offizielle Primärquellen freigegeben."
-            ),
+            reason="Über die vorhandene Primärquellenvalidierung freigegeben.",
         )
 
     if finding is None:
@@ -218,7 +212,7 @@ def _state_for_fact(
             fact=fact,
             quality_status="provider_unverified",
             calculation_ready=False,
-            reason="Providerwert ist gespeichert, aber noch nicht gegen eine Primärquelle verifiziert.",
+            reason="Providerwert vorhanden, aber noch nicht gegen Primärquelle freigegeben.",
         )
 
     if not _finding_matches_fact(finding, fact):
@@ -226,7 +220,7 @@ def _state_for_fact(
             fact=fact,
             quality_status="review_stale",
             calculation_ready=False,
-            reason="Der letzte Prüffund gehört nicht mehr exakt zum aktuell bevorzugten Providerwert.",
+            reason="Der letzte Prüffund gehört nicht mehr exakt zum aktuellen Providerwert.",
             review_verdict=finding.verdict,
             review_decision=finding.decision,
         )
@@ -237,45 +231,19 @@ def _state_for_fact(
             fact=fact,
             quality_status="reviewed_pass",
             calculation_ready=True,
-            reason="Providerwert wurde im ChatGPT-Prüflauf gegen eine offizielle Primärquelle bestätigt.",
+            reason="Providerwert wurde gegen Primärquelle mit PASS bestätigt.",
             review_verdict=verdict,
             review_decision=finding.decision,
         )
-
     if verdict == "UNKLAR":
-        return PreferredDataState(
-            fact=fact,
-            quality_status="unclear",
-            calculation_ready=False,
-            reason=finding.reason or "Semantik oder Primärquellen-Zuordnung ist nicht eindeutig.",
-            review_verdict=verdict,
-            review_decision=finding.decision,
-        )
-
-    if verdict in {"WARN", "FAIL"}:
-        if finding.decision == "accepted":
-            reason = "Prüfkorrektur wurde akzeptiert, aber der bestätigte Override ist nicht bevorzugt auflösbar."
-        elif finding.decision == "rejected":
-            reason = (
-                "Der Korrekturvorschlag wurde verworfen. Das bestätigt den ursprünglichen Providerwert "
-                "nicht automatisch; für Berechnungen bleibt er gesperrt."
-            )
-        else:
-            reason = "Es liegt eine ungeklärte Abweichung zur Primärquelle vor."
-        return PreferredDataState(
-            fact=fact,
-            quality_status="review_conflict",
-            calculation_ready=False,
-            reason=reason,
-            review_verdict=verdict,
-            review_decision=finding.decision,
-        )
-
+        quality = "unclear"
+    else:
+        quality = "review_conflict"
     return PreferredDataState(
         fact=fact,
-        quality_status="provider_unverified",
+        quality_status=quality,
         calculation_ready=False,
-        reason="Kein verwertbarer Freigabestatus für diesen Providerwert.",
+        reason=finding.reason or f"ChatGPT-Prüfung: {verdict}.",
         review_verdict=verdict,
         review_decision=finding.decision,
     )
@@ -288,7 +256,6 @@ def load_preferred_data_states(
     metrics: Iterable[str] | None = None,
     period_type: str = "FY",
 ) -> list[PreferredDataState]:
-    """Return the preferred stored fact plus its calculation-readiness state."""
     facts = load_preferred_financial_facts(
         session,
         analysis_id,
@@ -305,23 +272,3 @@ def load_preferred_data_states(
         )
         for fact in facts
     ]
-
-
-def calculation_ready_fact_index(
-    session: Session,
-    analysis_id: int,
-    *,
-    metrics: Iterable[str] | None = None,
-    period_type: str = "FY",
-) -> dict[tuple[str, object], FinancialFactSnapshot]:
-    """Return only preferred facts that are explicitly safe for downstream calculations."""
-    return {
-        (state.fact.metric, state.fact.period_end): state.fact
-        for state in load_preferred_data_states(
-            session,
-            analysis_id,
-            metrics=metrics,
-            period_type=period_type,
-        )
-        if state.calculation_ready
-    }
