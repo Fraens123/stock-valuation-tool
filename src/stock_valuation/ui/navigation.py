@@ -15,15 +15,17 @@ STATUS_LABELS = {
 
 
 def render_navigation() -> None:
-    """Render the user-facing navigation without technical diagnostics pages."""
+    """Render the simplified user-facing navigation with advanced detail pages tucked away."""
     with st.sidebar:
         st.markdown("### Aktienanalyse")
-        st.page_link("app.py", label="Uebersicht")
-        st.page_link("pages/0_Unternehmen.py", label="Unternehmen")
-        st.page_link("pages/1_Datenimport.py", label="Finanzdaten")
-        st.page_link("pages/3_Analyse.py", label="Analyse")
-        st.page_link("pages/2_Manuelle_Daten.py", label="Manuelle Daten")
-        st.page_link("pages/4_Kennzahlen.py", label="Kennzahlen-Details")
+        st.page_link("app.py", label="Start")
+        st.page_link("app.py", label="Analysen")
+        with st.expander("Erweitert", expanded=False):
+            st.page_link("pages/0_Unternehmen.py", label="Unternehmen")
+            st.page_link("pages/1_Datenimport.py", label="Finanzdaten")
+            st.page_link("pages/3_Analyse.py", label="Analyse")
+            st.page_link("pages/2_Manuelle_Daten.py", label="Manuelle Daten")
+            st.page_link("pages/4_Kennzahlen.py", label="Kennzahlen-Details")
 
 
 def analysis_label(analysis) -> str:

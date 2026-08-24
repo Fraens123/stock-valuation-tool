@@ -1,0 +1,65 @@
+{
+  "status": "GO - ONE-CLICK-ANALYSE-WORKFLOW V1",
+  "scope": "Product/workflow layer only; frozen engines unchanged",
+  "implemented_components": {
+    "runner": "src/stock_valuation/workflow/analysis_runner.py",
+    "review_tasks": "src/stock_valuation/workflow/review_tasks.py",
+    "start_page": "app.py",
+    "navigation": "src/stock_valuation/ui/navigation.py",
+    "tests": "tests/test_one_click_analysis_runner.py"
+  },
+  "normal_user_flow": [
+    "select company",
+    "set analysis date",
+    "start/update analysis",
+    "review only concrete open points",
+    "open analysis report"
+  ],
+  "runner": {
+    "creates_or_reuses_editable_analysis": true,
+    "refreshes_financial_data": true,
+    "searches_missing_data_on_explicit_run": true,
+    "refreshes_market_data_on_explicit_run": true,
+    "refreshes_existing_workflow_stages": true,
+    "prepares_book_valuation": true,
+    "duplicates_engine_logic": false,
+    "external_calls_on_normal_rerun": false
+  },
+  "review_task_categories": [
+    "Daten pruefen",
+    "Marktdaten pruefen",
+    "Prognose ergaenzen",
+    "DCF-Annahme pruefen",
+    "Multiplikatorenannahme pruefen"
+  ],
+  "review_policy": {
+    "unsafe_data_auto_approved": false,
+    "not_separately_reported_imputed_to_zero": false,
+    "technical_stage_names_shown_as_primary_tasks": false,
+    "historical_detail_warnings_grouped": true
+  },
+  "real_asml_test": {
+    "company": "ASML",
+    "analysis_id": 3,
+    "as_of_date": "2026-08-24",
+    "status": "Pruefung erforderlich",
+    "ready_for_final": false,
+    "priority_review_task_count": 5,
+    "additional_hint_count": 8,
+    "warning_count": 1,
+    "priority_review_tasks": [
+      "Bewertungsannahmen bestaetigen",
+      "Abschreibungen und Amortisation 2025",
+      "Kurzfristige Finanzschulden 2025",
+      "Marktdaten pruefen",
+      "Jahresueberschuss 2027e ergaenzen"
+    ],
+    "warning": "Marktdaten konnten nicht geladen werden. Boersenplatz, Handelssymbol und Aktienzahl pruefen."
+  },
+  "verification": {
+    "py_compile": "passed",
+    "pytest": "263 passed, 1 warning",
+    "streamlit_smoke": "started without immediate startup crash on port 8503"
+  },
+  "decision": "GO - ONE-CLICK-ANALYSE-WORKFLOW V1"
+}
