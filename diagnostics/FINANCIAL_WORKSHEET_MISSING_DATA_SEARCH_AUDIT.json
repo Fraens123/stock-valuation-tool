@@ -1,0 +1,107 @@
+{
+  "status": "GO - FINANZDATEN-ARBEITSBLATT UND MISSING-DATA-SUCHE V1",
+  "scope": "UI/workflow layer only; frozen engines unchanged",
+  "worksheet": {
+    "sections": [
+      "Gewinn- und Verlustrechnung",
+      "Bilanz",
+      "Cashflow"
+    ],
+    "year_modes": [
+      "5 Jahre",
+      "10 Jahre",
+      "Alle"
+    ],
+    "cell_statuses": {
+      "AUTOMATISCH_BESTAETIGT": "✓ automatisch",
+      "PRUEFUNG_ERFORDERLICH": "⚠ prüfen",
+      "MANUELL_BESTAETIGT": "✎ manuell",
+      "MANUELL_UEBERSCHRIEBEN": "✎ überschrieben",
+      "KANDIDAT_GEFUNDEN": "? Kandidat",
+      "FEHLT": "— fehlt",
+      "NICHT_SEPARAT_BERICHTET": "n/a nicht separat berichtet"
+    }
+  },
+  "source_policy": {
+    "diagnostics_csv_used_as_product_source": false,
+    "search_order": [
+      "already imported structured primary data",
+      "SEC CompanyFacts / alternative stored facts",
+      "SEC Original Filing / XBRL",
+      "SEC table/text fallback",
+      "ESEF / official annual report where available",
+      "existing external fallback providers if user allows",
+      "manual input"
+    ],
+    "manual_override_preserves_original_fact": true
+  },
+  "short_term_debt_policy": {
+    "definition": "interest-bearing debt due within 12 months including current portion of long-term debt; excluding trade payables and lease liabilities",
+    "accepted_field_markers": [
+      "DebtCurrent",
+      "ShortTermBorrowings",
+      "CurrentBorrowings",
+      "LongTermDebtCurrent",
+      "CurrentPortionOfLongTermDebt",
+      "CurrentPortionOfLongtermBorrowings",
+      "Borrowings"
+    ],
+    "rejected_field_markers": [
+      "AccountsPayable",
+      "CurrentLiabilities",
+      "LiabilitiesCurrent",
+      "LeaseLiability",
+      "TradePayable"
+    ]
+  },
+  "asml_short_term_debt_regression": [
+    {
+      "fiscal_year": 2023,
+      "metric": "short_term_debt",
+      "label": "Kurzfristige Finanzschulden",
+      "value": "100000.00000000",
+      "currency": "EUR",
+      "provider": "sec_companyfacts",
+      "provider_field": "aggregation:us-gaap:LongTermDebtCurrent",
+      "semantic_status": "REVIEW_REQUIRED",
+      "reason": "Metric requires semantic gate and this provider_field is not in the versioned safe standard mapping registry."
+    },
+    {
+      "fiscal_year": 2024,
+      "metric": "short_term_debt",
+      "label": "Kurzfristige Finanzschulden",
+      "value": "1010300000.00000000",
+      "currency": "EUR",
+      "provider": "sec_companyfacts",
+      "provider_field": "aggregation:us-gaap:LongTermDebtCurrent",
+      "semantic_status": "REVIEW_REQUIRED",
+      "reason": "Metric requires semantic gate and this provider_field is not in the versioned safe standard mapping registry."
+    },
+    {
+      "fiscal_year": 2025,
+      "metric": "short_term_debt",
+      "label": "Kurzfristige Finanzschulden",
+      "value": "1681900000.00000000",
+      "currency": "EUR",
+      "provider": "sec_companyfacts",
+      "provider_field": "aggregation:us-gaap:LongTermDebtCurrent",
+      "semantic_status": "REVIEW_REQUIRED",
+      "reason": "Metric requires semantic gate and this provider_field is not in the versioned safe standard mapping registry."
+    }
+  ],
+  "tests": {
+    "new_test_file": "tests/test_financial_worksheet.py",
+    "covered": [
+      "section grouping",
+      "5Y/10Y/all year modes",
+      "missing/review actionable cells",
+      "override persistence",
+      "original fact preserved",
+      "override removal restores automatic value",
+      "safe candidate usable",
+      "semantic review candidate not auto-approved",
+      "short-term debt rejection rules"
+    ]
+  },
+  "go_criterion": "User can directly navigate to Finanzdaten -> Bilanz -> Kurzfristige Finanzschulden -> target year -> candidate search / confirm / override."
+}

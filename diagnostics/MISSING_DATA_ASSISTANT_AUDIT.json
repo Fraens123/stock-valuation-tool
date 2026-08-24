@@ -1,0 +1,122 @@
+{
+  "status": "GO - FEHLENDE-DATEN-ASSISTENT V1",
+  "scope": "UI/workflow extension only; frozen engines unchanged",
+  "implemented_components": {
+    "service": "src/stock_valuation/data/missing_data_search.py",
+    "worksheet": "src/stock_valuation/ui/financial_worksheet.py",
+    "streamlit_page": "pages/1_Datenimport.py",
+    "tests": [
+      "tests/test_missing_data_search.py",
+      "tests/test_financial_worksheet.py"
+    ]
+  },
+  "cell_statuses": [
+    "VORHANDEN_UND_FREIGEGEBEN",
+    "VORHANDEN_ABER_PRUEFUNG_ERFORDERLICH",
+    "OFFIZIELLER_KANDIDAT_GEFUNDEN",
+    "ABLEITBAR",
+    "NICHT_SEPARAT_BERICHTET",
+    "NICHT_GEFUNDEN",
+    "MANUELL_BESTAETIGT",
+    "MANUELL_UEBERSCHRIEBEN"
+  ],
+  "candidate_statuses": [
+    "FOUND_SAFE",
+    "FOUND_REVIEW_REQUIRED",
+    "MULTIPLE_CANDIDATES",
+    "NOT_FOUND",
+    "NOT_SEPARATELY_REPORTED"
+  ],
+  "source_policy": {
+    "diagnostics_csv_used_as_product_source": false,
+    "new_engine_or_provider_scraper_added": false,
+    "manual_override_preserves_original_fact": true,
+    "zero_imputation_for_missing_facts": false
+  },
+  "search_steps": [
+    "already imported structured primary data",
+    "alternative allowed standard XBRL concepts",
+    "company extension XBRL",
+    "original filing / XBRL",
+    "official filing tables",
+    "official filing notes / text",
+    "ESEF / official annual report",
+    "approved external fallback",
+    "manual input"
+  ],
+  "short_term_debt_policy": {
+    "dangerous_derivations_allowed": false,
+    "rejected": [
+      "AccountsPayable",
+      "CurrentLiabilities",
+      "LiabilitiesCurrent",
+      "TradePayable",
+      "LeaseLiability",
+      "Tax"
+    ],
+    "current_portion_of_long_term_debt": "FOUND_REVIEW_REQUIRED unless proven complete"
+  },
+  "depreciation_amortization_policy": {
+    "safe_component_formula": "depreciation + amortization",
+    "requires_all_components": true,
+    "missing_component_imputed_as_zero": false
+  },
+  "asml_check": {
+    "analysis_id": 1,
+    "as_of_date": "2026-08-23",
+    "short_term_debt": [
+      {
+        "fiscal_year": 2023,
+        "status": "FOUND_REVIEW_REQUIRED",
+        "value": "100000.00000000",
+        "currency": "EUR",
+        "provider": "sec_companyfacts",
+        "provider_field": "aggregation:us-gaap:LongTermDebtCurrent"
+      },
+      {
+        "fiscal_year": 2024,
+        "status": "FOUND_REVIEW_REQUIRED",
+        "value": "1010300000.00000000",
+        "currency": "EUR",
+        "provider": "sec_companyfacts",
+        "provider_field": "aggregation:us-gaap:LongTermDebtCurrent"
+      },
+      {
+        "fiscal_year": 2025,
+        "status": "FOUND_REVIEW_REQUIRED",
+        "value": "1681900000.00000000",
+        "currency": "EUR",
+        "provider": "sec_companyfacts",
+        "provider_field": "aggregation:us-gaap:LongTermDebtCurrent"
+      }
+    ],
+    "depreciation_amortization_preferred": [
+      {
+        "fiscal_year": 2023,
+        "preferred_status": "primary_reviewed_pass",
+        "calculation_ready": true,
+        "value": "739800000.00000000",
+        "currency": "EUR"
+      },
+      {
+        "fiscal_year": 2024,
+        "preferred_status": "primary_reviewed_pass",
+        "calculation_ready": true,
+        "value": "918600000.00000000",
+        "currency": "EUR"
+      },
+      {
+        "fiscal_year": 2025,
+        "preferred_status": "primary_reviewed_pass",
+        "calculation_ready": true,
+        "value": "1025900000.00000000",
+        "currency": "EUR"
+      }
+    ]
+  },
+  "test_run": {
+    "command": "pytest -q",
+    "result": "259 passed, 1 warning"
+  },
+  "decision": "GO - FEHLENDE-DATEN-ASSISTENT V1"
+}

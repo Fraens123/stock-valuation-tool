@@ -10,6 +10,7 @@ from stock_valuation.runtime_dependencies import ensure_runtime_dependencies
 ensure_runtime_dependencies()
 
 import os
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
@@ -39,6 +40,11 @@ from stock_valuation.analyses.service import AnalysisFrozenError, get_analysis, 
 from stock_valuation.companies.provider_symbols import get_provider_symbol
 from stock_valuation.data.audit import run_deterministic_audit
 from stock_valuation.data.history_mapping_audit import audit_history_mapping
+from stock_valuation.data.missing_data_search import (
+    is_valuation_relevant,
+    metric_impacts,
+    search_missing_metric_candidates,
+)
 from stock_valuation.data.preferred_data import load_preferred_data_states
 from stock_valuation.data.providers.alphavantage import AlphaVantageProvider
 from stock_valuation.data.providers.base import ProviderError
@@ -48,7 +54,18 @@ from stock_valuation.data.snapshot_service import sync_alphavantage_estimates
 from stock_valuation.data.source_router import sync_best_available_financials
 from stock_valuation.database.models import AnalysisStatus, EstimateSnapshot, FinancialFactSnapshot
 from stock_valuation.database.session import get_session, init_database
+from stock_valuation.ui.financial_worksheet import (
+    OPEN_STATUSES,
+    STATUS_DISPLAY,
+    WorksheetCell,
+    WorksheetCellStatus,
+    build_financial_worksheet,
+    open_cells,
+    worksheet_candidates,
+    worksheet_status_counts,
+)
 from stock_valuation.ui.navigation import render_navigation
+from stock_valuation.workflow.service import refresh_local_analysis_stages
 
 
 load_dotenv()
@@ -109,6 +126,27 @@ def _format_value(value: Decimal | None, currency: str | None) -> str:
     if value is None:
         return "—"
     return f"{float(value):,.2f} {currency or ''}".strip()
+
+
+def _format_cell_value(value: Decimal | None, currency: str | None) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):,.1f} {currency or ''}".strip()
+
+
+def _period_end_for_year(facts: list[FinancialFactSnapshot], fiscal_year: int):
+    for fact in facts:
+        if fact.period_type == "FY" and fact.period_end.year == fiscal_year:
+            return fact.period_end
+    return date(int(fiscal_year), 12, 31)
+
+
+def _cell_option_label(cell: WorksheetCell) -> str:
+    return f"{cell.fiscal_year} · {cell.label} · {STATUS_DISPLAY[cell.status]}"
+
+
+def _important_open_cells(cells: tuple[WorksheetCell, ...]) -> tuple[WorksheetCell, ...]:
+    return tuple(cell for cell in cells if is_valuation_relevant(cell.metric))
 
 
 st.title("Finanzdaten")
@@ -284,13 +322,325 @@ with get_session() as session:
     latest_run = latest_ai_review_run(session, analysis_id)
 
 # -----------------------------------------------------------------------------
-# 2. Data status
+# 2. Financial worksheet
 # -----------------------------------------------------------------------------
 st.divider()
-st.subheader("2. Datenstatus")
+st.subheader("2. Finanzdaten-Arbeitsblatt")
 if not facts:
     st.info("Noch keine Finanzdaten geladen.")
 else:
+    year_mode = st.segmented_control(
+        "Zeitraum",
+        ["5 Jahre", "10 Jahre", "Alle"],
+        default="5 Jahre",
+        key=f"financial-worksheet-years-{analysis_id}",
+    )
+    with get_session() as session:
+        worksheet = build_financial_worksheet(
+            session,
+            analysis_id,
+            preferred_states,
+            year_mode=str(year_mode or "5 Jahre"),
+        )
+    counts = worksheet_status_counts(worksheet)
+    compact = st.columns(4)
+    confirmed = (
+        counts[WorksheetCellStatus.PRESENT_RELEASED]
+        + counts[WorksheetCellStatus.AUTOMATIC_CONFIRMED]
+        + counts[WorksheetCellStatus.MANUAL_CONFIRMED]
+    )
+    open_review = (
+        counts[WorksheetCellStatus.PRESENT_REVIEW_REQUIRED]
+        + counts[WorksheetCellStatus.OFFICIAL_CANDIDATE_FOUND]
+        + counts[WorksheetCellStatus.DERIVABLE]
+        + counts[WorksheetCellStatus.REVIEW_REQUIRED]
+        + counts[WorksheetCellStatus.CANDIDATE_FOUND]
+    )
+    compact[0].metric("bestätigte Werte", confirmed)
+    compact[1].metric("zu prüfen", open_review)
+    compact[2].metric("fehlt", counts[WorksheetCellStatus.NOT_FOUND] + counts[WorksheetCellStatus.MISSING])
+    compact[3].metric("manuelle Korrekturen", counts[WorksheetCellStatus.MANUAL_OVERRIDE])
+
+    important_only = st.toggle(
+        "Nur für Bewertung relevante offene Werte",
+        value=True,
+        key=f"financial-worksheet-important-open-{analysis_id}",
+    )
+    filter_open = st.toggle(
+        "Alle offenen historischen Werte anzeigen",
+        value=False,
+        key=f"financial-worksheet-open-{analysis_id}",
+    )
+
+    if editable and st.button("Alle wichtigen fehlenden Werte suchen"):
+        try:
+            with get_session() as session:
+                current = get_analysis(session, analysis_id)
+                if current is None:
+                    raise ValueError("Analyse nicht gefunden.")
+                open_now = open_cells(worksheet)
+                if important_only:
+                    open_now = _important_open_cells(open_now)
+                before = len(open_now)
+                completion = sync_sec_history_text_candidates(session, current)
+                refresh_local_analysis_stages(session, current)
+            st.session_state[f"source-router-{analysis_id}"] = {
+                **st.session_state.get(f"source-router-{analysis_id}", {}),
+                "completion_message": completion.message,
+            }
+            st.success(
+                f"Suche abgeschlossen: {completion.candidate_count} Kandidat(en) gefunden; "
+                f"{before} offene Zelle(n) wurden geprüft."
+            )
+            st.rerun()
+        except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+            st.error(str(exc))
+
+    worksheet_tabs = st.tabs(list(worksheet.sections))
+    for tab, (section_name, section_rows) in zip(worksheet_tabs, worksheet.sections.items()):
+        with tab:
+            rows = []
+            for row in section_rows:
+                row_cells = [
+                    worksheet.cells[(row.metric, year)]
+                    for year in worksheet.years
+                    if (row.metric, year) in worksheet.cells
+                ]
+                if important_only and filter_open and not is_valuation_relevant(row.metric):
+                    continue
+                if filter_open and not any(cell.status in OPEN_STATUSES for cell in row_cells):
+                    continue
+                table_row = {"Kennzahl": row.label}
+                for year, cell in zip(worksheet.years, row_cells):
+                    table_row[str(year)] = cell.display
+                rows.append(table_row)
+            if rows:
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            else:
+                st.caption("Keine offenen Werte in diesem Bereich.")
+
+    detail_cells = open_cells(worksheet) if filter_open or important_only else tuple(
+        cell for key, cell in sorted(worksheet.cells.items(), key=lambda item: (item[0][1], item[0][0]), reverse=True)
+    )
+    if important_only:
+        detail_cells = _important_open_cells(detail_cells)
+    if detail_cells:
+        st.markdown("#### Zelle prüfen oder korrigieren")
+        labels = {_cell_option_label(cell): cell for cell in detail_cells}
+        selected_cell = labels[
+            st.selectbox(
+                "Zelle",
+                list(labels),
+                key=f"financial-worksheet-selected-cell-{analysis_id}",
+            )
+        ]
+        detail = st.columns(4)
+        detail[0].metric("Kennzahl", selected_cell.label)
+        detail[1].metric("Geschäftsjahr", selected_cell.fiscal_year)
+        detail[2].metric("Status", STATUS_DISPLAY[selected_cell.status])
+        detail[3].metric("Kandidaten", selected_cell.candidate_count)
+
+        with st.expander("Woher kommt der Wert?", expanded=True):
+            st.write(f"**Verwendeter Wert:** {_format_value(selected_cell.value, selected_cell.currency)}")
+            st.write(f"**Originalwert:** {_format_value(selected_cell.value, selected_cell.currency)}")
+            st.write(f"**Quelle:** {selected_cell.provider or '—'}")
+            st.write(f"**Provider Field:** {selected_cell.provider_field or '—'}")
+            st.write(f"**Filing Date:** {selected_cell.filing_date or '—'}")
+            st.write(f"**Abrufdatum:** {selected_cell.retrieved_at or '—'}")
+            st.write(f"**Begründung:** {selected_cell.reason or '—'}")
+            st.caption(f"Technischer Schlüssel: `{selected_cell.metric}`")
+            if selected_cell.source_url:
+                st.link_button("Quelle öffnen", selected_cell.source_url)
+            impacts = metric_impacts(selected_cell.metric)
+            if impacts:
+                st.write("**Wird verwendet für:** " + ", ".join(impacts))
+
+        candidates = ()
+        with get_session() as session:
+            current = get_analysis(session, analysis_id)
+            search_result = (
+                search_missing_metric_candidates(
+                    session,
+                    current,
+                    metric=selected_cell.metric,
+                    fiscal_year=selected_cell.fiscal_year,
+                )
+                if current is not None
+                else None
+            )
+            candidates = worksheet_candidates(
+                session,
+                analysis_id,
+                selected_cell.metric,
+                selected_cell.fiscal_year,
+            )
+        if search_result is not None:
+            st.info(f"{search_result.status.value}: {search_result.message}")
+        action_cols = st.columns(2)
+        if selected_cell.status in {
+            WorksheetCellStatus.PRESENT_REVIEW_REQUIRED,
+            WorksheetCellStatus.OFFICIAL_CANDIDATE_FOUND,
+            WorksheetCellStatus.DERIVABLE,
+            WorksheetCellStatus.NOT_FOUND,
+            WorksheetCellStatus.MISSING,
+            WorksheetCellStatus.REVIEW_REQUIRED,
+            WorksheetCellStatus.CANDIDATE_FOUND,
+        }:
+            if action_cols[0].button(
+                "Fehlenden Wert suchen" if selected_cell.status == WorksheetCellStatus.MISSING else "Kandidaten suchen",
+                disabled=not editable,
+                key=f"search-cell-{selected_cell.metric}-{selected_cell.fiscal_year}",
+            ):
+                try:
+                    with get_session() as session:
+                        current = get_analysis(session, analysis_id)
+                        if current is None:
+                            raise ValueError("Analyse nicht gefunden.")
+                        completion = sync_sec_history_text_candidates(session, current)
+                        refresh_local_analysis_stages(session, current)
+                    st.success(completion.message)
+                    st.rerun()
+                except (ValueError, AnalysisFrozenError, ProviderError) as exc:
+                    st.error(str(exc))
+
+        manual_overridden = selected_cell.provider == "manual_override"
+        if manual_overridden and action_cols[1].button(
+            "Override entfernen",
+            disabled=not editable,
+            key=f"remove-override-{selected_cell.metric}-{selected_cell.fiscal_year}",
+        ):
+            try:
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    remove_manual_financial_override(
+                        session,
+                        current,
+                        metric=selected_cell.metric,
+                        period_end=_period_end_for_year(facts, selected_cell.fiscal_year),
+                    )
+                    refresh_local_analysis_stages(session, current)
+                st.rerun()
+            except (ValueError, AnalysisFrozenError) as exc:
+                st.error(str(exc))
+
+        if candidates:
+            st.markdown("#### Automatische Kandidaten")
+            for candidate in candidates:
+                title = (
+                    f"{_format_value(candidate.value, candidate.currency)} · "
+                    f"{candidate.provider or 'Quelle'} · {candidate.semantic_decision}"
+                )
+                with st.expander(title, expanded=not candidate.selectable_without_review):
+                    st.write(f"**Kandidatentyp:** {candidate.candidate_type or '—'}")
+                    st.write(f"**Confidence:** {candidate.confidence if candidate.confidence is not None else '—'}")
+                    if candidate.formula:
+                        st.write(f"**Formel:** {candidate.formula}")
+                    if candidate.input_refs:
+                        st.write("**Input-Refs:** " + ", ".join(candidate.input_refs))
+                    st.write(f"**Concept / Provider Field:** {candidate.provider_field or '—'}")
+                    st.write(f"**Filing:** {candidate.filing_date or '—'}")
+                    st.write(f"**Semantik:** {candidate.semantic_reason}")
+                    if candidate.source_url:
+                        st.link_button("Offizielle Quelle öffnen", candidate.source_url)
+                    if not candidate.selectable_without_review:
+                        if st.button(
+                            "Mit ChatGPT prüfen",
+                            key=f"review-candidate-{candidate.fact_id}-{candidate.metric}-{candidate.fiscal_year}",
+                        ):
+                            st.info("Das ChatGPT-Prüfpaket kann unten im Abschnitt ChatGPT-Prüfung erzeugt werden.")
+                    if candidate.rejected_reason:
+                        st.warning(candidate.rejected_reason)
+                    elif st.button(
+                        "Automatischen Wert bestätigen",
+                        disabled=not editable or candidate.value is None,
+                        key=f"accept-candidate-{candidate.fact_id}-{candidate.metric}-{candidate.fiscal_year}",
+                    ):
+                        try:
+                            with get_session() as session:
+                                current = get_analysis(session, analysis_id)
+                                fact = session.get(FinancialFactSnapshot, candidate.fact_id) if candidate.fact_id else None
+                                if current is None or candidate.value is None:
+                                    raise ValueError("Kandidat nicht mehr verfügbar.")
+                                upsert_manual_financial_override(
+                                    session,
+                                    current,
+                                    metric=candidate.metric,
+                                    period_end=fact.period_end if fact is not None else _period_end_for_year(facts, candidate.fiscal_year),
+                                    value=candidate.value,
+                                    currency=candidate.currency,
+                                    unit=fact.unit if fact is not None else "currency",
+                                    statement=fact.statement if fact is not None else selected_cell.statement,
+                                    source_name=f"Bestätigter Kandidat: {candidate.provider or 'Quelle'}",
+                                    source_url=candidate.source_url,
+                                    note=(
+                                        f"Vom Nutzer im Finanzdaten-Arbeitsblatt bestätigt. "
+                                        f"Original Provider Field: {candidate.provider_field or '—'}. "
+                                        f"Input-Refs: {', '.join(candidate.input_refs) or '—'}."
+                                    ),
+                                )
+                                refresh_local_analysis_stages(session, current)
+                            st.rerun()
+                        except (ValueError, AnalysisFrozenError) as exc:
+                            st.error(str(exc))
+        else:
+            st.caption("Für diese Zelle ist noch kein automatischer Kandidat gespeichert.")
+
+        with st.form(f"worksheet-manual-override-{selected_cell.metric}-{selected_cell.fiscal_year}"):
+            st.markdown("#### Eigenen Wert verwenden")
+            manual_value = st.text_input(
+                "Wert",
+                value=str(selected_cell.value) if selected_cell.value is not None else "",
+            )
+            manual_currency = st.text_input("Währung", value=selected_cell.currency or company_currency or "")
+            manual_source_choice = st.selectbox(
+                "Quelle",
+                ["Aktienfinder", "Geschäftsbericht", "Unternehmenswebsite", "Andere"],
+                key=f"worksheet-manual-source-{selected_cell.metric}-{selected_cell.fiscal_year}",
+            )
+            manual_source_other = st.text_input("Quelle genau", value="" if manual_source_choice != "Aktienfinder" else "Aktienfinder")
+            manual_url = st.text_input("Quellen-URL")
+            manual_note = st.text_area("Kommentar / Begründung")
+            save_manual_cell = st.form_submit_button("Override speichern", disabled=not editable)
+        if save_manual_cell:
+            try:
+                manual_source = manual_source_other.strip() or manual_source_choice
+                if not manual_source.strip():
+                    raise ValueError("Quelle ist erforderlich.")
+                with get_session() as session:
+                    current = get_analysis(session, analysis_id)
+                    if current is None:
+                        raise ValueError("Analyse nicht gefunden.")
+                    upsert_manual_financial_override(
+                        session,
+                        current,
+                        metric=selected_cell.metric,
+                        period_end=_period_end_for_year(facts, selected_cell.fiscal_year),
+                        value=_decimal(manual_value),
+                        currency=manual_currency.strip() or None,
+                        unit="currency",
+                        statement=selected_cell.statement,
+                        source_name=manual_source,
+                        source_url=manual_url,
+                        note=manual_note,
+                    )
+                    refresh_local_analysis_stages(session, current)
+                st.rerun()
+            except (ValueError, AnalysisFrozenError) as exc:
+                st.error(str(exc))
+
+# -----------------------------------------------------------------------------
+# 3. Extended data status
+# -----------------------------------------------------------------------------
+st.divider()
+with st.container(border=True):
+    st.markdown("### 3. Erweiterte Datenprüfung")
+    st.subheader("Datenstatus")
+    if not facts:
+        st.info("Noch keine Finanzdaten geladen.")
+    else:
+        pass
     ready_count = sum(state.calculation_ready for state in preferred_states)
     blocked_states = [
         state for state in preferred_states if state.quality_status in BLOCKING_DATA_STATUSES

@@ -28,6 +28,7 @@ from stock_valuation.ui.analysis_view_model import available_years, build_analys
 from stock_valuation.ui.info_catalog import INFO_CATALOG, InfoEntry
 from stock_valuation.ui.labels_de import format_currency_compact_de, format_date_de, issue_label, status_label
 from stock_valuation.ui.navigation import STATUS_LABELS, current_analysis_id, render_analysis_selector, render_navigation
+from stock_valuation.ui.financial_worksheet import worksheet_metric_label
 from stock_valuation.valuation_assumptions.approvals import approve_recommended_value, override_assumption
 from stock_valuation.valuation_assumptions.models import AssumptionRecommendation
 from stock_valuation.workflow.service import complete_analysis_if_ready, finalization_blockers, finalization_issues, refresh_local_analysis_stages
@@ -704,6 +705,13 @@ def _render_summary() -> None:
     info_notes = []
     if state.stages["FINANCIAL_DATA"].status == "REVIEW_REQUIRED":
         checks.append("Einzelne Finanzdaten benötigen noch eine semantische Prüfung.")
+        review_items = state.stages["FINANCIAL_DATA"].payload.get("review_required", ())
+        for raw in review_items[:5]:
+            parts = str(raw).split()
+            if len(parts) >= 2:
+                checks.append(
+                    f"Finanzdaten → Bilanz/GuV/Cashflow → {worksheet_metric_label(parts[1])} → {parts[0]} prüfen."
+                )
     if vm.market_notes:
         for note in vm.market_notes:
             if "Unternehmenswert" in note or "Nettoverschuldung" in note:
@@ -720,6 +728,8 @@ def _render_summary() -> None:
         st.subheader("Was sollte geprüft werden?")
         for item in checks:
             st.write(f"- {item}")
+        if st.button("In Finanzdaten prüfen"):
+            st.switch_page("pages/1_Datenimport.py")
     if vm.scenario_rows:
         st.subheader("Bewertungsbandbreite")
         st.dataframe(pd.DataFrame(vm.scenario_rows), width="stretch", hide_index=True)
