@@ -1,0 +1,94 @@
+{
+  "phase": "PHASE 9C.1",
+  "title": "FINALIZATION UX CLEANUP AUDIT",
+  "date": "2026-08-23",
+  "decision": "GO - FINALISIERUNGS-UX UND DEUTSCHE OBERFLÄCHE BEREINIGT",
+  "structured_finalization": {
+    "status": "PASS",
+    "model": "FinalizationIssue",
+    "fields": [
+      "code",
+      "category",
+      "message_de",
+      "severity",
+      "blocking",
+      "metric",
+      "fiscal_year",
+      "action_label",
+      "location_hint"
+    ],
+    "categories": [
+      "DATEN",
+      "MARKTDATEN",
+      "DCF",
+      "MULTIPLIKATOREN",
+      "ANNAHMEN",
+      "TECHNISCH",
+      "HISTORISCHE_WARNUNG"
+    ]
+  },
+  "historical_reviews": {
+    "status": "PASS",
+    "old_reviews_blocking": false,
+    "grouped_warnings": true,
+    "technical_details_available": true
+  },
+  "current_reviews": {
+    "status": "PASS",
+    "current_short_term_debt_blocks": true,
+    "current_depreciation_amortization_blocks": true,
+    "book_owner_earnings_missing_blocks": true
+  },
+  "raw_codes_removed_from_normal_ui": {
+    "status": "PASS",
+    "forbidden_tokens_checked": [
+      "REVIEW_REQUIRED",
+      "primary_semantic_review_required",
+      "FINANCIAL_DATA",
+      "MISSING_"
+    ],
+    "normal_messages_contain_raw_codes": false
+  },
+  "german_ui_texts": {
+    "status": "PASS",
+    "ascii_rewrites_removed": [
+      "Geschaeft",
+      "Kaeufe",
+      "Bestaet",
+      "Schliessen",
+      "ueberschreib",
+      "Vorschlaege",
+      "Jahresueberschuss",
+      "Rentabilitaets",
+      "Individualitaet",
+      "Waehrung"
+    ]
+  },
+  "book_references": {
+    "status": "PASS",
+    "known_shows_reference": true,
+    "unknown_shows_not_mapped": true,
+    "invented_pages": false
+  },
+  "real_asml_smoke": {
+    "status": "PASS",
+    "raw_messages": [],
+    "blocking_count": 12,
+    "historical_warnings": [
+      "Abschreibungen: 9 ältere Geschäftsjahre",
+      "Operativer Cashflow: 1 älteres Geschäftsjahr",
+      "Kurzfristige Finanzschulden: 10 ältere Geschäftsjahre"
+    ]
+  },
+  "tests": {
+    "status": "PASS",
+    "command": "pytest -q",
+    "result": "242 passed in 2.68s"
+  },
+  "app_smoke": {
+    "status": "PASS",
+    "command": "streamlit run app.py --server.headless true --server.port 8517 --browser.gatherUsageStats false",
+    "http_status": 200
+  },
+  "next_step": "MANUELLER ASML-NUTZERTEST. Keine neue große Phase starten."
+}

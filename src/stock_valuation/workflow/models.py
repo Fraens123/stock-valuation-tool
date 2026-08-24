@@ -55,3 +55,16 @@ class AnalysisState:
     history_years: tuple[int, ...] = ()
     market_snapshot_id: str | None = None
     final_valuation_snapshot_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FinalizationIssue:
+    code: str
+    category: str
+    message_de: str
+    severity: str
+    blocking: bool
+    metric: str | None = None
+    fiscal_year: int | None = None
+    action_label: str | None = None
+    location_hint: str | None = None

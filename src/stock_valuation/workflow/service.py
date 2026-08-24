@@ -84,6 +84,7 @@ from stock_valuation.workflow.models import (
     STAGES,
     UNAVAILABLE,
     AnalysisState,
+    FinalizationIssue,
     StageState,
 )
 from stock_valuation.workflow.persistence import canonical_hash, persist_stage_snapshot, payload_from_stage
@@ -196,6 +197,10 @@ def complete_analysis_if_ready(session: Session, analysis: Analysis) -> Analysis
 
 
 def finalization_blockers(state: AnalysisState) -> tuple[str, ...]:
+    return tuple(issue.message_de for issue in finalization_issues(state) if issue.blocking)
+
+
+def finalization_issues(state: AnalysisState, book_valuation_result: Any | None = None) -> tuple[FinalizationIssue, ...]:
     required = (
         "FINANCIAL_DATA",
         "CALCULATION",
@@ -205,17 +210,242 @@ def finalization_blockers(state: AnalysisState) -> tuple[str, ...]:
         "ASSUMPTIONS",
         "VALUATION",
     )
-    blockers: list[str] = []
+    issues: list[FinalizationIssue] = []
+    relevant_years = _finalization_relevant_years(state)
     for stage in required:
         row = state.stages[stage]
         if stage == "ASSUMPTIONS" and row.status != READY:
-            blockers.append("Bewertungsannahmen sind noch nicht vollstaendig freigegeben.")
+            issues.append(
+                FinalizationIssue(
+                    code="ASSUMPTIONS_NOT_APPROVED",
+                    category="ANNAHMEN",
+                    message_de="Bewertungsannahmen müssen noch geprüft oder freigegeben werden.",
+                    severity="ERROR",
+                    blocking=True,
+                    action_label="Zu den Annahmen",
+                    location_hint="Zu finden unter: 11. DCF-Bewertung -> Annahmen prüfen",
+                )
+            )
         elif stage == "VALUATION" and row.status != READY:
-            blockers.append("Finale Valuation Snapshot fehlt.")
-        elif stage not in {"ASSUMPTIONS", "VALUATION"} and row.status != READY:
-            blockers.append(f"{stage}: {row.status}")
-        blockers.extend(row.blockers)
-    return tuple(dict.fromkeys(blockers))
+            issues.append(
+                FinalizationIssue(
+                    code="FINAL_VALUATION_SNAPSHOT_MISSING",
+                    category="TECHNISCH",
+                    message_de="Finaler Bewertungssnapshot fehlt.",
+                    severity="ERROR",
+                    blocking=True,
+                    action_label="Bewertung finalisieren",
+                    location_hint="Zu finden unter: Abschluss",
+                )
+            )
+        elif stage in {"MARKET_DATA", "BUSINESS_QUALITY", "HISTORICAL_ANALYSIS"} and row.status not in {READY, REVIEW_REQUIRED}:
+            issues.append(_stage_issue(stage, row.status, blocking=True))
+        elif stage in {"FINANCIAL_DATA", "CALCULATION"} and row.status not in {READY, REVIEW_REQUIRED}:
+            issues.append(_stage_issue(stage, row.status, blocking=True))
+        if stage == "FINANCIAL_DATA":
+            issues.extend(_financial_review_issues(row.payload, relevant_years))
+        elif stage != "FINANCIAL_DATA":
+            for blocker in row.blockers:
+                issues.append(
+                    FinalizationIssue(
+                        code="TECHNICAL_DETAIL",
+                        category="TECHNISCH",
+                        message_de="Technisches Detail erfordert Prüfung.",
+                        severity="WARNING",
+                        blocking=False,
+                        location_hint=blocker,
+                    )
+                )
+    if book_valuation_result is not None:
+        issues.extend(_book_valuation_issues(book_valuation_result))
+    return tuple(_dedupe_issues(issues))
+
+
+def _finalization_relevant_years(state: AnalysisState) -> set[int]:
+    years = set(state.history_years)
+    if not years:
+        calc = state.stages.get("CALCULATION")
+        if calc is not None:
+            years = {int(year) for year in calc.payload.get("base_facts", {}) if str(year).isdigit()}
+    ordered = sorted(years)
+    return set(ordered[-5:])
+
+
+def _stage_issue(stage: str, status: str, *, blocking: bool) -> FinalizationIssue:
+    labels = {
+        "FINANCIAL_DATA": ("DATEN", "Finanzdaten müssen noch geprüft werden."),
+        "CALCULATION": ("DATEN", "Kennzahlenberechnung ist noch nicht vollständig verfügbar."),
+        "HISTORICAL_ANALYSIS": ("DATEN", "Historische Analyse ist noch nicht vollständig verfügbar."),
+        "BUSINESS_QUALITY": ("DATEN", "Qualitätsanalyse ist noch nicht vollständig verfügbar."),
+        "MARKET_DATA": ("MARKTDATEN", "Marktdaten müssen noch geprüft oder ergänzt werden."),
+    }
+    category, message = labels.get(stage, ("TECHNISCH", "Technischer Workflow-Status muss geprüft werden."))
+    return FinalizationIssue(
+        code=f"{stage}_NOT_READY",
+        category=category,
+        message_de=message,
+        severity="ERROR" if blocking else "WARNING",
+        blocking=blocking,
+    )
+
+
+def _financial_review_issues(payload: dict, relevant_years: set[int]) -> tuple[FinalizationIssue, ...]:
+    parsed = [_parse_financial_review(item) for item in payload.get("review_required", ())]
+    parsed = [item for item in parsed if item is not None]
+    issues: list[FinalizationIssue] = []
+    historical: dict[str, list[int]] = {}
+    for year, metric, status in parsed:
+        if year in relevant_years:
+            issues.append(_current_financial_issue(year, metric, status))
+        else:
+            historical.setdefault(metric, []).append(year)
+    for metric, years in sorted(historical.items()):
+        issues.append(
+            FinalizationIssue(
+                code="HISTORICAL_REVIEW_WARNING",
+                category="HISTORISCHE_WARNUNG",
+                message_de=f"{_metric_label_de(metric)}: {len(years)} ältere Geschäftsjahre enthalten noch nicht bestätigte Detaildaten.",
+                severity="WARNING",
+                blocking=False,
+                metric=metric,
+                action_label="Technische Datenprüfungen anzeigen",
+                location_hint=", ".join(str(year) for year in sorted(years)),
+            )
+        )
+    return tuple(issues)
+
+
+def _book_valuation_issues(book_valuation_result: Any) -> tuple[FinalizationIssue, ...]:
+    values = getattr(book_valuation_result, "values", {}) or {}
+    issues: list[FinalizationIssue] = []
+    owner = values.get("owner_earnings")
+    if owner is not None and getattr(owner, "status", None) != AVAILABLE:
+        issues.append(
+            FinalizationIssue(
+                code="BOOK_OWNER_EARNINGS_INCOMPLETE",
+                category="DCF",
+                message_de="Die Investitionsbasis für Owner Earnings ist noch unvollständig.",
+                severity="ERROR",
+                blocking=True,
+                metric="owner_earnings",
+                action_label="Zum DCF",
+                location_hint="Zu finden unter: 11. DCF-Bewertung -> 1. Bestimmung Owner Earnings",
+            )
+        )
+    cost = values.get("cost_of_equity")
+    if cost is not None and getattr(cost, "status", None) != AVAILABLE:
+        issues.append(
+            FinalizationIssue(
+                code="BOOK_DISCOUNT_RATE_INCOMPLETE",
+                category="DCF",
+                message_de="Der Diskontierungszins der Excel-/Buchmethode ist noch nicht vollständig berechenbar.",
+                severity="ERROR",
+                blocking=True,
+                metric="cost_of_equity",
+                action_label="Zum DCF",
+                location_hint="Zu finden unter: 11. DCF-Bewertung -> 2. Bestimmung des Diskontierungsfaktors",
+            )
+        )
+    fair_price = values.get("multiplicator_fair_price_per_share")
+    if fair_price is not None and getattr(fair_price, "status", None) != AVAILABLE:
+        issues.append(
+            FinalizationIssue(
+                code="BOOK_MULTIPLICATOR_INCOMPLETE",
+                category="MULTIPLIKATOREN",
+                message_de="Die Multiplikatorenmethode ist noch nicht vollständig ausgefüllt.",
+                severity="ERROR",
+                blocking=True,
+                metric="multiplicator_fair_price_per_share",
+                action_label="Zur Multiplikatorenmethode",
+                location_hint="Zu finden unter: 12. Multiplikatorenmethode",
+            )
+        )
+    scenario_results = getattr(book_valuation_result, "scenario_results", {}) or {}
+    base = scenario_results.get("base")
+    if base is not None and getattr(base.fair_value_per_share, "status", None) != AVAILABLE:
+        issues.append(
+            FinalizationIssue(
+                code="BOOK_BASE_SCENARIO_INCOMPLETE",
+                category="DCF",
+                message_de="Das Basis-Szenario der Excel-/Buch-DCF ist noch nicht vollständig gespeichert.",
+                severity="ERROR",
+                blocking=True,
+                metric="book_dcf_base",
+                action_label="Zum DCF",
+                location_hint="Zu finden unter: 11. DCF-Bewertung -> Excel-/Buch-DCF-Szenarien",
+            )
+        )
+    return tuple(issues)
+
+
+def _parse_financial_review(text: str) -> tuple[int, str, str] | None:
+    parts = str(text).split()
+    if len(parts) < 3 or not parts[0].isdigit():
+        return None
+    metric = parts[1].rstrip(":")
+    status = " ".join(parts[2:]).strip()
+    return int(parts[0]), metric, status
+
+
+def _current_financial_issue(year: int, metric: str, status: str) -> FinalizationIssue:
+    if metric == "short_term_debt":
+        return FinalizationIssue(
+            code="CURRENT_SHORT_TERM_DEBT_REVIEW",
+            category="DATEN",
+            message_de=f"Kurzfristige Finanzschulden {year} müssen noch bestätigt werden. Relevant für Nettoverschuldung und Enterprise Value.",
+            severity="ERROR",
+            blocking=True,
+            metric=metric,
+            fiscal_year=year,
+            action_label="Zum EV-Bereich",
+            location_hint="Zu finden unter: 10. Bewertungskennzahlen -> Enterprise Value Ansatz prüfen",
+        )
+    if metric == "depreciation_amortization":
+        return FinalizationIssue(
+            code="CURRENT_DEPRECIATION_REVIEW",
+            category="DATEN",
+            message_de=f"Abschreibungen {year} müssen noch bestätigt werden. Relevant für EBITDA und Owner Earnings.",
+            severity="ERROR",
+            blocking=True,
+            metric=metric,
+            fiscal_year=year,
+            action_label="Zum DCF",
+            location_hint="Zu finden unter: 11. DCF-Bewertung -> 1. Bestimmung Owner Earnings",
+        )
+    return FinalizationIssue(
+        code="CURRENT_FINANCIAL_REVIEW",
+        category="DATEN",
+        message_de=f"{_metric_label_de(metric)} {year} muss noch bestätigt werden.",
+        severity="ERROR",
+        blocking=True,
+        metric=metric,
+        fiscal_year=year,
+        action_label="Zur Datenprüfung",
+        location_hint="Zu finden unter: 1. Datenimport oder im jeweiligen Analyseabschnitt",
+    )
+
+
+def _metric_label_de(metric: str) -> str:
+    return {
+        "short_term_debt": "Kurzfristige Finanzschulden",
+        "depreciation_amortization": "Abschreibungen",
+        "intangible_purchases": "Käufe immaterieller Anlagewerte",
+        "operating_cash_flow": "Operativer Cashflow",
+        "capital_expenditures": "Sachinvestitionen",
+        "long_term_debt": "Langfristige Finanzschulden",
+    }.get(metric, metric.replace("_", " "))
+
+
+def _dedupe_issues(issues: list[FinalizationIssue]) -> list[FinalizationIssue]:
+    seen = set()
+    output = []
+    for issue in issues:
+        key = (issue.code, issue.metric, issue.fiscal_year, issue.message_de)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(issue)
+    return output
 
 
 def _refresh_financial_data_stage(session: Session, analysis: Analysis) -> StageState:
