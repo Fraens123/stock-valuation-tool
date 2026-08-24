@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from stock_valuation.runtime_dependencies import ensure_runtime_dependencies
+
+ensure_runtime_dependencies()
+
 import os
 from datetime import date
 from decimal import Decimal, InvalidOperation
